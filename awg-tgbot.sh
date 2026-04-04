@@ -46,7 +46,6 @@ SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT="soft"
 SELFHOST_EGRESS_DENYLIST_REFRESH_MINUTES_DEFAULT="30"
 SELFHOST_AUTO_BACKUP_ENABLED_DEFAULT="1"
 SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT="14"
-SELFHOST_AUTO_BACKUP_TIMER_ONCALENDAR_DEFAULT="daily"
 AUTO_BACKUP_SCRIPT_REL="scripts/awg-tgbot-autobackup.sh"
 AUTO_BACKUP_SCRIPT="${INSTALL_DIR}/${AUTO_BACKUP_SCRIPT_REL}"
 AUTO_BACKUP_SERVICE_NAME="awg-tgbot-backup.service"
@@ -1095,10 +1094,12 @@ deploy_repo() {
     return 1
   fi
   mkdir -p "$INSTALL_DIR" "$STATE_DIR" "$(dirname "$SELF_SYMLINK")"
-  if [[ -d "$BOT_DIR" || -f "$INSTALL_DIR/awg-tgbot.sh" ]]; then
+  if [[ -d "$BOT_DIR" || -f "$INSTALL_DIR/awg-tgbot.sh" || -d "$INSTALL_DIR/scripts" || -d "$INSTALL_DIR/packaging" ]]; then
     backup_dir="$(mktemp -d "${INSTALL_DIR}/.backup.XXXXXX")"
     [[ -d "$BOT_DIR" ]] && mv "$BOT_DIR" "$backup_dir/bot"
     [[ -f "$INSTALL_DIR/awg-tgbot.sh" ]] && mv "$INSTALL_DIR/awg-tgbot.sh" "$backup_dir/awg-tgbot.sh"
+    [[ -d "$INSTALL_DIR/scripts" ]] && mv "$INSTALL_DIR/scripts" "$backup_dir/scripts"
+    [[ -d "$INSTALL_DIR/packaging" ]] && mv "$INSTALL_DIR/packaging" "$backup_dir/packaging"
   fi
   rm -rf "$BOT_DIR"
   mkdir -p "$BOT_DIR"
@@ -1120,6 +1121,8 @@ deploy_repo() {
   if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
     [[ -d "$backup_dir/bot" ]] && mv "$backup_dir/bot" "$BOT_DIR"
     [[ -f "$backup_dir/awg-tgbot.sh" ]] && mv "$backup_dir/awg-tgbot.sh" "$INSTALL_DIR/awg-tgbot.sh"
+    [[ -d "$backup_dir/scripts" ]] && mv "$backup_dir/scripts" "$INSTALL_DIR/scripts"
+    [[ -d "$backup_dir/packaging" ]] && mv "$backup_dir/packaging" "$INSTALL_DIR/packaging"
     rm -rf "$backup_dir"
   fi
   return 1
@@ -1228,8 +1231,6 @@ ensure_selfhost_network_defaults() {
   [[ -n "$current" ]] || set_env_value AUTO_BACKUP_ENABLED "$SELFHOST_AUTO_BACKUP_ENABLED_DEFAULT"
   current="$(get_env_value AUTO_BACKUP_KEEP_COUNT)"
   [[ -n "$current" ]] || set_env_value AUTO_BACKUP_KEEP_COUNT "$SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT"
-  current="$(get_env_value AUTO_BACKUP_TIMER_ONCALENDAR)"
-  [[ -n "$current" ]] || set_env_value AUTO_BACKUP_TIMER_ONCALENDAR "$SELFHOST_AUTO_BACKUP_TIMER_ONCALENDAR_DEFAULT"
 }
 
 autobackup_enabled() {

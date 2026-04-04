@@ -53,6 +53,19 @@ def test_installer_integrates_autobackup_timer_and_manual_prompts():
     assert "systemctl disable --now \"$AUTO_BACKUP_TIMER_NAME\"" in script
 
 
+def test_deploy_rollback_preserves_scripts_and_packaging():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert '[[ -d "$INSTALL_DIR/scripts" ]] && mv "$INSTALL_DIR/scripts" "$backup_dir/scripts"' in script
+    assert '[[ -d "$INSTALL_DIR/packaging" ]] && mv "$INSTALL_DIR/packaging" "$backup_dir/packaging"' in script
+    assert '[[ -d "$backup_dir/scripts" ]] && mv "$backup_dir/scripts" "$INSTALL_DIR/scripts"' in script
+    assert '[[ -d "$backup_dir/packaging" ]] && mv "$backup_dir/packaging" "$INSTALL_DIR/packaging"' in script
+
+
+def test_installer_does_not_have_unused_autobackup_schedule_setting():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "AUTO_BACKUP_TIMER_ONCALENDAR" not in script
+
+
 def test_readme_contains_owner_operator_sections():
     readme = Path("README.md").read_text(encoding="utf-8")
     assert "## Что это" in readme
@@ -60,3 +73,4 @@ def test_readme_contains_owner_operator_sections():
     assert "## Как устроены бэкапы" in readme
     assert "AUTO_BACKUP_ENABLED" in readme
     assert "## Где смотреть код" in readme
+    assert "раз в день" in readme
