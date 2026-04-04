@@ -44,6 +44,7 @@ from keyboards import (
     get_configs_devices_kb,
     get_instruction_inline_kb,
     get_main_menu,
+    get_promo_cancel_kb,
     get_profile_inline_kb,
     get_support_back_kb,
     get_support_center_kb,
@@ -60,6 +61,7 @@ from ui_constants import (
     BTN_CONFIGS,
     BTN_GUIDE,
     BTN_PROFILE,
+    BTN_PROMO,
     BTN_REFERRALS,
     BTN_SUPPORT,
     CB_CHECK_ACTIVATION_STATUS,
@@ -67,6 +69,8 @@ from ui_constants import (
     CB_CONFIG_DEVICE_PREFIX,
     CB_OPEN_CONFIGS,
     CB_OPEN_SUPPORT,
+    CB_PROMO_INPUT_CANCEL,
+    CB_PROMO_INPUT_START,
     CB_SHOW_BUY_MENU,
     CB_SHOW_INSTRUCTION,
     CB_SUPPORT_BACK,
@@ -82,6 +86,7 @@ from referrals import capture_referral_start, get_referral_screen_data
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 
 router = Router()
+USER_PROMO_INPUT_ACTION_KEY = "user_promo_input"
 
 
 def _config_filename_prefix() -> str:
@@ -272,6 +277,84 @@ async def _send_support_center(target) -> None:
     )
 
 
+async def _clear_promo_input_pending(user_id: int) -> None:
+    await clear_pending_admin_action(user_id, USER_PROMO_INPUT_ACTION_KEY)
+
+
+async def _start_promo_input_flow(target, user: types.User) -> None:
+    await _clear_promo_input_pending(user.id)
+    await set_pending_admin_action(
+        user.id,
+        USER_PROMO_INPUT_ACTION_KEY,
+        {"action": USER_PROMO_INPUT_ACTION_KEY},
+    )
+    await target.answer(
+        "Введите промокод одним сообщением.",
+        reply_markup=get_promo_cancel_kb(),
+    )
+
+
+def _is_promo_cancel_text(text: str | None) -> bool:
+    return str(text or "").strip().lower() in {"отмена", "cancel", "/cancel"}
+
+
+async def _apply_promo_code(message: types.Message, code: str) -> None:
+    try:
+        activation = await activate_promo_code(message.from_user.id, code)
+        status = activation["status"]
+        if status == "not_found":
+            await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=not_found")
+            await message.answer("❌ Промокод не найден.")
+            return
+        if status == "inactive":
+            await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=inactive")
+            await message.answer("❌ Промокод выключен.")
+            return
+        if status == "exhausted":
+            await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=exhausted")
+            await message.answer("❌ Лимит активаций исчерпан.")
+            return
+        if status == "already_used":
+            await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=already_used")
+            await message.answer("❌ Этот промокод уже нельзя применить.")
+            return
+
+        bonus_days = int(activation["bonus_days"])
+        operation_id = f"promo-{code}-{message.from_user.id}"
+        new_until = await issue_subscription(message.from_user.id, bonus_days, operation_id=operation_id)
+        await write_audit_log(
+            message.from_user.id,
+            "promo_activated",
+            f"code={code}; days={bonus_days}; until={new_until.isoformat()}",
+        )
+        await message.answer(
+            f"✅ Промокод применён: +{bonus_days} дней.\n📅 Доступ до: <b>{new_until.strftime('%d.%m.%Y %H:%M')}</b>",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.exception("Ошибка promo apply: %s", e)
+        await rollback_promo_activation_reservation(message.from_user.id, code)
+        await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=internal_error")
+        await message.answer("❌ Не удалось применить промокод. Попробуйте позже.")
+
+
+async def _handle_promo_input_message(message: types.Message) -> bool:
+    action = await get_pending_admin_action(message.from_user.id, USER_PROMO_INPUT_ACTION_KEY)
+    if not action:
+        return False
+    if _is_promo_cancel_text(message.text):
+        await _clear_promo_input_pending(message.from_user.id)
+        await message.answer("❌ Ввод промокода отменён.")
+        return True
+    code = normalize_promo_code(message.text or "")
+    if not code:
+        await message.answer("Введите промокод или нажмите «❌ Отмена».", reply_markup=get_promo_cancel_kb())
+        return True
+    await _clear_promo_input_pending(message.from_user.id)
+    await _apply_promo_code(message, code)
+    return True
+
+
 async def _start_user_reissue_flow(target, user: types.User, *, key_id: int | None = None) -> None:
     sub_until = await get_user_subscription(user.id)
     if not subscription_is_active(sub_until):
@@ -322,6 +405,7 @@ async def noop_callback(cb: types.CallbackQuery):
 
 @router.message(Command("start"))
 async def start(message: types.Message, command: CommandObject):
+    await _clear_promo_input_pending(message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if command.args:
         await capture_referral_start(message.from_user.id, command.args.strip())
@@ -374,52 +458,18 @@ async def terms_cmd(message: types.Message):
 
 @router.message(Command("promo"))
 async def promo_cmd(message: types.Message, command: CommandObject):
+    await _clear_promo_input_pending(message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     code = normalize_promo_code(command.args or "")
     if not code:
         await message.answer("Формат: <code>/promo CODE</code>", parse_mode="HTML")
         return
-    try:
-        activation = await activate_promo_code(message.from_user.id, code)
-        status = activation["status"]
-        if status == "not_found":
-            await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=not_found")
-            await message.answer("❌ Промокод не найден.")
-            return
-        if status == "inactive":
-            await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=inactive")
-            await message.answer("❌ Промокод выключен.")
-            return
-        if status == "exhausted":
-            await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=exhausted")
-            await message.answer("❌ Лимит активаций исчерпан.")
-            return
-        if status == "already_used":
-            await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=already_used")
-            await message.answer("❌ Этот промокод уже нельзя применить.")
-            return
-
-        bonus_days = int(activation["bonus_days"])
-        operation_id = f"promo-{code}-{message.from_user.id}"
-        new_until = await issue_subscription(message.from_user.id, bonus_days, operation_id=operation_id)
-        await write_audit_log(
-            message.from_user.id,
-            "promo_activated",
-            f"code={code}; days={bonus_days}; until={new_until.isoformat()}",
-        )
-        await message.answer(
-            f"✅ Промокод применён: +{bonus_days} дней.\n📅 Доступ до: <b>{new_until.strftime('%d.%m.%Y %H:%M')}</b>",
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        logger.exception("Ошибка /promo: %s", e)
-        await rollback_promo_activation_reservation(message.from_user.id, code)
-        await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=internal_error")
-        await message.answer("❌ Не удалось применить промокод. Попробуйте позже.")
+    await _apply_promo_code(message, code)
 
 
 @router.message(F.text == BTN_PROFILE)
 async def profile(message: types.Message):
+    await _clear_promo_input_pending(message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if message.from_user.id == ADMIN_ID:
         maybe_set_support_username(message.from_user.username)
@@ -465,6 +515,7 @@ async def profile(message: types.Message):
 
 @router.message(F.text == BTN_CONFIGS)
 async def my_keys(message: types.Message):
+    await _clear_promo_input_pending(message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if message.from_user.id == ADMIN_ID:
         maybe_set_support_username(message.from_user.username)
@@ -560,6 +611,7 @@ async def guide(message: types.Message):
 
 @router.message(F.text == BTN_SUPPORT)
 async def support(message: types.Message):
+    await _clear_promo_input_pending(message.from_user.id)
     support_username = get_support_username()
     if not support_username:
         logger.warning("SUPPORT_USERNAME is not configured; support contact hidden from user flow")
@@ -693,6 +745,7 @@ async def support_back_callback(cb: types.CallbackQuery):
 
 @router.message(F.text == BTN_BUY)
 async def buy(message: types.Message):
+    await _clear_promo_input_pending(message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if message.from_user.id == ADMIN_ID:
         maybe_set_support_username(message.from_user.username)
@@ -723,6 +776,33 @@ async def show_instruction_callback(cb: types.CallbackQuery):
     await cb.answer()
     if cb.message:
         await cb.message.answer(await get_instruction_with_policy_text(), parse_mode="HTML", disable_web_page_preview=True)
+
+
+@router.message(F.text == BTN_PROMO)
+async def promo_from_menu(message: types.Message):
+    await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    await _start_promo_input_flow(message, message.from_user)
+
+
+@router.callback_query(F.data == CB_PROMO_INPUT_START)
+async def promo_input_start_callback(cb: types.CallbackQuery):
+    await cb.answer()
+    if cb.message:
+        await _start_promo_input_flow(cb.message, cb.from_user)
+
+
+@router.callback_query(F.data == CB_PROMO_INPUT_CANCEL)
+async def promo_input_cancel_callback(cb: types.CallbackQuery):
+    await cb.answer()
+    await _clear_promo_input_pending(cb.from_user.id)
+    if cb.message:
+        await cb.message.answer("❌ Ввод промокода отменён.")
+
+
+@router.message()
+async def promo_input_pending_message(message: types.Message):
+    if await _handle_promo_input_message(message):
+        return
 
 
 @router.message()
