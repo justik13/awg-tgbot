@@ -62,6 +62,24 @@ def _run_nft_script(script: str) -> str:
     return _run(["nft", "-f", "-"], stdin_text=script)
 
 
+def _ensure_qos_root_qdisc(host_interface: str) -> None:
+    qdisc_replace_cmd = ["tc", "qdisc", "replace", "dev", host_interface, "root", "handle", "1:", "htb", "default", "9999"]
+    try:
+        _run(qdisc_replace_cmd)
+        return
+    except RuntimeError as e:
+        err = str(e).lower()
+        if "change operation not supported" not in err and "specified qdisc" not in err:
+            raise
+    try:
+        _run(["tc", "qdisc", "del", "dev", host_interface, "root"])
+    except RuntimeError as e:
+        err = str(e).lower()
+        if "no such file" not in err and "no such qdisc" not in err:
+            raise
+    _run(["tc", "qdisc", "add", "dev", host_interface, "root", "handle", "1:", "htb", "default", "9999"])
+
+
 def _nft_exists(kind: str, family: str, table: str, name: str | None = None) -> bool:
     args = ["nft", "list", kind, family, table]
     if name is not None:
@@ -188,7 +206,7 @@ def main() -> int:
             if rate_mbit <= 0 or rate_mbit > 10000:
                 raise RuntimeError("invalid rate-mbit")
             classid_suffix = ip.split(".")[-1]
-            _run(["tc", "qdisc", "replace", "dev", host_interface, "root", "handle", "1:", "htb", "default", "9999"])
+            _ensure_qos_root_qdisc(host_interface)
             _run(["tc", "class", "replace", "dev", host_interface, "parent", "1:", "classid", f"1:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
             _run(["tc", "filter", "replace", "dev", host_interface, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
             print(f"qos set {ip} {rate_mbit}mbit")
@@ -202,7 +220,7 @@ def main() -> int:
             return 0
         if args.op == "qos-sync":
             payload = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
-            _run(["tc", "qdisc", "replace", "dev", host_interface, "root", "handle", "1:", "htb", "default", "9999"])
+            _ensure_qos_root_qdisc(host_interface)
             for line in payload:
                 ip_raw, rate_raw = line.split(",", 1)
                 ip = _safe_ipv4(ip_raw.strip())
