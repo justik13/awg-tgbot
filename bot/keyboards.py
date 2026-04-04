@@ -314,7 +314,7 @@ def get_admin_service_settings_kb(ref_enabled: int, torrent_enabled: int) -> Inl
             [InlineKeyboardButton(text=f"🎁 Рефералы: {'ON' if ref_enabled == 1 else 'OFF'}", callback_data=CB_ADMIN_SERVICE_REFERRAL_TOGGLE)],
             [InlineKeyboardButton(text="🎁 Бонус другу", callback_data=CB_ADMIN_SERVICE_INVITEE_BONUS)],
             [InlineKeyboardButton(text="🏅 Бонус пригласившему", callback_data=CB_ADMIN_SERVICE_INVITER_BONUS)],
-            [InlineKeyboardButton(text=f"⚠️ Torrent warning: {'ON' if torrent_enabled == 1 else 'OFF'}", callback_data=CB_ADMIN_SERVICE_TORRENT_TOGGLE)],
+            [InlineKeyboardButton(text=f"⚠️ Предупреждение о торрентах: {'ON' if torrent_enabled == 1 else 'OFF'}", callback_data=CB_ADMIN_SERVICE_TORRENT_TOGGLE)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
         ]
     )

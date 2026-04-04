@@ -79,6 +79,7 @@ def test_maintenance_toggle_buttons(monkeypatch):
 
 def test_findpay_slash_fallback(monkeypatch):
     message = _msg("/findpay tg-2")
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
     monkeypatch.setattr(
         handlers_admin,
         "get_payment_summary_by_charge_id",
@@ -196,12 +197,14 @@ def test_top_level_admin_screens_clear_network_policy_pending(monkeypatch):
 def test_stats_and_sync_callbacks_clear_network_policy_pending(monkeypatch):
     cb_stats = _cb(handlers_admin.CB_ADMIN_STATS)
     monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
     monkeypatch.setattr(handlers_admin, "build_stats_text", AsyncMock(return_value="ok"))
     asyncio.run(handlers_admin.admin_stats_cb(cb_stats))
     handlers_admin._clear_network_policy_pending.assert_awaited_once()
 
     cb_sync = _cb(handlers_admin.CB_ADMIN_SYNC)
     monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
     monkeypatch.setattr(handlers_admin, "sync_qos_state", AsyncMock())
     monkeypatch.setattr(handlers_admin, "denylist_sync", AsyncMock())
     monkeypatch.setattr(handlers_admin, "build_awg_sync_text", AsyncMock(return_value="sync"))
@@ -212,9 +215,24 @@ def test_stats_and_sync_callbacks_clear_network_policy_pending(monkeypatch):
 def test_stats_slash_command_clears_network_policy_pending(monkeypatch):
     message = _msg("/stats")
     monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
     monkeypatch.setattr(handlers_admin, "build_stats_text", AsyncMock(return_value="stats"))
     asyncio.run(handlers_admin.stats_cmd(message))
     handlers_admin._clear_network_policy_pending.assert_awaited_once()
+
+
+def test_top_level_slash_commands_clear_service_pending(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "build_runtime_smokecheck_text", AsyncMock(return_value="ok"))
+    asyncio.run(handlers_admin.health_cmd(_msg("/health")))
+    handlers_admin._clear_service_settings_pending.assert_awaited()
+
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_render_network_policy_text", AsyncMock(return_value="ok"))
+    asyncio.run(handlers_admin.netpolicy_cmd(_msg("/netpolicy")))
+    handlers_admin._clear_service_settings_pending.assert_awaited()
 
 
 def test_denylist_domains_and_cidrs_input(monkeypatch):
@@ -262,3 +280,40 @@ def test_text_override_screen_validates_and_resets(monkeypatch):
     monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
     asyncio.run(handlers_admin.admin_text_override_reset(cb))
     handlers_admin.reset_text_override.assert_awaited_once_with("support_contact")
+
+
+def test_top_level_sections_clear_service_and_text_pending(monkeypatch):
+    cb = _cb(handlers_admin.CB_ADMIN_PAYMENTS)
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "clear_pending_admin_action", AsyncMock())
+    asyncio.run(handlers_admin.admin_payments_screen(cb))
+    handlers_admin._clear_service_settings_pending.assert_awaited_once()
+
+    cb_text = _cb(handlers_admin.CB_ADMIN_TEXT_OVERRIDES)
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "list_text_overrides", AsyncMock(return_value=[]))
+    asyncio.run(handlers_admin.admin_text_overrides_screen(cb_text))
+    handlers_admin._clear_service_settings_pending.assert_awaited_once()
+
+
+def test_starting_service_and_text_inputs_clears_cross_pending(monkeypatch):
+    cb_support = _cb(handlers_admin.CB_ADMIN_SERVICE_SUPPORT)
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "set_pending_admin_action", AsyncMock())
+    asyncio.run(handlers_admin.admin_service_support_start(cb_support))
+    handlers_admin._clear_service_settings_pending.assert_awaited_once()
+
+    cb_text = _cb(f"{handlers_admin.CB_ADMIN_TEXT_SET_PREFIX}start")
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "set_pending_admin_action", AsyncMock())
+    asyncio.run(handlers_admin.admin_text_override_set_start(cb_text))
+    handlers_admin._clear_service_settings_pending.assert_awaited_once()
+
+
+def test_support_username_validation():
+    assert handlers_admin._normalize_support_username("@good_name_1") == "@good_name_1"
+    assert handlers_admin._normalize_support_username("goodname") == "@goodname"
+    assert handlers_admin._normalize_support_username("bad name") == ""
+    assert handlers_admin._normalize_support_username("@bad-name") == ""

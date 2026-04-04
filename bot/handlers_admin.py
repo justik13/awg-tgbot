@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import timedelta
 import ipaddress
+import re
 
 import config
 
@@ -533,10 +534,13 @@ async def _render_network_policy_text() -> str:
 
 
 def _normalize_support_username(value: str) -> str:
-    raw = value.strip().lstrip("@").strip()
+    raw = value.strip()
     if not raw:
         return ""
-    return f"@{raw}"
+    username = raw[1:] if raw.startswith("@") else raw
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,32}", username):
+        return ""
+    return f"@{username}"
 
 
 async def _render_service_settings_text() -> str:
@@ -553,7 +557,7 @@ async def _render_service_settings_text() -> str:
         f"🎁 Рефералы: <b>{_bool_on_off(referral_enabled)}</b>\n"
         f"🎁 Бонус другу: <b>{invitee_bonus} дн.</b>\n"
         f"🏅 Бонус пригласившему: <b>{inviter_bonus} дн.</b>\n"
-        f"⚠️ Torrent warning: <b>{_bool_on_off(torrent_enabled)}</b>"
+        f"⚠️ Предупреждение о торрентах: <b>{_bool_on_off(torrent_enabled)}</b>"
     )
 
 
@@ -925,6 +929,7 @@ async def admin_payments_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
     await cb.message.answer("💳 <b>Платежи</b>", parse_mode="HTML", reply_markup=get_admin_payments_kb())
@@ -956,6 +961,7 @@ async def admin_prices(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await cb.message.answer(
         _render_admin_prices_text(),
         parse_mode="HTML",
@@ -1059,6 +1065,7 @@ async def admin_stats_cb(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await cb.message.answer(await build_stats_text(), parse_mode="HTML")
     await cb.answer("Готово")
 
@@ -1068,6 +1075,7 @@ async def admin_sync_awg(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     try:
         await sync_qos_state()
         await denylist_sync(run_docker)
@@ -1083,6 +1091,7 @@ async def admin_network_policy_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await cb.message.answer(await _render_network_policy_text(), parse_mode="HTML", reply_markup=get_admin_network_policy_kb())
     await cb.answer()
 
@@ -1111,7 +1120,7 @@ async def admin_network_policy_sync_now(cb: types.CallbackQuery):
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_network_policy_sync", "manual_sync=1")
     await cb.message.answer("✅ QoS и denylist синхронизированы.")
-    await cb.answer("Sync done")
+    await cb.answer("Готово")
 
 
 @router.callback_query(F.data == CB_ADMIN_QOS_TOGGLE)
@@ -1193,7 +1202,7 @@ async def admin_denylist_view_domains(cb: types.CallbackQuery):
     domains = str(await get_setting("EGRESS_DENYLIST_DOMAINS", str) or "")
     lines = [item.strip() for item in domains.split(",") if item.strip()]
     body = "\n".join(f"• {escape_html(item)}" for item in lines[:100]) if lines else "Список пуст."
-    await cb.message.answer(f"🧾 <b>Domains denylist</b>\n{body}", parse_mode="HTML")
+    await cb.message.answer(f"🧾 <b>Список доменов denylist</b>\n{body}", parse_mode="HTML")
     await cb.answer()
 
 
@@ -1204,7 +1213,7 @@ async def admin_denylist_view_cidrs(cb: types.CallbackQuery):
     cidrs = str(await get_setting("EGRESS_DENYLIST_CIDRS", str) or "")
     lines = [item.strip() for item in cidrs.split(",") if item.strip()]
     body = "\n".join(f"• {escape_html(item)}" for item in lines[:100]) if lines else "Список пуст."
-    await cb.message.answer(f"🧾 <b>CIDR denylist</b>\n{body}", parse_mode="HTML")
+    await cb.message.answer(f"🧾 <b>Список CIDR denylist</b>\n{body}", parse_mode="HTML")
     await cb.answer()
 
 
@@ -1233,13 +1242,14 @@ async def admin_denylist_sync_now(cb: types.CallbackQuery):
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_denylist_sync", "manual_sync=1")
     await cb.message.answer("✅ Denylist sync выполнен.")
-    await cb.answer("Done")
+    await cb.answer("Готово")
 
 @router.callback_query(F.data == CB_ADMIN_LIST)
 async def admin_list_all(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await _render_users_page(cb.message, 0)
     await cb.answer()
 
@@ -1794,6 +1804,7 @@ async def admin_referrals_summary(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await cb.message.answer(
         await build_ref_stats_text(),
         parse_mode="HTML",
@@ -1822,7 +1833,7 @@ async def admin_service_settings_screen(cb: types.CallbackQuery):
 async def admin_service_support_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await clear_pending_admin_action(ADMIN_ID, SERVICE_DOWNLOAD_INPUT_ACTION_KEY)
+    await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_SUPPORT_INPUT_ACTION_KEY, {"action": SERVICE_SUPPORT_INPUT_ACTION_KEY})
     await cb.message.answer("Введите username поддержки (пример: @support).")
     await cb.answer()
@@ -1832,7 +1843,7 @@ async def admin_service_support_start(cb: types.CallbackQuery):
 async def admin_service_download_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await clear_pending_admin_action(ADMIN_ID, SERVICE_SUPPORT_INPUT_ACTION_KEY)
+    await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_DOWNLOAD_INPUT_ACTION_KEY, {"action": SERVICE_DOWNLOAD_INPUT_ACTION_KEY})
     await cb.message.answer("Введите ссылку на загрузку (не пустую).")
     await cb.answer()
@@ -1853,7 +1864,7 @@ async def admin_service_referral_toggle(cb: types.CallbackQuery):
 async def admin_service_invitee_bonus_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await clear_pending_admin_action(ADMIN_ID, SERVICE_INVITER_BONUS_INPUT_ACTION_KEY)
+    await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY})
     await cb.message.answer("Введите бонус другу в днях (целое > 0).")
     await cb.answer()
@@ -1863,7 +1874,7 @@ async def admin_service_invitee_bonus_start(cb: types.CallbackQuery):
 async def admin_service_inviter_bonus_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await clear_pending_admin_action(ADMIN_ID, SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY)
+    await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_INVITER_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_INVITER_BONUS_INPUT_ACTION_KEY})
     await cb.message.answer("Введите бонус пригласившему в днях (целое > 0).")
     await cb.answer()
@@ -1886,6 +1897,7 @@ async def admin_health_summary(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await cb.message.answer(await build_runtime_smokecheck_text(), parse_mode="HTML")
     await cb.answer("Готово")
 
@@ -1895,10 +1907,10 @@ async def admin_text_overrides_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
-    await clear_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY)
+    await _clear_service_settings_pending()
     overrides_count = len(await list_text_overrides())
     await cb.message.answer(
-        f"📝 <b>Текстовые overrides</b>\nАктивных override: <b>{overrides_count}</b>",
+        f"📝 <b>Переопределения текстов</b>\nАктивных переопределений: <b>{overrides_count}</b>",
         parse_mode="HTML",
         reply_markup=get_admin_text_overrides_kb(),
     )
@@ -1915,7 +1927,7 @@ async def admin_text_override_view_key(cb: types.CallbackQuery):
         return
     text = await get_text(key)
     await cb.message.answer(
-        f"📝 <b>{key}</b>\n\n{text}",
+        f"📝 <b>Шаблон: {key}</b>\n\n{text}",
         parse_mode="HTML",
         reply_markup=get_admin_text_override_item_kb(key),
     )
@@ -1926,6 +1938,7 @@ async def admin_text_override_view_key(cb: types.CallbackQuery):
 async def admin_text_override_set_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_service_settings_pending()
     key = cb.data.removeprefix(CB_ADMIN_TEXT_SET_PREFIX)
     if key not in TEXT_OVERRIDE_ALLOWED_KEYS:
         await cb.answer("Ключ недоступен", show_alert=True)
@@ -1946,7 +1959,7 @@ async def admin_text_override_reset(cb: types.CallbackQuery):
     await reset_text_override(key)
     await write_audit_log(ADMIN_ID, "admin_text_override_reset", f"key={key}")
     await cb.message.answer(
-        f"✅ Сброшено: <b>{key}</b>\n\n{TEXT_DEFAULTS.get(key, '')}",
+        f"✅ Сброшен шаблон: <b>{key}</b>\n\n{TEXT_DEFAULTS.get(key, '')}",
         parse_mode="HTML",
         reply_markup=get_admin_text_override_item_kb(key),
     )
@@ -1959,6 +1972,7 @@ async def admin_maintenance_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
     status_line = "🟠 maintenance: ON" if enabled else "🟢 maintenance: OFF"
     await cb.message.answer(status_line, reply_markup=get_admin_maintenance_kb(enabled))
@@ -1990,6 +2004,7 @@ async def admin_promocodes_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
     await cb.message.answer("🎟 <b>Промокоды</b>", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
@@ -2137,7 +2152,7 @@ async def admin_service_settings_capture_input(message: types.Message):
     if await get_pending_admin_action(ADMIN_ID, SERVICE_SUPPORT_INPUT_ACTION_KEY):
         normalized = _normalize_support_username(raw)
         if not normalized:
-            await message.answer("Введите корректный username.")
+            await message.answer("Введите корректный username Telegram.")
             return
         save_env_value("SUPPORT_USERNAME", normalized)
         await clear_pending_admin_action(ADMIN_ID, SERVICE_SUPPORT_INPUT_ACTION_KEY)
@@ -2231,7 +2246,7 @@ async def admin_network_policy_capture_input(message: types.Message):
         await set_app_setting("EGRESS_DENYLIST_DOMAINS", normalized, updated_by=ADMIN_ID)
         await denylist_sync(run_docker)
         await write_audit_log(ADMIN_ID, "admin_denylist_domains_set", f"count={len([x for x in normalized.split(',') if x])}")
-        await message.answer("✅ Domains denylist обновлён (selfhost hygiene / abuse-risk reduction).")
+        await message.answer("✅ Список доменов denylist обновлён.")
         return
 
     if deny_cidrs_pending:
@@ -2245,7 +2260,7 @@ async def admin_network_policy_capture_input(message: types.Message):
         await set_app_setting("EGRESS_DENYLIST_CIDRS", normalized, updated_by=ADMIN_ID)
         await denylist_sync(run_docker)
         await write_audit_log(ADMIN_ID, "admin_denylist_cidrs_set", f"count={len([x for x in normalized.split(',') if x])}")
-        await message.answer("✅ CIDR denylist обновлён (selfhost hygiene / risky destinations control).")
+        await message.answer("✅ Список CIDR denylist обновлён.")
         return
 
 @router.message(Command("give"), IsAdmin())
@@ -2368,6 +2383,7 @@ async def revoke_user_cmd(message: types.Message, command: CommandObject):
 
 @router.message(Command("users"), IsAdmin())
 async def list_users_cmd(message: types.Message):
+    await _clear_service_settings_pending()
     rows = await fetchall("SELECT user_id, sub_until FROM users ORDER BY created_at DESC LIMIT 50")
     if not rows:
         await message.answer("Пользователей пока нет.")
@@ -2382,6 +2398,7 @@ async def list_users_cmd(message: types.Message):
 
 @router.message(Command("finduser"), IsAdmin())
 async def find_user_cmd(message: types.Message, command: CommandObject):
+    await _clear_service_settings_pending()
     query = (command.args or "").strip()
     if not query:
         await message.answer("Формат: <code>/finduser QUERY</code>\nQUERY: user_id или username/@username", parse_mode="HTML")
@@ -2441,6 +2458,7 @@ async def find_user_cmd(message: types.Message, command: CommandObject):
 
 @router.message(Command("payinfo"), IsAdmin())
 async def payinfo_cmd(message: types.Message, command: CommandObject):
+    await _clear_service_settings_pending()
     if not command.args or not command.args.strip().isdigit():
         await message.answer("Формат: <code>/payinfo USER_ID</code>", parse_mode="HTML")
         return
@@ -2454,6 +2472,7 @@ async def payinfo_cmd(message: types.Message, command: CommandObject):
 
 @router.message(Command("findpay"), IsAdmin())
 async def findpay_cmd(message: types.Message, command: CommandObject):
+    await _clear_service_settings_pending()
     charge_id = (command.args or "").strip()
     if not charge_id:
         await message.answer("Формат: <code>/findpay CHARGE_ID</code>", parse_mode="HTML")
@@ -2472,11 +2491,13 @@ async def findpay_cmd(message: types.Message, command: CommandObject):
 @router.message(Command("stats"), IsAdmin())
 async def stats_cmd(message: types.Message):
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await message.answer(await build_stats_text(), parse_mode="HTML")
 
 
 @router.message(Command("audit"), IsAdmin())
 async def audit_cmd(message: types.Message, command: CommandObject):
+    await _clear_service_settings_pending()
     limit = 20
     if command.args:
         try:
@@ -2504,6 +2525,7 @@ async def audit_cmd(message: types.Message, command: CommandObject):
 @router.message(Command("sync_awg"), IsAdmin())
 async def sync_awg_cmd(message: types.Message):
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     try:
         await sync_qos_state()
         await denylist_sync(run_docker)
@@ -2547,6 +2569,7 @@ async def broadcast_prepare(message: types.Message, command: CommandObject):
 @router.message(Command("health"), IsAdmin())
 async def health_cmd(message: types.Message):
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await message.answer(await build_runtime_smokecheck_text(), parse_mode="HTML")
 
 
@@ -2585,6 +2608,7 @@ async def maintenance_off_cmd(message: types.Message):
 @router.message(Command("netpolicy"), IsAdmin())
 async def netpolicy_cmd(message: types.Message):
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await message.answer(await _render_network_policy_text(), parse_mode="HTML", reply_markup=get_admin_network_policy_kb())
 
 
@@ -2638,4 +2662,5 @@ async def denylist_sync_cmd(message: types.Message):
 @router.message(Command("ref_stats"), IsAdmin())
 async def ref_stats_cmd(message: types.Message):
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await message.answer(await build_ref_stats_text(), parse_mode="HTML")
