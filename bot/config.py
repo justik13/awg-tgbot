@@ -113,6 +113,7 @@ PUBLIC_HOST = PUBLIC_HOST_HINT
 
 DOCKER_CONTAINER = env_with_runtime_default('DOCKER_CONTAINER', DOCKER_CONTAINER_HINT or DEFAULT_ENV['DOCKER_CONTAINER'])
 WG_INTERFACE = env_with_runtime_default('WG_INTERFACE', _detected_awg.get('WG_INTERFACE', '').strip() or DEFAULT_ENV['WG_INTERFACE'])
+WG_HOST_INTERFACE = env_with_runtime_default('WG_HOST_INTERFACE', '') or WG_INTERFACE
 DB_PATH = env_with_runtime_default('DB_PATH', DEFAULT_ENV['DB_PATH'])
 
 DOWNLOAD_URL = env_with_runtime_default('DOWNLOAD_URL', DEFAULT_ENV['DOWNLOAD_URL'])
@@ -201,6 +202,7 @@ validate_helper_policy(
     policy_path=AWG_HELPER_POLICY_PATH,
     docker_container=DOCKER_CONTAINER,
     wg_interface=WG_INTERFACE,
+    wg_host_interface=WG_HOST_INTERFACE,
     logger=logger,
 )
 

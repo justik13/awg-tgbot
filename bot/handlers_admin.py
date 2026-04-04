@@ -20,6 +20,7 @@ from config import (
     AWG_HELPER_POLICY_PATH,
     DOCKER_CONTAINER,
     WG_INTERFACE,
+    WG_HOST_INTERFACE,
     logger,
     save_env_value,
     set_stars_price,
@@ -409,7 +410,7 @@ async def run_runtime_smokecheck() -> dict[str, object]:
         )
 
     if AWG_HELPER_POLICY_PATH and DOCKER_CONTAINER and WG_INTERFACE:
-        policy_container, policy_interface, policy_error = read_helper_policy(Path(AWG_HELPER_POLICY_PATH))
+        policy_container, policy_interface, _, policy_error = read_helper_policy(Path(AWG_HELPER_POLICY_PATH))
         if policy_error:
             detail = policy_error
             if "parse failed:" in policy_error:
@@ -508,6 +509,38 @@ def _bool_on_off(value: int | bool) -> str:
     return "включено" if int(value) == 1 else "выключено"
 
 
+def _metric_or_ne_bilo(value: int | str | None) -> str:
+    try:
+        return "не было" if int(str(value or 0)) == 0 else str(value)
+    except Exception:
+        return str(value or "не было")
+
+
+async def _qos_keyboard():
+    qos_enabled = int(await get_setting("QOS_ENABLED", int) or 0)
+    qos_strict = int(await get_setting("QOS_STRICT", int) or 0)
+    default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
+    return get_admin_qos_kb(qos_enabled=qos_enabled, qos_strict=qos_strict, default_rate_mbit=default_rate)
+
+
+async def _denylist_keyboard():
+    enabled = int(await get_setting("EGRESS_DENYLIST_ENABLED", int) or 0)
+    mode = str(await get_setting("EGRESS_DENYLIST_MODE", str) or "soft").strip().lower() or "soft"
+    return get_admin_denylist_kb(denylist_enabled=enabled, denylist_mode=mode)
+
+
+async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_markup) -> None:
+    message = cb.message
+    if message is not None and hasattr(message, "edit_text"):
+        try:
+            await message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
+            return
+        except Exception:
+            pass
+    if message is not None:
+        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+
+
 async def _render_network_policy_text() -> str:
     policy_stats = await policy_metrics()
     qos_enabled = int(await get_setting("QOS_ENABLED", int) or 0)
@@ -516,18 +549,27 @@ async def _render_network_policy_text() -> str:
     deny_enabled = int(await get_setting("EGRESS_DENYLIST_ENABLED", int) or 0)
     deny_mode = str(await get_setting("EGRESS_DENYLIST_MODE", str) or "soft").strip().lower()
     deny_refresh = int(await get_setting("EGRESS_DENYLIST_REFRESH_MINUTES", int) or 30)
+    host_interface = str(WG_HOST_INTERFACE or WG_INTERFACE or "").strip() or WG_INTERFACE
+    health_lines: list[str] = []
+    if int(policy_stats["qos_last_sync_ok"]) == 0 and int(policy_stats["qos_errors"]) > 0:
+        health_lines.append("⚠️ QoS сейчас не применяется")
+    if deny_enabled == 0:
+        health_lines.append("Denylist выключен — синхронизация не выполняется")
     return (
         "🌐 <b>Сеть</b>\n\n"
+        f"AWG: <b>{escape_html(DOCKER_CONTAINER)} / {escape_html(WG_INTERFACE)}</b>\n"
+        f"QoS host-интерфейс: <b>{escape_html(host_interface)}</b>\n\n"
         f"QoS: <b>{_bool_on_off(qos_enabled)}</b>\n"
         f"Скорость по умолчанию: <b>{default_rate} Mbit/s</b>\n"
         f"Строгий режим QoS: <b>{_bool_on_off(qos_strict)}</b>\n"
         f"Denylist: <b>{_bool_on_off(deny_enabled)}</b>\n"
         f"Режим denylist: <b>{escape_html(deny_mode)}</b>\n"
         f"Интервал обновления denylist: <b>{deny_refresh} мин</b>\n\n"
-        f"Последняя синхронизация QoS: <b>{policy_stats['qos_last_sync_ok']}</b>\n"
+        + ("\n".join(health_lines) + "\n\n" if health_lines else "")
+        + f"Последняя синхронизация QoS: <b>{_metric_or_ne_bilo(policy_stats['qos_last_sync_ok'])}</b>\n"
         f"Ошибки QoS: <b>{policy_stats['qos_errors']}</b>\n"
-        f"Последняя синхронизация denylist: <b>{policy_stats['denylist_last_sync_ok']}</b>\n"
-        f"Время последней синхронизации denylist: <b>{policy_stats['denylist_last_sync_ts']}</b>\n"
+        f"Последняя синхронизация denylist: <b>{_metric_or_ne_bilo(policy_stats['denylist_last_sync_ok'])}</b>\n"
+        f"Время последней синхронизации denylist: <b>{_metric_or_ne_bilo(policy_stats['denylist_last_sync_ts'])}</b>\n"
         f"Записей в denylist: <b>{policy_stats['denylist_entries']}</b>\n"
         f"Ошибки denylist: <b>{policy_stats['denylist_errors']}</b>"
     )
@@ -1095,7 +1137,7 @@ async def admin_network_policy_screen(cb: types.CallbackQuery):
         return
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await cb.message.answer(await _render_network_policy_text(), parse_mode="HTML", reply_markup=get_admin_network_policy_kb())
+    await _send_or_edit_admin_message(cb, await _render_network_policy_text(), get_admin_network_policy_kb())
     await cb.answer()
 
 
@@ -1103,7 +1145,7 @@ async def admin_network_policy_screen(cb: types.CallbackQuery):
 async def admin_network_policy_qos_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await cb.message.answer("📶 <b>Настройки QoS</b>", parse_mode="HTML", reply_markup=get_admin_qos_kb())
+    await _send_or_edit_admin_message(cb, "📶 <b>Настройки QoS</b>", await _qos_keyboard())
     await cb.answer()
 
 
@@ -1111,7 +1153,7 @@ async def admin_network_policy_qos_screen(cb: types.CallbackQuery):
 async def admin_network_policy_denylist_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await cb.message.answer("🛡 <b>Настройки denylist</b>", parse_mode="HTML", reply_markup=get_admin_denylist_kb())
+    await _send_or_edit_admin_message(cb, "🛡 <b>Настройки denylist</b>", await _denylist_keyboard())
     await cb.answer()
 
 
@@ -2652,7 +2694,7 @@ async def qos_status_cmd(message: types.Message):
             f"Включено: {_bool_on_off(qos_enabled)}\n"
             f"Скорость по умолчанию: {default_rate} Mbit/s\n"
             f"Строгий режим: {_bool_on_off(qos_strict)}\n"
-            f"Последняя синхронизация QoS: {metrics['qos_last_sync_ok']}\n"
+            f"Последняя синхронизация QoS: {_metric_or_ne_bilo(metrics['qos_last_sync_ok'])}\n"
             f"Ошибки: {metrics['qos_errors']}"
         ),
         parse_mode="HTML",
@@ -2673,8 +2715,8 @@ async def denylist_status_cmd(message: types.Message):
             f"Включено: {_bool_on_off(enabled)}\n"
             f"Режим: {escape_html(mode)}\n"
             f"Обновление: {refresh_minutes} мин\n"
-            f"Последняя синхронизация denylist: {metrics['denylist_last_sync_ok']}\n"
-            f"Время последней синхронизации denylist: {metrics['denylist_last_sync_ts']}\n"
+            f"Последняя синхронизация denylist: {_metric_or_ne_bilo(metrics['denylist_last_sync_ok'])}\n"
+            f"Время последней синхронизации denylist: {_metric_or_ne_bilo(metrics['denylist_last_sync_ts'])}\n"
             f"Записей: {metrics['denylist_entries']}\n"
             f"Ошибки: {metrics['denylist_errors']}"
         ),

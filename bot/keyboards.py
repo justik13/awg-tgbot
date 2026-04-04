@@ -280,22 +280,23 @@ def get_admin_network_policy_kb() -> InlineKeyboardMarkup:
     )
 
 
-def get_admin_qos_kb() -> InlineKeyboardMarkup:
+def get_admin_qos_kb(*, qos_enabled: int, qos_strict: int, default_rate_mbit: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🟢/⚪ QoS", callback_data=CB_ADMIN_QOS_TOGGLE)],
-            [InlineKeyboardButton(text="✏️ Скорость по умолчанию", callback_data=CB_ADMIN_QOS_DEFAULT_RATE)],
-            [InlineKeyboardButton(text="🟢/⚪ Strict", callback_data=CB_ADMIN_QOS_STRICT_TOGGLE)],
+            [InlineKeyboardButton(text=f"QoS: {'ВКЛ' if int(qos_enabled) == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_QOS_TOGGLE)],
+            [InlineKeyboardButton(text=f"Скорость: {int(default_rate_mbit)} Mbit/s", callback_data=CB_ADMIN_QOS_DEFAULT_RATE)],
+            [InlineKeyboardButton(text=f"Strict: {'ВКЛ' if int(qos_strict) == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_QOS_STRICT_TOGGLE)],
             [InlineKeyboardButton(text="🔄 Синхронизировать QoS", callback_data=CB_ADMIN_QOS_SYNC)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_NETWORK_POLICY)],
         ]
     )
 
 
-def get_admin_denylist_kb() -> InlineKeyboardMarkup:
+def get_admin_denylist_kb(*, denylist_enabled: int, denylist_mode: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🟢/⚪ Denylist", callback_data=CB_ADMIN_DENYLIST_TOGGLE)],
+            [InlineKeyboardButton(text=f"Denylist: {'ВКЛ' if int(denylist_enabled) == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_DENYLIST_TOGGLE)],
+            [InlineKeyboardButton(text=f"Режим denylist: {denylist_mode}", callback_data=CB_ADMIN_NET_DENYLIST)],
             [InlineKeyboardButton(text="Soft режим", callback_data=CB_ADMIN_DENYLIST_MODE_SOFT), InlineKeyboardButton(text="Strict режим", callback_data=CB_ADMIN_DENYLIST_MODE_STRICT)],
             [InlineKeyboardButton(text="👁 Домены", callback_data=CB_ADMIN_DENYLIST_VIEW_DOMAINS), InlineKeyboardButton(text="👁 CIDR", callback_data=CB_ADMIN_DENYLIST_VIEW_CIDRS)],
             [InlineKeyboardButton(text="✏️ Заменить домены", callback_data=CB_ADMIN_DENYLIST_REPLACE_DOMAINS)],
