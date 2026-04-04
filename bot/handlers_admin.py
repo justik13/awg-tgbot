@@ -76,7 +76,7 @@ router = Router()
 admin_command_rate_limit: dict[str, object] = {}
 ADMIN_USERS_PAGE_SIZE = 10
 ADMIN_MANUAL_COMMANDS: tuple[tuple[str, str], ...] = (
-    ("/health", "быстрая проверка selfhost readiness"),
+    ("/health", "быстрая проверка готовности selfhost"),
     ("/sync_awg", "сверка AWG и БД"),
     ("/stats", "краткая статистика"),
     ("/users", "короткий список пользователей"),
@@ -455,16 +455,16 @@ async def run_runtime_smokecheck() -> dict[str, object]:
 async def build_runtime_smokecheck_text() -> str:
     report = await run_runtime_smokecheck()
     overall = str(report["overall"])
-    overall_label = {"ok": "READY", "warning": "DEGRADED", "failed": "FAILED"}.get(overall, "UNKNOWN")
+    overall_label = {"ok": "ГОТОВО", "warning": "ЧАСТИЧНО", "failed": "ОШИБКА"}.get(overall, "НЕИЗВЕСТНО")
     lines = [
-        "🧪 <b>Selfhost smoke-check</b>",
+        "🧪 <b>Проверка selfhost</b>",
         "",
-        f"Overall: <b>{overall_label}</b>",
+        f"Итог: <b>{overall_label}</b>",
     ]
     for check in report["checks"]:
         lines.append(_smoke_status_line(str(check["name"]), str(check["state"]), str(check["detail"])))
     lines.append("")
-    lines.append(f"➡️ Next step: <b>{report['hint']}</b>")
+    lines.append(f"➡️ Следующий шаг: <b>{report['hint']}</b>")
     return "\n".join(lines)
 
 
@@ -832,16 +832,16 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
     speed_lines = []
     for device_num, rate_limit_mbit in admin_device_rows:
         if rate_limit_mbit is None:
-            speed_lines.append(f"• Устройство {int(device_num)} — default ({default_rate} Mbit/s)")
+            speed_lines.append(f"• Устройство {int(device_num)} — по умолчанию ({default_rate} Mbit/s)")
         else:
-            speed_lines.append(f"• Устройство {int(device_num)} — custom ({int(rate_limit_mbit)} Mbit/s)")
+            speed_lines.append(f"• Устройство {int(device_num)} — индивидуально ({int(rate_limit_mbit)} Mbit/s)")
     if not speed_lines:
         speed_lines.append("• нет активных устройств")
     connection_status = "готово" if keys else "нет ключа"
     payment_line, activation_line, charge_id = _payment_admin_details(payment_summary)
     operator_step = _operator_next_step(payment_summary["status"], activation_line, bool(keys)) if payment_summary else "wait"
     show_retry_activation = _is_retry_activation_relevant(payment_summary, bool(keys))
-    retry_hint = "\n🧰 Retry: <b>доступен</b> для ручной повторной активации" if show_retry_activation else ""
+    retry_hint = "\n🧰 Повтор активации: <b>доступен</b> для ручного запуска" if show_retry_activation else ""
     activity_lines = await _build_admin_device_activity_lines(uid)
     traffic_lines = await _build_admin_device_traffic_lines(uid)
     await target_message.answer(
@@ -1144,7 +1144,7 @@ async def admin_qos_strict_toggle(cb: types.CallbackQuery):
     new_value = "0" if strict == 1 else "1"
     await set_app_setting("QOS_STRICT", new_value, updated_by=ADMIN_ID)
     await write_audit_log(ADMIN_ID, "admin_qos_strict_set", f"value={new_value}")
-    await cb.message.answer(f"✅ QoS strict: {_bool_on_off(int(new_value))}")
+    await cb.message.answer(f"✅ QoS strict-режим: {_bool_on_off(int(new_value))}")
     await cb.answer()
 
 
@@ -1191,7 +1191,7 @@ async def admin_denylist_mode_set(cb: types.CallbackQuery):
     await set_app_setting("EGRESS_DENYLIST_MODE", mode, updated_by=ADMIN_ID)
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_denylist_mode_set", f"value={mode}")
-    await cb.message.answer(f"✅ Denylist mode: {mode}")
+    await cb.message.answer(f"✅ Режим Denylist: {mode}")
     await cb.answer()
 
 
@@ -1387,13 +1387,13 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
         result_message = result.get("message", "Без деталей.")
         if result_code == "succeeded":
             await write_audit_log(ADMIN_ID, "manual_retry_succeeded", f"target={uid}; payment_id={payment_id}")
-            outcome = "✅ Retry succeeded"
+            outcome = "✅ Повтор активации успешен"
         elif result_code in {"no_payment", "already_applied", "in_progress", "not_retryable", "no_op"}:
             await write_audit_log(ADMIN_ID, "manual_retry_noop", f"target={uid}; payment_id={payment_id}; result={result_code}")
-            outcome = "ℹ️ Retry no-op"
+            outcome = "ℹ️ Повтор активации не требуется"
         else:
             await write_audit_log(ADMIN_ID, "manual_retry_failed", f"target={uid}; payment_id={payment_id}; result={result_code}")
-            outcome = "⚠️ Retry failed"
+            outcome = "⚠️ Повтор активации не удался"
 
         await cb.message.answer(
             (
@@ -1407,7 +1407,7 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
             parse_mode="HTML",
             reply_markup=_user_manage_kb(uid, page),
         )
-        await cb.answer("Retry обработан")
+        await cb.answer("Повтор обработан")
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=True)
     except Exception as e:
@@ -2575,6 +2575,7 @@ async def health_cmd(message: types.Message):
 
 @router.message(Command("maintenance_status"), IsAdmin())
 async def maintenance_status_cmd(message: types.Message):
+    await _clear_service_settings_pending()
     enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
     status_line = "🟠 maintenance: ON (покупки заморожены)" if enabled else "🟢 maintenance: OFF (покупки доступны)"
     await message.answer(status_line)
@@ -2582,6 +2583,7 @@ async def maintenance_status_cmd(message: types.Message):
 
 @router.message(Command("maintenance_on"), IsAdmin())
 async def maintenance_on_cmd(message: types.Message):
+    await _clear_service_settings_pending()
     enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
     if enabled:
         await message.answer("🟠 Maintenance уже включен: новые покупки заморожены.")
@@ -2596,6 +2598,7 @@ async def maintenance_on_cmd(message: types.Message):
 
 @router.message(Command("maintenance_off"), IsAdmin())
 async def maintenance_off_cmd(message: types.Message):
+    await _clear_service_settings_pending()
     enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
     if not enabled:
         await message.answer("🟢 Maintenance уже выключен: покупки доступны.")
@@ -2614,6 +2617,7 @@ async def netpolicy_cmd(message: types.Message):
 
 @router.message(Command("qos_status"), IsAdmin())
 async def qos_status_cmd(message: types.Message):
+    await _clear_service_settings_pending()
     qos_enabled = int(await get_setting("QOS_ENABLED", int) or 0)
     default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
     qos_strict = int(await get_setting("QOS_STRICT", int) or 0)
@@ -2622,8 +2626,8 @@ async def qos_status_cmd(message: types.Message):
         (
             "📶 <b>Статус QoS</b>\n"
             f"enabled={_bool_on_off(qos_enabled)}\n"
-            f"default={default_rate} Mbit/s\n"
-            f"strict={_bool_on_off(qos_strict)}\n"
+            f"по_умолчанию={default_rate} Mbit/s\n"
+            f"strict_режим={_bool_on_off(qos_strict)}\n"
             f"last_sync_ok={metrics['qos_last_sync_ok']}\n"
             f"errors={metrics['qos_errors']}"
         ),
@@ -2633,6 +2637,7 @@ async def qos_status_cmd(message: types.Message):
 
 @router.message(Command("denylist_status"), IsAdmin())
 async def denylist_status_cmd(message: types.Message):
+    await _clear_service_settings_pending()
     enabled = int(await get_setting("EGRESS_DENYLIST_ENABLED", int) or 0)
     mode = str(await get_setting("EGRESS_DENYLIST_MODE", str) or "soft")
     refresh_minutes = int(await get_setting("EGRESS_DENYLIST_REFRESH_MINUTES", int) or 30)
@@ -2654,6 +2659,7 @@ async def denylist_status_cmd(message: types.Message):
 
 @router.message(Command("denylist_sync"), IsAdmin())
 async def denylist_sync_cmd(message: types.Message):
+    await _clear_service_settings_pending()
     await denylist_sync(run_docker)
     await write_audit_log(message.from_user.id, "admin_denylist_sync", "manual_sync=1")
     await message.answer("✅ denylist sync выполнен.")

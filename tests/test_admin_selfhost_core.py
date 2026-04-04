@@ -235,6 +235,17 @@ def test_top_level_slash_commands_clear_service_pending(monkeypatch):
     handlers_admin._clear_service_settings_pending.assert_awaited()
 
 
+def test_qos_status_command_clears_service_pending_and_uses_polished_wording(monkeypatch):
+    message = _msg("/qos_status")
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[1, 150, 0]))
+    monkeypatch.setattr(handlers_admin, "policy_metrics", AsyncMock(return_value={"qos_last_sync_ok": 1, "qos_errors": 0}))
+    asyncio.run(handlers_admin.qos_status_cmd(message))
+    handlers_admin._clear_service_settings_pending.assert_awaited_once()
+    rendered = message.answer.await_args.args[0]
+    assert "по_умолчанию=150 Mbit/s" in rendered
+
+
 def test_denylist_domains_and_cidrs_input(monkeypatch):
     assert handlers_admin._normalize_domains_multiline(" ExAmple.com\nexample.com \n\nTest.ORG ") == "example.com,test.org"
     assert handlers_admin._normalize_cidrs_multiline("10.0.0.1/24\n10.0.0.0/24") == "10.0.0.0/24"
