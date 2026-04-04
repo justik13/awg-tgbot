@@ -1108,10 +1108,10 @@ deploy_repo() {
   rm -rf "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging"
   if cp -a "$src_dir/bot/." "$BOT_DIR/" \
     && cp "$src_dir/awg-tgbot.sh" "$INSTALL_DIR/awg-tgbot.sh" \
-    && [[ ! -d "$src_dir/scripts" || cp -a "$src_dir/scripts" "$INSTALL_DIR/scripts" ]] \
-    && [[ ! -d "$src_dir/packaging" || cp -a "$src_dir/packaging" "$INSTALL_DIR/packaging" ]] \
+    && { [[ ! -d "$src_dir/scripts" ]] || cp -a "$src_dir/scripts" "$INSTALL_DIR/scripts"; } \
+    && { [[ ! -d "$src_dir/packaging" ]] || cp -a "$src_dir/packaging" "$INSTALL_DIR/packaging"; } \
     && chmod +x "$INSTALL_DIR/awg-tgbot.sh" \
-    && [[ ! -f "$AUTO_BACKUP_SCRIPT" || chmod +x "$AUTO_BACKUP_SCRIPT" ]] \
+    && { [[ ! -f "$AUTO_BACKUP_SCRIPT" ]] || chmod +x "$AUTO_BACKUP_SCRIPT"; } \
     && ln -sfn "$INSTALL_DIR/awg-tgbot.sh" "$SELF_SYMLINK"; then
     [[ -n "$backup_dir" ]] && rm -rf "$backup_dir"
     return 0
