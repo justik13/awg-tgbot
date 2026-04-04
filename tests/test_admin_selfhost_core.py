@@ -378,3 +378,34 @@ def test_callback_answers_and_maintenance_messages_are_polished(monkeypatch):
     monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
     asyncio.run(handlers_admin.admin_maintenance_on_cb(cb_on))
     assert "Техработы включены" in cb_on.message.answer.await_args.args[0]
+
+
+def test_remaining_top_level_slash_commands_clear_network_policy_pending(monkeypatch):
+    commands = [
+        (handlers_admin.give_manual, (_msg("/give"), CommandObject(prefix="/", command="give", mention=None, args=""))),
+        (handlers_admin.promo_create_cmd, (_msg("/promo_create"), CommandObject(prefix="/", command="promo_create", mention=None, args=""))),
+        (handlers_admin.promo_list_cmd, (_msg("/promo_list"), CommandObject(prefix="/", command="promo_list", mention=None, args=""))),
+        (handlers_admin.promo_disable_cmd, (_msg("/promo_disable"), CommandObject(prefix="/", command="promo_disable", mention=None, args=""))),
+        (handlers_admin.revoke_user_cmd, (_msg("/revoke"), CommandObject(prefix="/", command="revoke", mention=None, args=""))),
+        (handlers_admin.broadcast_prepare, (_msg("/send"), CommandObject(prefix="/", command="send", mention=None, args=""))),
+    ]
+
+    for fn, args in commands:
+        monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+        monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+        monkeypatch.setattr(handlers_admin, "admin_command_limited", lambda *_: False)
+        monkeypatch.setattr(handlers_admin, "clear_pending_broadcast", AsyncMock())
+        monkeypatch.setattr(handlers_admin, "set_pending_admin_action", AsyncMock())
+        monkeypatch.setattr(handlers_admin, "list_promo_codes", AsyncMock(return_value=[]))
+        asyncio.run(fn(*args))
+        handlers_admin._clear_network_policy_pending.assert_awaited_once()
+        handlers_admin._clear_service_settings_pending.assert_awaited_once()
+
+
+def test_admin_maintenance_screen_uses_tehwork_wording(monkeypatch):
+    cb = _cb(handlers_admin.CB_ADMIN_MAINTENANCE)
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(return_value=1))
+    asyncio.run(handlers_admin.admin_maintenance_screen(cb))
+    assert "Техработы: ВКЛ" in cb.message.answer.await_args.args[0]

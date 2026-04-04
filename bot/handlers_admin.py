@@ -1974,7 +1974,7 @@ async def admin_maintenance_screen(cb: types.CallbackQuery):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
-    status_line = "🟠 maintenance: ON" if enabled else "🟢 maintenance: OFF"
+    status_line = "🟠 Техработы: ВКЛ" if enabled else "🟢 Техработы: ВЫКЛ"
     await cb.message.answer(status_line, reply_markup=get_admin_maintenance_kb(enabled))
     await cb.answer("Готово")
 
@@ -2265,6 +2265,8 @@ async def admin_network_policy_capture_input(message: types.Message):
 
 @router.message(Command("give"), IsAdmin())
 async def give_manual(message: types.Message, command: CommandObject):
+    await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     if admin_command_limited("give", message.from_user.id):
         await message.answer("⏳ Слишком частый вызов /give")
         return
@@ -2299,6 +2301,8 @@ async def give_manual(message: types.Message, command: CommandObject):
 
 @router.message(Command("promo_create"), IsAdmin())
 async def promo_create_cmd(message: types.Message, command: CommandObject):
+    await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     if not command.args:
         await message.answer("Формат: <code>/promo_create CODE DAYS [MAX]</code>", parse_mode="HTML")
         return
@@ -2327,6 +2331,8 @@ async def promo_create_cmd(message: types.Message, command: CommandObject):
 
 @router.message(Command("promo_list"), IsAdmin())
 async def promo_list_cmd(message: types.Message, command: CommandObject):
+    await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     limit = 20
     if command.args:
         try:
@@ -2347,6 +2353,8 @@ async def promo_list_cmd(message: types.Message, command: CommandObject):
 
 @router.message(Command("promo_disable"), IsAdmin())
 async def promo_disable_cmd(message: types.Message, command: CommandObject):
+    await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     code = normalize_promo_code(command.args or "")
     if not code:
         await message.answer("Формат: <code>/promo_disable CODE</code>", parse_mode="HTML")
@@ -2365,6 +2373,8 @@ async def promo_disable_cmd(message: types.Message, command: CommandObject):
 
 @router.message(Command("revoke"), IsAdmin())
 async def revoke_user_cmd(message: types.Message, command: CommandObject):
+    await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     if not command.args:
         await message.answer("Формат: <code>/revoke ID</code>", parse_mode="HTML")
         return
@@ -2542,6 +2552,8 @@ async def sync_awg_cmd(message: types.Message):
 
 @router.message(Command("send"), IsAdmin())
 async def broadcast_prepare(message: types.Message, command: CommandObject):
+    await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     if admin_command_limited("send", message.from_user.id):
         await message.answer("⏳ Слишком частый вызов /send")
         return
