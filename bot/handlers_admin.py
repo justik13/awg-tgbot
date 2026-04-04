@@ -844,6 +844,9 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
     retry_hint = "\n🧰 Повтор активации: <b>доступен</b> для ручного запуска" if show_retry_activation else ""
     activity_lines = await _build_admin_device_activity_lines(uid)
     traffic_lines = await _build_admin_device_traffic_lines(uid)
+    activity_text = "\n".join(activity_lines)
+    traffic_text = "\n".join(traffic_lines)
+    speed_text = "\n".join(speed_lines)
     await target_message.answer(
         (
             "🛠 <b>Управление пользователем</b>\n\n"
@@ -861,11 +864,11 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
             f"➡️ Шаг оператора: <b>{operator_step}</b>\n"
             f"🎁 Рефералы: приглашено {referral['invited_count']} · с бонусом {referral['rewarded_count']}\n\n"
             "📶 Активность устройств:\n"
-            f"{'\n'.join(activity_lines)}\n\n"
+            f"{activity_text}\n\n"
             "📊 Трафик:\n"
-            f"{'\n'.join(traffic_lines)}"
+            f"{traffic_text}"
             "\n\n📶 Ограничение скорости:\n"
-            f"{'\n'.join(speed_lines)}"
+            f"{speed_text}"
             f"{retry_hint}"
         ),
         parse_mode="HTML",
