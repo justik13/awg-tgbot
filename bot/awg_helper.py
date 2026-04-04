@@ -98,6 +98,52 @@ def _ensure_qos_root_qdisc_container(container: str, interface: str) -> None:
     _docker_exec(container, ["tc", "qdisc", "add", "dev", interface, "root", "handle", "1:", "htb", "default", "9999"])
 
 
+def _ensure_qos_ingress_qdisc(dev: str, container: str | None) -> None:
+    qdisc_replace_cmd = ["qdisc", "replace", "dev", dev, "handle", "ffff:", "ingress"]
+    try:
+        _tc_run(dev, container, qdisc_replace_cmd)
+        return
+    except RuntimeError as e:
+        err = str(e).lower()
+        if (
+            "change operation not supported" not in err
+            and "specified qdisc" not in err
+            and "exclusivity flag on" not in err
+            and "cannot modify" not in err
+        ):
+            raise
+    try:
+        _tc_run(dev, container, ["qdisc", "del", "dev", dev, "ingress"])
+    except RuntimeError as e:
+        err = str(e).lower()
+        if "no such file" not in err and "no such qdisc" not in err and "cannot find qdisc" not in err:
+            raise
+    _tc_run(dev, container, ["qdisc", "add", "dev", dev, "handle", "ffff:", "ingress"])
+
+
+def _ensure_qos_ifb_root_qdisc(ifb_dev: str, container: str | None) -> None:
+    qdisc_replace_cmd = ["qdisc", "replace", "dev", ifb_dev, "root", "handle", "2:", "htb", "default", "9999"]
+    try:
+        _tc_run(ifb_dev, container, qdisc_replace_cmd)
+        return
+    except RuntimeError as e:
+        err = str(e).lower()
+        if (
+            "change operation not supported" not in err
+            and "specified qdisc" not in err
+            and "exclusivity flag on" not in err
+            and "cannot modify" not in err
+        ):
+            raise
+    try:
+        _tc_run(ifb_dev, container, ["qdisc", "del", "dev", ifb_dev, "root"])
+    except RuntimeError as e:
+        err = str(e).lower()
+        if "no such file" not in err and "no such qdisc" not in err:
+            raise
+    _tc_run(ifb_dev, container, ["qdisc", "add", "dev", ifb_dev, "root", "handle", "2:", "htb", "default", "9999"])
+
+
 def _qos_targets(container: str, interface: str, host_interface: str) -> list[tuple[str, str | None]]:
     targets: list[tuple[str, str | None]] = [(host_interface, None)]
     if interface != host_interface:
@@ -132,7 +178,7 @@ def _ensure_qos_ingress_redirect(dev: str, container: str | None) -> str:
         if "file exists" not in err:
             raise
     _ip_run(container, ["link", "set", "dev", ifb_dev, "up"])
-    _tc_run(dev, container, ["qdisc", "replace", "dev", dev, "handle", "ffff:", "ingress"])
+    _ensure_qos_ingress_qdisc(dev, container)
     _tc_run(
         dev,
         container,
@@ -141,7 +187,7 @@ def _ensure_qos_ingress_redirect(dev: str, container: str | None) -> str:
             "match", "u32", "0", "0", "action", "mirred", "egress", "redirect", "dev", ifb_dev,
         ],
     )
-    _tc_run(ifb_dev, container, ["qdisc", "replace", "dev", ifb_dev, "root", "handle", "2:", "htb", "default", "9999"])
+    _ensure_qos_ifb_root_qdisc(ifb_dev, container)
     return ifb_dev
 
 
