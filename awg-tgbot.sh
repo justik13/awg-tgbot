@@ -1518,6 +1518,21 @@ install_or_reinstall_flow() {
     default="$(get_env_value SUPPORT_USERNAME)"
     prompt_with_default 'Username поддержки (можно @username)' "${default:-@support}" value
     set_env_value SUPPORT_USERNAME "$value"
+    default="$(pick_existing_or_default "$(get_env_value QOS_ENABLED)" "1")"
+    prompt_with_default 'Включить QoS (1=ON,0=OFF)' "$default" value
+    set_env_value QOS_ENABLED "$value"
+    default="$(pick_existing_or_default "$(get_env_value DEFAULT_KEY_RATE_MBIT)" "25")"
+    prompt_with_default 'Default скорость на ключ (Mbit/s)' "$default" value
+    set_env_value DEFAULT_KEY_RATE_MBIT "$value"
+    default="$(pick_existing_or_default "$(get_env_value QOS_STRICT)" "0")"
+    prompt_with_default 'QOS_STRICT (1=strict,0=soft)' "$default" value
+    set_env_value QOS_STRICT "$value"
+    default="$(pick_existing_or_default "$(get_env_value EGRESS_DENYLIST_ENABLED)" "1")"
+    prompt_with_default 'Включить egress denylist (1=ON,0=OFF)' "$default" value
+    set_env_value EGRESS_DENYLIST_ENABLED "$value"
+    default="$(pick_existing_or_default "$(get_env_value EGRESS_DENYLIST_MODE)" "soft")"
+    prompt_with_default 'Режим denylist (soft/strict)' "$default" value
+    set_env_value EGRESS_DENYLIST_MODE "$value"
   fi
 
   ensure_venv_and_requirements || die "Не удалось установить Python зависимости."

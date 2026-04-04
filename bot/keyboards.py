@@ -7,7 +7,12 @@ from ui_constants import (
     CB_ADMIN_MAINTENANCE_OFF, CB_ADMIN_MAINTENANCE_ON, CB_ADMIN_MAINTENANCE_REFRESH, CB_ADMIN_PAYMENTS, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30,
     CB_ADMIN_PRICE_EDIT_7, CB_ADMIN_PRICE_EDIT_90, CB_ADMIN_PRICE_SAVE, CB_ADMIN_PRICES, CB_ADMIN_REFERRALS,
     CB_ADMIN_PROMOCODES, CB_ADMIN_PROMO_CREATE, CB_ADMIN_PROMO_DISABLE, CB_ADMIN_PROMO_LIST,
-    CB_ADMIN_STATS, CB_ADMIN_SYNC,
+    CB_ADMIN_STATS, CB_ADMIN_SYNC, CB_ADMIN_NETWORK_POLICY,
+    CB_ADMIN_NET_QOS, CB_ADMIN_NET_DENYLIST, CB_ADMIN_NET_SYNC_NOW,
+    CB_ADMIN_QOS_TOGGLE, CB_ADMIN_QOS_DEFAULT_RATE, CB_ADMIN_QOS_STRICT_TOGGLE, CB_ADMIN_QOS_SYNC,
+    CB_ADMIN_DENYLIST_TOGGLE, CB_ADMIN_DENYLIST_MODE, CB_ADMIN_DENYLIST_VIEW_DOMAINS, CB_ADMIN_DENYLIST_VIEW_CIDRS,
+    CB_ADMIN_DENYLIST_REPLACE_DOMAINS, CB_ADMIN_DENYLIST_REPLACE_CIDRS, CB_ADMIN_DENYLIST_SYNC,
+    CB_ADMIN_DENYLIST_MODE_SOFT, CB_ADMIN_DENYLIST_MODE_STRICT,
     CB_ADMIN_FIND_CHARGE, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_OPEN_USER_CARD_PREFIX,
     CB_BROADCAST_CANCEL, CB_BROADCAST_CONFIRM, CB_BUY_30, CB_BUY_7, CB_BUY_90,
     CB_CHECK_ACTIVATION_STATUS,
@@ -146,6 +151,7 @@ def get_admin_inline_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🟠 Maintenance", callback_data=CB_ADMIN_MAINTENANCE), InlineKeyboardButton(text="🩺 Состояние", callback_data=CB_ADMIN_HEALTH)],
             [InlineKeyboardButton(text="🎁 Рефералы", callback_data=CB_ADMIN_REFERRALS), InlineKeyboardButton(text="🎟 Промокоды", callback_data=CB_ADMIN_PROMOCODES)],
             [InlineKeyboardButton(text="📊 Статистика", callback_data=CB_ADMIN_STATS), InlineKeyboardButton(text="🔄 Синхронизация", callback_data=CB_ADMIN_SYNC)],
+            [InlineKeyboardButton(text="🌐 Сеть", callback_data=CB_ADMIN_NETWORK_POLICY)],
             [InlineKeyboardButton(text="⌨️ Команды", callback_data=CB_ADMIN_COMMANDS)],
         ]
     )
@@ -253,5 +259,41 @@ def get_admin_promocodes_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="➕ Создать", callback_data=CB_ADMIN_PROMO_CREATE)],
             [InlineKeyboardButton(text="⛔ Отключить", callback_data=CB_ADMIN_PROMO_DISABLE)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
+        ]
+    )
+
+
+def get_admin_network_policy_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📶 QoS", callback_data=CB_ADMIN_NET_QOS), InlineKeyboardButton(text="🛡 Denylist", callback_data=CB_ADMIN_NET_DENYLIST)],
+            [InlineKeyboardButton(text="🔄 Sync now", callback_data=CB_ADMIN_NET_SYNC_NOW)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
+        ]
+    )
+
+
+def get_admin_qos_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🟢/⚪ QoS", callback_data=CB_ADMIN_QOS_TOGGLE)],
+            [InlineKeyboardButton(text="✏️ Default Mbit/s", callback_data=CB_ADMIN_QOS_DEFAULT_RATE)],
+            [InlineKeyboardButton(text="🟢/⚪ Strict", callback_data=CB_ADMIN_QOS_STRICT_TOGGLE)],
+            [InlineKeyboardButton(text="🔄 QoS sync", callback_data=CB_ADMIN_QOS_SYNC)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_NETWORK_POLICY)],
+        ]
+    )
+
+
+def get_admin_denylist_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🟢/⚪ Denylist", callback_data=CB_ADMIN_DENYLIST_TOGGLE)],
+            [InlineKeyboardButton(text="Soft mode", callback_data=CB_ADMIN_DENYLIST_MODE_SOFT), InlineKeyboardButton(text="Strict mode", callback_data=CB_ADMIN_DENYLIST_MODE_STRICT)],
+            [InlineKeyboardButton(text="👁 Домены", callback_data=CB_ADMIN_DENYLIST_VIEW_DOMAINS), InlineKeyboardButton(text="👁 CIDR", callback_data=CB_ADMIN_DENYLIST_VIEW_CIDRS)],
+            [InlineKeyboardButton(text="✏️ Replace domains", callback_data=CB_ADMIN_DENYLIST_REPLACE_DOMAINS)],
+            [InlineKeyboardButton(text="✏️ Replace CIDRs", callback_data=CB_ADMIN_DENYLIST_REPLACE_CIDRS)],
+            [InlineKeyboardButton(text="🔄 Denylist sync", callback_data=CB_ADMIN_DENYLIST_SYNC)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_NETWORK_POLICY)],
         ]
     )
