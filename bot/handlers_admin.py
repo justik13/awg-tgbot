@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import timedelta
+import ipaddress
 
 import config
 
@@ -30,7 +31,7 @@ from database import (
     list_promo_codes,
     get_metric, get_pending_jobs_stats, get_recovery_lag_seconds,
     get_pending_admin_action, get_pending_broadcast, get_recent_audit, get_referral_admin_stats, get_referral_summary, get_user_keys, get_user_meta, normalize_promo_code, pop_pending_admin_action,
-    set_app_setting, set_pending_admin_action, set_pending_broadcast, write_audit_log,
+    set_active_key_rate_limit, set_app_setting, set_pending_admin_action, set_pending_broadcast, write_audit_log,
 )
 from helpers import escape_html, format_tg_username, get_status_text, utc_now_naive
 from device_activity import render_device_activity_line
@@ -38,6 +39,7 @@ from traffic import format_bytes_compact, render_device_traffic_line
 from keyboards import (
     get_admin_confirm_kb, get_admin_inline_kb, get_admin_maintenance_kb, get_admin_payments_kb, get_admin_price_confirm_kb, get_admin_prices_kb, get_admin_promocodes_kb,
     get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb, get_open_user_card_kb,
+    get_admin_network_policy_kb, get_admin_qos_kb, get_admin_denylist_kb,
 )
 from ui_constants import (
     BTN_ADMIN, CB_ADMIN_BACK_MAIN, CB_ADMIN_BROADCAST,
@@ -45,6 +47,11 @@ from ui_constants import (
     CB_ADMIN_MAINTENANCE_REFRESH, CB_ADMIN_OPEN_USER_CARD_PREFIX, CB_ADMIN_PAYMENTS, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30, CB_ADMIN_PRICE_EDIT_7,
     CB_ADMIN_PRICE_EDIT_90, CB_ADMIN_PRICE_SAVE, CB_ADMIN_PRICES, CB_ADMIN_PROMOCODES, CB_ADMIN_PROMO_CREATE, CB_ADMIN_PROMO_DISABLE, CB_ADMIN_PROMO_LIST, CB_ADMIN_REFERRALS,
     CB_ADMIN_REFRESH_HEALTH, CB_ADMIN_REFRESH_REFERRALS, CB_ADMIN_STATS, CB_ADMIN_SYNC,
+    CB_ADMIN_NETWORK_POLICY, CB_ADMIN_NET_QOS, CB_ADMIN_NET_DENYLIST, CB_ADMIN_NET_SYNC_NOW,
+    CB_ADMIN_QOS_TOGGLE, CB_ADMIN_QOS_DEFAULT_RATE, CB_ADMIN_QOS_STRICT_TOGGLE, CB_ADMIN_QOS_SYNC,
+    CB_ADMIN_DENYLIST_TOGGLE, CB_ADMIN_DENYLIST_MODE_SOFT, CB_ADMIN_DENYLIST_MODE_STRICT,
+    CB_ADMIN_DENYLIST_VIEW_DOMAINS, CB_ADMIN_DENYLIST_VIEW_CIDRS, CB_ADMIN_DENYLIST_REPLACE_DOMAINS, CB_ADMIN_DENYLIST_REPLACE_CIDRS, CB_ADMIN_DENYLIST_SYNC,
+    CB_ADMIN_DEVICE_SPEED_SET_PREFIX, CB_ADMIN_DEVICE_SPEED_RESET_PREFIX,
     CB_BROADCAST_CANCEL, CB_BROADCAST_CONFIRM,
     CB_ADMIN_USERS_PAGE_PREFIX, CB_ADMIN_MANAGE_USER_PREFIX, CB_ADMIN_ADD_DAYS_PREFIX,
     CB_ADMIN_RETRY_ACTIVATION_PREFIX,
@@ -54,7 +61,7 @@ from ui_constants import (
     CB_CANCEL_DEVICE_DELETE, CB_CONFIRM_DEVICE_REISSUE, CB_CANCEL_DEVICE_REISSUE,
 )
 from config_validate import read_helper_policy
-from network_policy import denylist_sync, policy_metrics
+from network_policy import denylist_sync, parse_cidrs, policy_metrics
 from content_settings import get_setting
 from payments import manual_retry_activation
 
@@ -80,6 +87,10 @@ ADMIN_MANUAL_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/maintenance_status", "статус freeze новых покупок"),
     ("/maintenance_on", "включить freeze новых покупок"),
     ("/maintenance_off", "выключить freeze новых покупок"),
+    ("/netpolicy", "сводка по сетевой политике"),
+    ("/qos_status", "текущий статус QoS"),
+    ("/denylist_status", "текущий статус denylist"),
+    ("/denylist_sync", "принудительный denylist sync"),
 )
 BROADCAST_INPUT_ACTION_KEY = "broadcast_input"
 PRICE_INPUT_ACTION_KEY = "price_input"
@@ -88,6 +99,10 @@ PAYMENT_CHARGE_INPUT_ACTION_KEY = "payment_charge_lookup_input"
 PAYMENT_USER_INPUT_ACTION_KEY = "payment_user_lookup_input"
 PROMO_CREATE_INPUT_ACTION_KEY = "promo_create_input"
 PROMO_DISABLE_INPUT_ACTION_KEY = "promo_disable_input"
+QOS_DEFAULT_RATE_INPUT_ACTION_KEY = "qos_default_rate_input"
+DEVICE_SPEED_INPUT_ACTION_KEY = "device_speed_input"
+DENYLIST_DOMAINS_INPUT_ACTION_KEY = "denylist_domains_input"
+DENYLIST_CIDRS_INPUT_ACTION_KEY = "denylist_cidrs_input"
 PRICE_TARGETS = {
     CB_ADMIN_PRICE_EDIT_7: ("STARS_PRICE_7_DAYS", "7 дней"),
     CB_ADMIN_PRICE_EDIT_30: ("STARS_PRICE_30_DAYS", "30 дней"),
@@ -175,6 +190,30 @@ class HasPendingPromoInput(BaseFilter):
         pending_create = await get_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
         pending_disable = await get_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
         return bool(pending_create or pending_disable)
+
+
+class HasPendingNetworkPolicyInput(BaseFilter):
+    async def __call__(self, message: types.Message) -> bool:
+        keys = (
+            QOS_DEFAULT_RATE_INPUT_ACTION_KEY,
+            DEVICE_SPEED_INPUT_ACTION_KEY,
+            DENYLIST_DOMAINS_INPUT_ACTION_KEY,
+            DENYLIST_CIDRS_INPUT_ACTION_KEY,
+        )
+        for key in keys:
+            if await get_pending_admin_action(ADMIN_ID, key):
+                return True
+        return False
+
+
+async def _clear_network_policy_pending() -> None:
+    for key in (
+        QOS_DEFAULT_RATE_INPUT_ACTION_KEY,
+        DEVICE_SPEED_INPUT_ACTION_KEY,
+        DENYLIST_DOMAINS_INPUT_ACTION_KEY,
+        DENYLIST_CIDRS_INPUT_ACTION_KEY,
+    ):
+        await clear_pending_admin_action(ADMIN_ID, key)
 
 
 async def notify_user_subscription_granted(bot: Bot, user_id: int, days: int, new_until) -> bool:
@@ -416,6 +455,62 @@ async def build_health_text() -> str:
     )
 
 
+def _bool_on_off(value: int | bool) -> str:
+    return "ON" if int(value) == 1 else "OFF"
+
+
+async def _render_network_policy_text() -> str:
+    policy_stats = await policy_metrics()
+    qos_enabled = int(await get_setting("QOS_ENABLED", int) or 0)
+    default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
+    qos_strict = int(await get_setting("QOS_STRICT", int) or 0)
+    deny_enabled = int(await get_setting("EGRESS_DENYLIST_ENABLED", int) or 0)
+    deny_mode = str(await get_setting("EGRESS_DENYLIST_MODE", str) or "soft").strip().lower()
+    deny_refresh = int(await get_setting("EGRESS_DENYLIST_REFRESH_MINUTES", int) or 30)
+    return (
+        "🌐 <b>Сеть</b>\n\n"
+        f"QoS enabled: <b>{_bool_on_off(qos_enabled)}</b>\n"
+        f"Default rate: <b>{default_rate} Mbit/s</b>\n"
+        f"QoS strict mode: <b>{_bool_on_off(qos_strict)}</b>\n"
+        f"Denylist enabled: <b>{_bool_on_off(deny_enabled)}</b>\n"
+        f"Denylist mode: <b>{escape_html(deny_mode)}</b>\n"
+        f"Denylist refresh interval: <b>{deny_refresh} min</b>\n\n"
+        f"qos_last_sync_ok: <b>{policy_stats['qos_last_sync_ok']}</b>\n"
+        f"qos_errors: <b>{policy_stats['qos_errors']}</b>\n"
+        f"denylist_last_sync_ok: <b>{policy_stats['denylist_last_sync_ok']}</b>\n"
+        f"denylist_last_sync_ts: <b>{policy_stats['denylist_last_sync_ts']}</b>\n"
+        f"denylist_entries: <b>{policy_stats['denylist_entries']}</b>\n"
+        f"denylist_errors: <b>{policy_stats['denylist_errors']}</b>"
+    )
+
+
+def _normalize_domains_multiline(raw_text: str) -> str:
+    seen: set[str] = set()
+    values: list[str] = []
+    for line in raw_text.splitlines():
+        domain = line.strip().lower().strip(".")
+        if not domain:
+            continue
+        if domain not in seen:
+            seen.add(domain)
+            values.append(domain)
+    return ",".join(values)
+
+
+def _normalize_cidrs_multiline(raw_text: str) -> str:
+    values: list[str] = []
+    seen: set[str] = set()
+    for line in raw_text.splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        normalized = str(ipaddress.ip_network(raw, strict=False))
+        if normalized not in seen:
+            seen.add(normalized)
+            values.append(normalized)
+    return ",".join(values)
+
+
 def _users_page_kb(rows: list[tuple[int, str]], page: int, total_pages: int) -> types.InlineKeyboardMarkup:
     keyboard: list[list[types.InlineKeyboardButton]] = []
     for uid, label in rows:
@@ -439,6 +534,7 @@ def _user_manage_kb(
     *,
     show_retry_activation: bool = False,
     device_nums: list[int] | None = None,
+    speed_device_nums: list[int] | None = None,
 ) -> types.InlineKeyboardMarkup:
     rows: list[list[types.InlineKeyboardButton]] = [
         [
@@ -471,6 +567,20 @@ def _user_manage_kb(
                     types.InlineKeyboardButton(
                         text=f"♻️ Перевыпуск {device_num}",
                         callback_data=f"{CB_ADMIN_DEVICE_REISSUE_PREFIX}{uid}_{device_num}_{page}",
+                    ),
+                ]
+            )
+    if speed_device_nums:
+        for device_num in speed_device_nums:
+            rows.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=f"Скорость {device_num}",
+                        callback_data=f"{CB_ADMIN_DEVICE_SPEED_SET_PREFIX}{uid}_{device_num}_{page}",
+                    ),
+                    types.InlineKeyboardButton(
+                        text=f"Сброс {device_num}",
+                        callback_data=f"{CB_ADMIN_DEVICE_SPEED_RESET_PREFIX}{uid}_{device_num}_{page}",
                     ),
                 ]
             )
@@ -631,7 +741,7 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
     referral = await get_referral_summary(uid)
     admin_device_rows = await fetchall(
         """
-        SELECT device_num
+        SELECT device_num, rate_limit_mbit
         FROM keys
         WHERE user_id = ?
           AND public_key NOT LIKE 'pending:%'
@@ -641,6 +751,15 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
         (uid,),
     )
     admin_device_nums = [int(row[0]) for row in admin_device_rows]
+    default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
+    speed_lines = []
+    for device_num, rate_limit_mbit in admin_device_rows:
+        if rate_limit_mbit is None:
+            speed_lines.append(f"• Устройство {int(device_num)} — default ({default_rate} Mbit/s)")
+        else:
+            speed_lines.append(f"• Устройство {int(device_num)} — custom ({int(rate_limit_mbit)} Mbit/s)")
+    if not speed_lines:
+        speed_lines.append("• нет активных устройств")
     connection_status = "готово" if keys else "нет ключа"
     payment_line, activation_line, charge_id = _payment_admin_details(payment_summary)
     operator_step = _operator_next_step(payment_summary["status"], activation_line, bool(keys)) if payment_summary else "wait"
@@ -668,6 +787,8 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
             f"{'\n'.join(activity_lines)}\n\n"
             "📊 Трафик:\n"
             f"{'\n'.join(traffic_lines)}"
+            "\n\n📶 Ограничение скорости:\n"
+            f"{'\n'.join(speed_lines)}"
             f"{retry_hint}"
         ),
         parse_mode="HTML",
@@ -676,6 +797,7 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
             page,
             show_retry_activation=show_retry_activation,
             device_nums=admin_device_nums,
+            speed_device_nums=admin_device_nums,
         ),
     )
 
@@ -689,6 +811,7 @@ def build_admin_manual_commands_text() -> str:
 
 @router.message(F.text == BTN_ADMIN, IsAdmin())
 async def admin_panel(message: types.Message):
+    await _clear_network_policy_pending()
     stats_text = await build_stats_text()
     db_info = await db_health_info()
     db_status = "🟢 Нормально" if db_info["is_healthy"] else "🟡 Нужна проверка"
@@ -703,6 +826,7 @@ async def admin_panel(message: types.Message):
 async def admin_back_main(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer("⚙️ Админ-меню", reply_markup=get_admin_inline_kb())
     await cb.answer()
 
@@ -711,6 +835,7 @@ async def admin_back_main(cb: types.CallbackQuery):
 async def admin_manual_commands(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(
         build_admin_manual_commands_text(),
         parse_mode="HTML",
@@ -723,6 +848,7 @@ async def admin_manual_commands(cb: types.CallbackQuery):
 async def admin_payments_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
     await cb.message.answer("💳 <b>Платежи</b>", parse_mode="HTML", reply_markup=get_admin_payments_kb())
@@ -753,6 +879,7 @@ async def admin_payments_latest_by_user_start(cb: types.CallbackQuery):
 async def admin_prices(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(
         _render_admin_prices_text(),
         parse_mode="HTML",
@@ -855,6 +982,7 @@ async def admin_prices_cancel(cb: types.CallbackQuery):
 async def admin_stats_cb(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(await build_stats_text(), parse_mode="HTML")
     await cb.answer("Готово")
 
@@ -863,6 +991,7 @@ async def admin_stats_cb(cb: types.CallbackQuery):
 async def admin_sync_awg(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     try:
         await sync_qos_state()
         await denylist_sync(run_docker)
@@ -873,10 +1002,168 @@ async def admin_sync_awg(cb: types.CallbackQuery):
         await cb.answer("❌ Ошибка проверки", show_alert=True)
 
 
+@router.callback_query(F.data == CB_ADMIN_NETWORK_POLICY)
+async def admin_network_policy_screen(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await _clear_network_policy_pending()
+    await cb.message.answer(await _render_network_policy_text(), parse_mode="HTML", reply_markup=get_admin_network_policy_kb())
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_NET_QOS)
+async def admin_network_policy_qos_screen(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await cb.message.answer("📶 <b>QoS настройки</b>", parse_mode="HTML", reply_markup=get_admin_qos_kb())
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_NET_DENYLIST)
+async def admin_network_policy_denylist_screen(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await cb.message.answer("🛡 <b>Denylist настройки</b>", parse_mode="HTML", reply_markup=get_admin_denylist_kb())
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_NET_SYNC_NOW)
+async def admin_network_policy_sync_now(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await sync_qos_state()
+    await denylist_sync(run_docker)
+    await write_audit_log(ADMIN_ID, "admin_network_policy_sync", "manual_sync=1")
+    await cb.message.answer("✅ QoS и denylist синхронизированы.")
+    await cb.answer("Sync done")
+
+
+@router.callback_query(F.data == CB_ADMIN_QOS_TOGGLE)
+async def admin_qos_toggle(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    enabled = int(await get_setting("QOS_ENABLED", int) or 0)
+    new_value = "0" if enabled == 1 else "1"
+    await set_app_setting("QOS_ENABLED", new_value, updated_by=ADMIN_ID)
+    await sync_qos_state()
+    await write_audit_log(ADMIN_ID, "admin_qos_enabled_set", f"value={new_value}")
+    await cb.message.answer(f"✅ QoS: {_bool_on_off(int(new_value))}")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_QOS_STRICT_TOGGLE)
+async def admin_qos_strict_toggle(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    strict = int(await get_setting("QOS_STRICT", int) or 0)
+    new_value = "0" if strict == 1 else "1"
+    await set_app_setting("QOS_STRICT", new_value, updated_by=ADMIN_ID)
+    await write_audit_log(ADMIN_ID, "admin_qos_strict_set", f"value={new_value}")
+    await cb.message.answer(f"✅ QoS strict: {_bool_on_off(int(new_value))}")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_QOS_DEFAULT_RATE)
+async def admin_qos_default_rate_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    current = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
+    await set_pending_admin_action(ADMIN_ID, QOS_DEFAULT_RATE_INPUT_ACTION_KEY, {"action": QOS_DEFAULT_RATE_INPUT_ACTION_KEY})
+    await cb.message.answer(f"Введите default скорость в Mbit/s (целое > 0). Текущее: {current}")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_QOS_SYNC)
+async def admin_qos_sync_now(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await sync_qos_state()
+    await write_audit_log(ADMIN_ID, "admin_qos_sync", "manual_sync=1")
+    await cb.message.answer("✅ QoS sync выполнен.")
+    await cb.answer("Done")
+
+
+@router.callback_query(F.data == CB_ADMIN_DENYLIST_TOGGLE)
+async def admin_denylist_toggle(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    enabled = int(await get_setting("EGRESS_DENYLIST_ENABLED", int) or 0)
+    new_value = "0" if enabled == 1 else "1"
+    await set_app_setting("EGRESS_DENYLIST_ENABLED", new_value, updated_by=ADMIN_ID)
+    await denylist_sync(run_docker)
+    await write_audit_log(ADMIN_ID, "admin_denylist_enabled_set", f"value={new_value}")
+    await cb.message.answer(
+        "✅ Denylist обновлён. Это selfhost hygiene для снижения abuse-risk и минимизации risky destinations."
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.in_({CB_ADMIN_DENYLIST_MODE_SOFT, CB_ADMIN_DENYLIST_MODE_STRICT}))
+async def admin_denylist_mode_set(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    mode = "strict" if cb.data == CB_ADMIN_DENYLIST_MODE_STRICT else "soft"
+    await set_app_setting("EGRESS_DENYLIST_MODE", mode, updated_by=ADMIN_ID)
+    await denylist_sync(run_docker)
+    await write_audit_log(ADMIN_ID, "admin_denylist_mode_set", f"value={mode}")
+    await cb.message.answer(f"✅ Denylist mode: {mode}")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_DENYLIST_VIEW_DOMAINS)
+async def admin_denylist_view_domains(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    domains = str(await get_setting("EGRESS_DENYLIST_DOMAINS", str) or "")
+    lines = [item.strip() for item in domains.split(",") if item.strip()]
+    body = "\n".join(f"• {escape_html(item)}" for item in lines[:100]) if lines else "Список пуст."
+    await cb.message.answer(f"🧾 <b>Domains denylist</b>\n{body}", parse_mode="HTML")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_DENYLIST_VIEW_CIDRS)
+async def admin_denylist_view_cidrs(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    cidrs = str(await get_setting("EGRESS_DENYLIST_CIDRS", str) or "")
+    lines = [item.strip() for item in cidrs.split(",") if item.strip()]
+    body = "\n".join(f"• {escape_html(item)}" for item in lines[:100]) if lines else "Список пуст."
+    await cb.message.answer(f"🧾 <b>CIDR denylist</b>\n{body}", parse_mode="HTML")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_DENYLIST_REPLACE_DOMAINS)
+async def admin_denylist_replace_domains_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await set_pending_admin_action(ADMIN_ID, DENYLIST_DOMAINS_INPUT_ACTION_KEY, {"action": DENYLIST_DOMAINS_INPUT_ACTION_KEY})
+    await cb.message.answer("Отправьте domains списком: один домен на строку.")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_DENYLIST_REPLACE_CIDRS)
+async def admin_denylist_replace_cidrs_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await set_pending_admin_action(ADMIN_ID, DENYLIST_CIDRS_INPUT_ACTION_KEY, {"action": DENYLIST_CIDRS_INPUT_ACTION_KEY})
+    await cb.message.answer("Отправьте CIDR списком: одна сеть на строку.")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_DENYLIST_SYNC)
+async def admin_denylist_sync_now(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await denylist_sync(run_docker)
+    await write_audit_log(ADMIN_ID, "admin_denylist_sync", "manual_sync=1")
+    await cb.message.answer("✅ Denylist sync выполнен.")
+    await cb.answer("Done")
+
 @router.callback_query(F.data == CB_ADMIN_LIST)
 async def admin_list_all(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await _render_users_page(cb.message, 0)
     await cb.answer()
 
@@ -911,6 +1198,46 @@ async def admin_manage_user(cb: types.CallbackQuery):
     except Exception as e:
         logger.exception("Ошибка admin_manage_user: %s", e)
         await cb.answer("❌ Не удалось открыть карточку пользователя", show_alert=True)
+
+
+@router.callback_query(F.data.startswith(CB_ADMIN_DEVICE_SPEED_SET_PREFIX))
+async def admin_device_speed_set_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    raw = cb.data.removeprefix(CB_ADMIN_DEVICE_SPEED_SET_PREFIX)
+    try:
+        uid_raw, device_raw, page_raw = raw.split("_", 2)
+        payload = {"uid": int(uid_raw), "device_num": int(device_raw), "page": int(page_raw)}
+    except ValueError:
+        await cb.answer("Некорректные параметры", show_alert=True)
+        return
+    await set_pending_admin_action(ADMIN_ID, DEVICE_SPEED_INPUT_ACTION_KEY, payload)
+    await cb.message.answer(f"Введите скорость для устройства {payload['device_num']} в Mbit/s (целое > 0).")
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith(CB_ADMIN_DEVICE_SPEED_RESET_PREFIX))
+async def admin_device_speed_reset(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    raw = cb.data.removeprefix(CB_ADMIN_DEVICE_SPEED_RESET_PREFIX)
+    try:
+        uid_raw, device_raw, page_raw = raw.split("_", 2)
+        uid = int(uid_raw)
+        device_num = int(device_raw)
+        page = int(page_raw)
+    except ValueError:
+        await cb.answer("Некорректные параметры", show_alert=True)
+        return
+    updated = await set_active_key_rate_limit(uid, device_num, None)
+    if not updated:
+        await cb.message.answer("Активное устройство не найдено.")
+        await cb.answer("Не найдено", show_alert=True)
+        return
+    await sync_qos_state()
+    await write_audit_log(ADMIN_ID, "admin_device_speed_reset", f"target={uid}; device_num={device_num}")
+    await _send_user_manage_card(cb.message, uid, page)
+    await cb.answer("Сброшено")
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_ADD_DAYS_PREFIX))
@@ -1390,6 +1717,7 @@ async def broadcast_capture_text(message: types.Message):
 async def admin_referrals_summary(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(
         await build_ref_stats_text(),
         parse_mode="HTML",
@@ -1403,6 +1731,7 @@ async def admin_referrals_summary(cb: types.CallbackQuery):
 async def admin_health_summary(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(await build_runtime_smokecheck_text(), parse_mode="HTML")
     await cb.answer("Готово")
 
@@ -1412,6 +1741,7 @@ async def admin_health_summary(cb: types.CallbackQuery):
 async def admin_maintenance_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
     status_line = "🟠 maintenance: ON" if enabled else "🟢 maintenance: OFF"
     await cb.message.answer(status_line, reply_markup=get_admin_maintenance_kb(enabled))
@@ -1442,6 +1772,7 @@ async def admin_maintenance_off_cb(cb: types.CallbackQuery):
 async def admin_promocodes_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
     await cb.message.answer("🎟 <b>Промокоды</b>", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
@@ -1579,6 +1910,65 @@ async def admin_promo_capture_input(message: types.Message):
         await write_audit_log(message.from_user.id, "promo_disabled", f"code={code}")
         await message.answer(f"✅ Промокод <code>{code}</code> отключён.", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
 
+
+@router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingNetworkPolicyInput())
+async def admin_network_policy_capture_input(message: types.Message):
+    raw = (message.text or "").strip()
+    qos_pending = await get_pending_admin_action(ADMIN_ID, QOS_DEFAULT_RATE_INPUT_ACTION_KEY)
+    device_pending = await get_pending_admin_action(ADMIN_ID, DEVICE_SPEED_INPUT_ACTION_KEY)
+    deny_domains_pending = await get_pending_admin_action(ADMIN_ID, DENYLIST_DOMAINS_INPUT_ACTION_KEY)
+    deny_cidrs_pending = await get_pending_admin_action(ADMIN_ID, DENYLIST_CIDRS_INPUT_ACTION_KEY)
+
+    if qos_pending:
+        if not raw.isdigit() or int(raw) <= 0:
+            await message.answer("Нужно целое число Mbit/s > 0.")
+            return
+        await clear_pending_admin_action(ADMIN_ID, QOS_DEFAULT_RATE_INPUT_ACTION_KEY)
+        await set_app_setting("DEFAULT_KEY_RATE_MBIT", str(int(raw)), updated_by=ADMIN_ID)
+        await sync_qos_state()
+        await write_audit_log(ADMIN_ID, "admin_qos_default_rate_set", f"value={int(raw)}")
+        await message.answer(f"✅ Default QoS rate: {int(raw)} Mbit/s")
+        return
+
+    if device_pending:
+        if not raw.isdigit() or int(raw) <= 0:
+            await message.answer("Нужно целое число Mbit/s > 0.")
+            return
+        uid = int(device_pending.get("uid", 0))
+        device_num = int(device_pending.get("device_num", 0))
+        page = int(device_pending.get("page", 0))
+        await clear_pending_admin_action(ADMIN_ID, DEVICE_SPEED_INPUT_ACTION_KEY)
+        updated = await set_active_key_rate_limit(uid, device_num, int(raw))
+        if not updated:
+            await message.answer("Активное устройство не найдено.")
+            return
+        await sync_qos_state()
+        await write_audit_log(ADMIN_ID, "admin_device_speed_set", f"target={uid}; device_num={device_num}; rate={int(raw)}")
+        await _send_user_manage_card(message, uid, page)
+        return
+
+    if deny_domains_pending:
+        normalized = _normalize_domains_multiline(raw)
+        await clear_pending_admin_action(ADMIN_ID, DENYLIST_DOMAINS_INPUT_ACTION_KEY)
+        await set_app_setting("EGRESS_DENYLIST_DOMAINS", normalized, updated_by=ADMIN_ID)
+        await denylist_sync(run_docker)
+        await write_audit_log(ADMIN_ID, "admin_denylist_domains_set", f"count={len([x for x in normalized.split(',') if x])}")
+        await message.answer("✅ Domains denylist обновлён (selfhost hygiene / abuse-risk reduction).")
+        return
+
+    if deny_cidrs_pending:
+        try:
+            normalized = _normalize_cidrs_multiline(raw)
+            parse_cidrs(normalized)
+        except Exception:
+            await message.answer("Некорректный CIDR в списке. Настройки не изменены.")
+            return
+        await clear_pending_admin_action(ADMIN_ID, DENYLIST_CIDRS_INPUT_ACTION_KEY)
+        await set_app_setting("EGRESS_DENYLIST_CIDRS", normalized, updated_by=ADMIN_ID)
+        await denylist_sync(run_docker)
+        await write_audit_log(ADMIN_ID, "admin_denylist_cidrs_set", f"count={len([x for x in normalized.split(',') if x])}")
+        await message.answer("✅ CIDR denylist обновлён (selfhost hygiene / risky destinations control).")
+        return
 
 @router.message(Command("give"), IsAdmin())
 async def give_manual(message: types.Message, command: CommandObject):
@@ -1803,6 +2193,7 @@ async def findpay_cmd(message: types.Message, command: CommandObject):
 
 @router.message(Command("stats"), IsAdmin())
 async def stats_cmd(message: types.Message):
+    await _clear_network_policy_pending()
     await message.answer(await build_stats_text(), parse_mode="HTML")
 
 
@@ -1834,6 +2225,7 @@ async def audit_cmd(message: types.Message, command: CommandObject):
 
 @router.message(Command("sync_awg"), IsAdmin())
 async def sync_awg_cmd(message: types.Message):
+    await _clear_network_policy_pending()
     try:
         await sync_qos_state()
         await denylist_sync(run_docker)
@@ -1876,6 +2268,7 @@ async def broadcast_prepare(message: types.Message, command: CommandObject):
 
 @router.message(Command("health"), IsAdmin())
 async def health_cmd(message: types.Message):
+    await _clear_network_policy_pending()
     await message.answer(await build_runtime_smokecheck_text(), parse_mode="HTML")
 
 
@@ -1911,6 +2304,60 @@ async def maintenance_off_cmd(message: types.Message):
     await message.answer("🟢 Maintenance выключен: новые покупки снова доступны.")
 
 
+@router.message(Command("netpolicy"), IsAdmin())
+async def netpolicy_cmd(message: types.Message):
+    await _clear_network_policy_pending()
+    await message.answer(await _render_network_policy_text(), parse_mode="HTML", reply_markup=get_admin_network_policy_kb())
+
+
+@router.message(Command("qos_status"), IsAdmin())
+async def qos_status_cmd(message: types.Message):
+    qos_enabled = int(await get_setting("QOS_ENABLED", int) or 0)
+    default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
+    qos_strict = int(await get_setting("QOS_STRICT", int) or 0)
+    metrics = await policy_metrics()
+    await message.answer(
+        (
+            "📶 <b>QoS status</b>\n"
+            f"enabled={_bool_on_off(qos_enabled)}\n"
+            f"default={default_rate} Mbit/s\n"
+            f"strict={_bool_on_off(qos_strict)}\n"
+            f"last_sync_ok={metrics['qos_last_sync_ok']}\n"
+            f"errors={metrics['qos_errors']}"
+        ),
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("denylist_status"), IsAdmin())
+async def denylist_status_cmd(message: types.Message):
+    enabled = int(await get_setting("EGRESS_DENYLIST_ENABLED", int) or 0)
+    mode = str(await get_setting("EGRESS_DENYLIST_MODE", str) or "soft")
+    refresh_minutes = int(await get_setting("EGRESS_DENYLIST_REFRESH_MINUTES", int) or 30)
+    metrics = await policy_metrics()
+    await message.answer(
+        (
+            "🛡 <b>Denylist status</b>\n"
+            f"enabled={_bool_on_off(enabled)}\n"
+            f"mode={escape_html(mode)}\n"
+            f"refresh={refresh_minutes} min\n"
+            f"last_sync_ok={metrics['denylist_last_sync_ok']}\n"
+            f"last_sync_ts={metrics['denylist_last_sync_ts']}\n"
+            f"entries={metrics['denylist_entries']}\n"
+            f"errors={metrics['denylist_errors']}"
+        ),
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("denylist_sync"), IsAdmin())
+async def denylist_sync_cmd(message: types.Message):
+    await denylist_sync(run_docker)
+    await write_audit_log(message.from_user.id, "admin_denylist_sync", "manual_sync=1")
+    await message.answer("✅ denylist sync выполнен.")
+
+
 @router.message(Command("ref_stats"), IsAdmin())
 async def ref_stats_cmd(message: types.Message):
+    await _clear_network_policy_pending()
     await message.answer(await build_ref_stats_text(), parse_mode="HTML")
