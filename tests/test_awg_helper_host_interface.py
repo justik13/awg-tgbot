@@ -1,4 +1,6 @@
 import sys
+import os
+import stat
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bot"))
@@ -6,10 +8,26 @@ import awg_helper  # noqa: E402
 
 
 
-def test_load_policy_uses_host_interface_when_present(tmp_path: Path):
+def _patch_root_owned_regular_lstat(monkeypatch, policy: Path):
+    original_lstat = awg_helper.Path.lstat
+
+    def fake_lstat(self):
+        st = original_lstat(self)
+        if self == policy:
+            values = list(st)
+            values[0] = stat.S_IFREG | 0o640  # st_mode: regular file with safe perms
+            values[4] = 0  # st_uid: root
+            return os.stat_result(values)
+        return st
+
+    monkeypatch.setattr(awg_helper.Path, "lstat", fake_lstat)
+
+
+def test_load_policy_uses_host_interface_when_present(tmp_path: Path, monkeypatch):
     policy = tmp_path / "policy.json"
     policy.write_text('{"container":"awg","interface":"awg0","host_interface":"amn0"}', encoding="utf-8")
     policy.chmod(0o640)
+    _patch_root_owned_regular_lstat(monkeypatch, policy)
 
     container, interface, host_interface = awg_helper._load_policy(policy)
 
@@ -19,10 +37,11 @@ def test_load_policy_uses_host_interface_when_present(tmp_path: Path):
 
 
 
-def test_load_policy_falls_back_to_interface_when_host_missing(tmp_path: Path):
+def test_load_policy_falls_back_to_interface_when_host_missing(tmp_path: Path, monkeypatch):
     policy = tmp_path / "policy.json"
     policy.write_text('{"container":"awg","interface":"awg0"}', encoding="utf-8")
     policy.chmod(0o640)
+    _patch_root_owned_regular_lstat(monkeypatch, policy)
 
     _, interface, host_interface = awg_helper._load_policy(policy)
 
