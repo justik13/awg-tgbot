@@ -134,6 +134,37 @@ def test_qos_sync_uses_host_interface(monkeypatch, capsys):
     assert "qos synced 1" in capsys.readouterr().out
 
 
+def test_qos_clear_ignores_missing_ifb_device(monkeypatch, capsys):
+    calls = []
+
+    monkeypatch.setattr(awg_helper, "_load_policy", lambda path=None: ("awg", "awg0", "amn0"))
+
+    def fake_run(args, stdin_text=None):
+        calls.append(("host", args))
+        if args[0] == "tc" and "ifbamn0" in args and "delete" in args:
+            raise RuntimeError("Cannot find device \"ifbamn0\"")
+        return ""
+
+    def fake_exec(container, cmd, stdin_text=None):
+        calls.append((container, cmd))
+        if cmd[0] == "tc" and "ifbawg0" in cmd and "delete" in cmd:
+            raise RuntimeError("Error: Device \"ifbawg0\" does not exist.")
+        return ""
+
+    monkeypatch.setattr(awg_helper, "_run", fake_run)
+    monkeypatch.setattr(awg_helper, "_docker_exec", fake_exec)
+    monkeypatch.setattr(sys, "argv", ["awg_helper.py", "qos-clear", "--ip", "10.8.1.11"])
+
+    rc = awg_helper.main()
+
+    assert rc == 0
+    assert any(op[0] == "host" and _is_tc_for_dev(op[1], "amn0") and op[1][1:3] == ["filter", "delete"] for op in calls)
+    assert any(op[0] == "host" and _is_tc_for_dev(op[1], "amn0") and op[1][1:3] == ["class", "delete"] for op in calls)
+    assert any(op[0] == "awg" and _is_tc_for_dev(op[1], "awg0") and op[1][1:3] == ["filter", "delete"] for op in calls)
+    assert any(op[0] == "awg" and _is_tc_for_dev(op[1], "awg0") and op[1][1:3] == ["class", "delete"] for op in calls)
+    assert "qos clear 10.8.1.11" in capsys.readouterr().out
+
+
 def test_show_uses_awg_interface(monkeypatch, capsys):
     monkeypatch.setattr(awg_helper, "_load_policy", lambda path=None: ("awg", "awg0", "amn0"))
     docker_calls = []

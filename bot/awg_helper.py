@@ -145,6 +145,16 @@ def _ensure_qos_ingress_redirect(dev: str, container: str | None) -> str:
     return ifb_dev
 
 
+def _is_missing_netdev_error(error: RuntimeError) -> bool:
+    err = str(error).lower()
+    return (
+        "cannot find device" in err
+        or "no such file" in err
+        or "does not exist" in err
+        or "not exist" in err
+    )
+
+
 def _ensure_qos_roots(container: str, interface: str, host_interface: str) -> None:
     _ensure_qos_root_qdisc(host_interface)
     if interface != host_interface:
@@ -296,9 +306,13 @@ def main() -> int:
                 _tc_run(dev, tc_container, ["filter", "delete", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32"])
                 _tc_run(dev, tc_container, ["filter", "delete", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32"])
                 _tc_run(dev, tc_container, ["class", "delete", "dev", dev, "classid", f"1:{classid_suffix}"])
-                _tc_run(ifb_dev, tc_container, ["filter", "delete", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32"])
-                _tc_run(ifb_dev, tc_container, ["filter", "delete", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32"])
-                _tc_run(ifb_dev, tc_container, ["class", "delete", "dev", ifb_dev, "classid", f"2:{classid_suffix}"])
+                try:
+                    _tc_run(ifb_dev, tc_container, ["filter", "delete", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32"])
+                    _tc_run(ifb_dev, tc_container, ["filter", "delete", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32"])
+                    _tc_run(ifb_dev, tc_container, ["class", "delete", "dev", ifb_dev, "classid", f"2:{classid_suffix}"])
+                except RuntimeError as e:
+                    if not _is_missing_netdev_error(e):
+                        raise
             print(f"qos clear {ip}")
             return 0
         if args.op == "qos-sync":
