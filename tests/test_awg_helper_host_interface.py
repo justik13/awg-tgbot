@@ -129,11 +129,18 @@ def test_ingress_qdisc_falls_back_on_exclusivity_error(monkeypatch):
 
 def test_ifb_root_qdisc_falls_back_when_replace_unsupported(monkeypatch):
     calls = []
+    qdisc_state = "fq"
 
     def fake_tc_run(dev, container, args):
+        nonlocal qdisc_state
         calls.append(args)
+        if args[:2] == ["qdisc", "show"]:
+            handle = "2:" if qdisc_state == "htb" else "0:"
+            return f"qdisc {qdisc_state} {handle} root refcnt 2"
         if args[:2] == ["qdisc", "replace"] and args[3] == "ifbamn0":
             raise RuntimeError("Error: Change operation not supported by specified qdisc.")
+        if args[:2] == ["qdisc", "add"] and args[3] == "ifbamn0":
+            qdisc_state = "htb"
         return ""
 
     monkeypatch.setattr(awg_helper, "_tc_run", fake_tc_run)
@@ -144,7 +151,36 @@ def test_ifb_root_qdisc_falls_back_when_replace_unsupported(monkeypatch):
         ["qdisc", "replace", "dev", "ifbamn0", "root", "handle", "2:", "htb", "default", "9999"],
         ["qdisc", "del", "dev", "ifbamn0", "root"],
         ["qdisc", "add", "dev", "ifbamn0", "root", "handle", "2:", "htb", "default", "9999"],
+        ["qdisc", "show", "dev", "ifbamn0"],
     ]
+
+
+def test_ifb_root_qdisc_retries_add_when_default_root_persists(monkeypatch):
+    calls = []
+    qdisc_state = "fq"
+    add_calls = 0
+
+    def fake_tc_run(dev, container, args):
+        nonlocal qdisc_state, add_calls
+        calls.append(args)
+        if args[:2] == ["qdisc", "show"]:
+            handle = "2:" if qdisc_state == "htb" else "0:"
+            return f"qdisc {qdisc_state} {handle} root refcnt 2"
+        if args[:2] == ["qdisc", "replace"] and args[3] == "ifbawg0":
+            raise RuntimeError("Error: Change operation not supported by specified qdisc.")
+        if args[:2] == ["qdisc", "add"] and args[3] == "ifbawg0":
+            add_calls += 1
+            if add_calls == 1:
+                raise RuntimeError("Error: Exclusivity flag on, cannot modify.")
+            qdisc_state = "htb"
+        return ""
+
+    monkeypatch.setattr(awg_helper, "_tc_run", fake_tc_run)
+
+    awg_helper._ensure_qos_ifb_root_qdisc("ifbawg0", "awg")
+
+    assert add_calls == 2
+    assert calls[-1] == ["qdisc", "show", "dev", "ifbawg0"]
 
 
 def test_qos_sync_uses_host_interface(monkeypatch, capsys):

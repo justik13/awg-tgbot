@@ -123,9 +123,31 @@ def _ensure_qos_ingress_qdisc(dev: str, container: str | None) -> None:
 
 def _ensure_qos_ifb_root_qdisc(ifb_dev: str, container: str | None) -> None:
     qdisc_replace_cmd = ["qdisc", "replace", "dev", ifb_dev, "root", "handle", "2:", "htb", "default", "9999"]
+    qdisc_add_cmd = ["qdisc", "add", "dev", ifb_dev, "root", "handle", "2:", "htb", "default", "9999"]
+
+    def _has_htb_root() -> bool:
+        out = _tc_run(ifb_dev, container, ["qdisc", "show", "dev", ifb_dev]).lower()
+        if not out.strip():
+            return True
+        return "qdisc htb 2:" in out and " root " in f" {out} "
+
+    def _delete_root() -> None:
+        try:
+            _tc_run(ifb_dev, container, ["qdisc", "del", "dev", ifb_dev, "root"])
+        except RuntimeError as e:
+            err = str(e).lower()
+            if (
+                "no such file" not in err
+                and "no such qdisc" not in err
+                and "cannot find qdisc" not in err
+                and "cannot delete qdisc with handle of zero" not in err
+            ):
+                raise
+
     try:
         _tc_run(ifb_dev, container, qdisc_replace_cmd)
-        return
+        if _has_htb_root():
+            return
     except RuntimeError as e:
         err = str(e).lower()
         if (
@@ -135,13 +157,22 @@ def _ensure_qos_ifb_root_qdisc(ifb_dev: str, container: str | None) -> None:
             and "cannot modify" not in err
         ):
             raise
+    _delete_root()
     try:
-        _tc_run(ifb_dev, container, ["qdisc", "del", "dev", ifb_dev, "root"])
+        _tc_run(ifb_dev, container, qdisc_add_cmd)
     except RuntimeError as e:
         err = str(e).lower()
-        if "no such file" not in err and "no such qdisc" not in err:
+        if (
+            "change operation not supported" not in err
+            and "specified qdisc" not in err
+            and "exclusivity flag on" not in err
+            and "cannot modify" not in err
+        ):
             raise
-    _tc_run(ifb_dev, container, ["qdisc", "add", "dev", ifb_dev, "root", "handle", "2:", "htb", "default", "9999"])
+        _delete_root()
+        _tc_run(ifb_dev, container, qdisc_add_cmd)
+    if not _has_htb_root():
+        raise RuntimeError(f"failed to configure ifb root qdisc on {ifb_dev}")
 
 
 def _qos_targets(container: str, interface: str, host_interface: str) -> list[tuple[str, str | None]]:
@@ -178,6 +209,7 @@ def _ensure_qos_ingress_redirect(dev: str, container: str | None) -> str:
         if "file exists" not in err:
             raise
     _ip_run(container, ["link", "set", "dev", ifb_dev, "up"])
+    _ensure_qos_ifb_root_qdisc(ifb_dev, container)
     _ensure_qos_ingress_qdisc(dev, container)
     _tc_run(
         dev,
@@ -187,7 +219,6 @@ def _ensure_qos_ingress_redirect(dev: str, container: str | None) -> str:
             "match", "u32", "0", "0", "action", "mirred", "egress", "redirect", "dev", ifb_dev,
         ],
     )
-    _ensure_qos_ifb_root_qdisc(ifb_dev, container)
     return ifb_dev
 
 
