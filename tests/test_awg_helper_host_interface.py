@@ -12,6 +12,10 @@ def _has_match_clause(cmd: list[str], direction: str, ip: str) -> bool:
     return any(cmd[i:i + len(needle)] == needle for i in range(len(cmd) - len(needle) + 1))
 
 
+def _is_tc_for_dev(cmd: list[str], dev: str) -> bool:
+    return len(cmd) > 0 and cmd[0] == "tc" and "dev" in cmd and cmd[cmd.index("dev") + 1] == dev
+
+
 def _patch_root_owned_regular_lstat(monkeypatch, policy: Path):
     original_lstat = awg_helper.Path.lstat
 
@@ -65,13 +69,19 @@ def test_qos_set_uses_host_interface(monkeypatch, capsys):
     rc = awg_helper.main()
 
     assert rc == 0
-    assert all(cmd[cmd.index("dev") + 1] == "amn0" for cmd in host_calls)
+    host_tc_calls = [cmd for cmd in host_calls if _is_tc_for_dev(cmd, "amn0")]
+    assert host_tc_calls
     assert all(container == "awg" for container, _ in docker_calls)
-    assert all(cmd[cmd.index("dev") + 1] == "awg0" for _, cmd in docker_calls)
+    docker_tc_calls = [cmd for _, cmd in docker_calls if _is_tc_for_dev(cmd, "awg0")]
+    assert docker_tc_calls
+    assert any(cmd[:4] == ["ip", "link", "add", "ifbamn0"] for cmd in host_calls)
+    assert any(cmd[:4] == ["ip", "link", "add", "ifbawg0"] for _, cmd in docker_calls)
     assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for cmd in host_calls)
     assert any(_has_match_clause(cmd, "src", "10.8.1.11") for cmd in host_calls)
     assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for _, cmd in docker_calls)
     assert any(_has_match_clause(cmd, "src", "10.8.1.11") for _, cmd in docker_calls)
+    assert any(["filter", "replace", "dev", "amn0", "parent", "ffff:"] == cmd[1:7] for cmd in host_calls if cmd and cmd[0] == "tc")
+    assert any(["filter", "replace", "dev", "ifbamn0", "protocol", "ip"] == cmd[1:7] for cmd in host_calls if cmd and cmd[0] == "tc")
     assert "qos set 10.8.1.11 50mbit" in capsys.readouterr().out
 
 
@@ -110,14 +120,49 @@ def test_qos_sync_uses_host_interface(monkeypatch, capsys):
     rc = awg_helper.main()
 
     assert rc == 0
-    assert all(cmd[cmd.index("dev") + 1] == "amn0" for cmd in host_calls)
+    host_tc_calls = [cmd for cmd in host_calls if _is_tc_for_dev(cmd, "amn0")]
+    assert host_tc_calls
     assert all(container == "awg" for container, _ in docker_calls)
-    assert all(cmd[cmd.index("dev") + 1] == "awg0" for _, cmd in docker_calls)
+    docker_tc_calls = [cmd for _, cmd in docker_calls if _is_tc_for_dev(cmd, "awg0")]
+    assert docker_tc_calls
     assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for cmd in host_calls)
     assert any(_has_match_clause(cmd, "src", "10.8.1.11") for cmd in host_calls)
     assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for _, cmd in docker_calls)
     assert any(_has_match_clause(cmd, "src", "10.8.1.11") for _, cmd in docker_calls)
+    assert any(cmd[:4] == ["ip", "link", "add", "ifbamn0"] for cmd in host_calls)
+    assert any(cmd[:4] == ["ip", "link", "add", "ifbawg0"] for _, cmd in docker_calls)
     assert "qos synced 1" in capsys.readouterr().out
+
+
+def test_qos_clear_ignores_missing_ifb_device(monkeypatch, capsys):
+    calls = []
+
+    monkeypatch.setattr(awg_helper, "_load_policy", lambda path=None: ("awg", "awg0", "amn0"))
+
+    def fake_run(args, stdin_text=None):
+        calls.append(("host", args))
+        if args[0] == "tc" and "ifbamn0" in args and "delete" in args:
+            raise RuntimeError("Cannot find device \"ifbamn0\"")
+        return ""
+
+    def fake_exec(container, cmd, stdin_text=None):
+        calls.append((container, cmd))
+        if cmd[0] == "tc" and "ifbawg0" in cmd and "delete" in cmd:
+            raise RuntimeError("Error: Device \"ifbawg0\" does not exist.")
+        return ""
+
+    monkeypatch.setattr(awg_helper, "_run", fake_run)
+    monkeypatch.setattr(awg_helper, "_docker_exec", fake_exec)
+    monkeypatch.setattr(sys, "argv", ["awg_helper.py", "qos-clear", "--ip", "10.8.1.11"])
+
+    rc = awg_helper.main()
+
+    assert rc == 0
+    assert any(op[0] == "host" and _is_tc_for_dev(op[1], "amn0") and op[1][1:3] == ["filter", "delete"] for op in calls)
+    assert any(op[0] == "host" and _is_tc_for_dev(op[1], "amn0") and op[1][1:3] == ["class", "delete"] for op in calls)
+    assert any(op[0] == "awg" and _is_tc_for_dev(op[1], "awg0") and op[1][1:3] == ["filter", "delete"] for op in calls)
+    assert any(op[0] == "awg" and _is_tc_for_dev(op[1], "awg0") and op[1][1:3] == ["class", "delete"] for op in calls)
+    assert "qos clear 10.8.1.11" in capsys.readouterr().out
 
 
 def test_show_uses_awg_interface(monkeypatch, capsys):

@@ -1,5 +1,5 @@
 from pathlib import Path
-from datetime import timedelta
+from datetime import datetime, timedelta
 import ipaddress
 import re
 
@@ -501,8 +501,8 @@ async def build_health_text() -> str:
         f"Ошибки helper-сервиса: <b>{helper_failures}</b>\n"
         f"QoS: <b>{qos_enabled}</b> · строгий режим: <b>{qos_strict}</b>\n"
         f"Ошибки QoS: <b>{policy_stats['qos_errors']}</b>\n"
-        f"Статус последней синхронизации QoS: <b>{policy_stats['qos_last_sync_ok']}</b>\n"
-        f"Последняя синхронизация QoS: <b>{policy_stats['qos_last_sync_ts']}</b>\n"
+        f"Статус последней синхронизации QoS: <b>{_sync_status_text(policy_stats['qos_last_sync_ok'])}</b>\n"
+        f"Последняя синхронизация QoS: <b>{_sync_time_or_ne_bilo(policy_stats['qos_last_sync_ts'])}</b>\n"
         f"denylist: <b>{denylist_enabled}</b> · режим: <b>{denylist_mode}</b>\n"
         f"Ошибки denylist: <b>{policy_stats['denylist_errors']}</b>\n"
         f"Последняя синхронизация denylist: <b>{policy_stats['denylist_last_sync_ok']}</b>\n"
@@ -519,6 +519,23 @@ def _bool_on_off(value: int | bool) -> str:
     return "включено" if int(value) == 1 else "выключено"
 
 
+
+
+def _sync_status_text(value: int | str | None) -> str:
+    try:
+        return "успешно" if int(str(value or 0)) == 1 else "не было"
+    except Exception:
+        return "не было"
+
+
+def _sync_time_or_ne_bilo(value: int | str | None) -> str:
+    try:
+        ts = int(str(value or 0))
+        if ts <= 0:
+            return "не было"
+        return datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        return "не было"
 def _metric_or_ne_bilo(value: int | str | None) -> str:
     try:
         return "не было" if int(str(value or 0)) == 0 else str(value)
@@ -576,8 +593,8 @@ async def _render_network_policy_text() -> str:
         f"Режим denylist: <b>{escape_html(deny_mode)}</b>\n"
         f"Интервал обновления denylist: <b>{deny_refresh} мин</b>\n\n"
         + ("\n".join(health_lines) + "\n\n" if health_lines else "")
-        + f"Статус синхронизации QoS: <b>{_metric_or_ne_bilo(policy_stats['qos_last_sync_ok'])}</b>\n"
-        f"Последняя синхронизация QoS: <b>{_metric_or_ne_bilo(policy_stats['qos_last_sync_ts'])}</b>\n"
+        + f"Статус синхронизации QoS: <b>{_sync_status_text(policy_stats['qos_last_sync_ok'])}</b>\n"
+        f"Последняя синхронизация QoS: <b>{_sync_time_or_ne_bilo(policy_stats['qos_last_sync_ts'])}</b>\n"
         f"Ошибки QoS: <b>{policy_stats['qos_errors']}</b>\n"
         f"Последняя синхронизация denylist: <b>{_metric_or_ne_bilo(policy_stats['denylist_last_sync_ok'])}</b>\n"
         f"Время последней синхронизации denylist: <b>{_metric_or_ne_bilo(policy_stats['denylist_last_sync_ts'])}</b>\n"
@@ -2705,8 +2722,8 @@ async def qos_status_cmd(message: types.Message):
             f"Включено: {_bool_on_off(qos_enabled)}\n"
             f"Скорость по умолчанию: {default_rate} Mbit/s\n"
             f"Строгий режим: {_bool_on_off(qos_strict)}\n"
-            f"Статус синхронизации QoS: {_metric_or_ne_bilo(metrics['qos_last_sync_ok'])}\n"
-            f"Последняя синхронизация QoS: {_metric_or_ne_bilo(metrics['qos_last_sync_ts'])}\n"
+            f"Статус синхронизации QoS: {_sync_status_text(metrics['qos_last_sync_ok'])}\n"
+            f"Последняя синхронизация QoS: {_sync_time_or_ne_bilo(metrics['qos_last_sync_ts'])}\n"
             f"Ошибки: {metrics['qos_errors']}"
         ),
         parse_mode="HTML",
