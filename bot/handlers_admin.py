@@ -410,7 +410,7 @@ async def run_runtime_smokecheck() -> dict[str, object]:
         )
 
     if AWG_HELPER_POLICY_PATH and DOCKER_CONTAINER and WG_INTERFACE:
-        policy_container, policy_interface, policy_error = read_helper_policy(Path(AWG_HELPER_POLICY_PATH))
+        policy_container, policy_interface, _, policy_error = read_helper_policy(Path(AWG_HELPER_POLICY_PATH))
         if policy_error:
             detail = policy_error
             if "parse failed:" in policy_error:
