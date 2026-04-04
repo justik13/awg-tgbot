@@ -80,6 +80,43 @@ def _ensure_qos_root_qdisc(host_interface: str) -> None:
     _run(["tc", "qdisc", "add", "dev", host_interface, "root", "handle", "1:", "htb", "default", "9999"])
 
 
+def _ensure_qos_root_qdisc_container(container: str, interface: str) -> None:
+    qdisc_replace_cmd = ["tc", "qdisc", "replace", "dev", interface, "root", "handle", "1:", "htb", "default", "9999"]
+    try:
+        _docker_exec(container, qdisc_replace_cmd)
+        return
+    except RuntimeError as e:
+        err = str(e).lower()
+        if "change operation not supported" not in err and "specified qdisc" not in err:
+            raise
+    try:
+        _docker_exec(container, ["tc", "qdisc", "del", "dev", interface, "root"])
+    except RuntimeError as e:
+        err = str(e).lower()
+        if "no such file" not in err and "no such qdisc" not in err:
+            raise
+    _docker_exec(container, ["tc", "qdisc", "add", "dev", interface, "root", "handle", "1:", "htb", "default", "9999"])
+
+
+def _qos_targets(container: str, interface: str, host_interface: str) -> list[tuple[str, str | None]]:
+    targets: list[tuple[str, str | None]] = [(host_interface, None)]
+    if interface != host_interface:
+        targets.append((interface, container))
+    return targets
+
+
+def _tc_run(dev: str, container: str | None, args: list[str]) -> str:
+    if container:
+        return _docker_exec(container, ["tc", *args])
+    return _run(["tc", *args])
+
+
+def _ensure_qos_roots(container: str, interface: str, host_interface: str) -> None:
+    _ensure_qos_root_qdisc(host_interface)
+    if interface != host_interface:
+        _ensure_qos_root_qdisc_container(container, interface)
+
+
 def _nft_exists(kind: str, family: str, table: str, name: str | None = None) -> bool:
     args = ["nft", "list", kind, family, table]
     if name is not None:
@@ -206,28 +243,34 @@ def main() -> int:
             if rate_mbit <= 0 or rate_mbit > 10000:
                 raise RuntimeError("invalid rate-mbit")
             classid_suffix = ip.split(".")[-1]
-            _ensure_qos_root_qdisc(host_interface)
-            _run(["tc", "class", "replace", "dev", host_interface, "parent", "1:", "classid", f"1:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
-            _run(["tc", "filter", "replace", "dev", host_interface, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
+            _ensure_qos_roots(container, interface, host_interface)
+            for dev, tc_container in _qos_targets(container, interface, host_interface):
+                _tc_run(dev, tc_container, ["class", "replace", "dev", dev, "parent", "1:", "classid", f"1:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
+                _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
+                _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
             print(f"qos set {ip} {rate_mbit}mbit")
             return 0
         if args.op == "qos-clear":
             ip = _safe_ipv4(args.ip.strip())
             classid_suffix = ip.split(".")[-1]
-            _run(["tc", "filter", "delete", "dev", host_interface, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32"], stdin_text=None)
-            _run(["tc", "class", "delete", "dev", host_interface, "classid", f"1:{classid_suffix}"])
+            for dev, tc_container in _qos_targets(container, interface, host_interface):
+                _tc_run(dev, tc_container, ["filter", "delete", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32"])
+                _tc_run(dev, tc_container, ["filter", "delete", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32"])
+                _tc_run(dev, tc_container, ["class", "delete", "dev", dev, "classid", f"1:{classid_suffix}"])
             print(f"qos clear {ip}")
             return 0
         if args.op == "qos-sync":
             payload = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
-            _ensure_qos_root_qdisc(host_interface)
+            _ensure_qos_roots(container, interface, host_interface)
             for line in payload:
                 ip_raw, rate_raw = line.split(",", 1)
                 ip = _safe_ipv4(ip_raw.strip())
                 rate_mbit = int(rate_raw.strip())
                 classid_suffix = ip.split(".")[-1]
-                _run(["tc", "class", "replace", "dev", host_interface, "parent", "1:", "classid", f"1:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
-                _run(["tc", "filter", "replace", "dev", host_interface, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
+                for dev, tc_container in _qos_targets(container, interface, host_interface):
+                    _tc_run(dev, tc_container, ["class", "replace", "dev", dev, "parent", "1:", "classid", f"1:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
+                    _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
+                    _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
             print(f"qos synced {len(payload)}")
             return 0
         if args.op == "denylist-check":

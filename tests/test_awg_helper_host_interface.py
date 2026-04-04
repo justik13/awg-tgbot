@@ -7,6 +7,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bot"))
 import awg_helper  # noqa: E402
 
 
+def _has_match_clause(cmd: list[str], direction: str, ip: str) -> bool:
+    needle = ["match", "ip", direction, f"{ip}/32"]
+    return any(cmd[i:i + len(needle)] == needle for i in range(len(cmd) - len(needle) + 1))
+
+
 def _patch_root_owned_regular_lstat(monkeypatch, policy: Path):
     original_lstat = awg_helper.Path.lstat
 
@@ -48,17 +53,25 @@ def test_load_policy_falls_back_to_interface_when_host_missing(tmp_path: Path, m
 
 
 def test_qos_set_uses_host_interface(monkeypatch, capsys):
-    calls = []
+    host_calls = []
+    docker_calls = []
 
     monkeypatch.setattr(awg_helper, "_load_policy", lambda path=None: ("awg", "awg0", "amn0"))
-    monkeypatch.setattr(awg_helper, "_run", lambda args, stdin_text=None: calls.append(args) or "")
+    monkeypatch.setattr(awg_helper, "_run", lambda args, stdin_text=None: host_calls.append(args) or "")
+    monkeypatch.setattr(awg_helper, "_docker_exec", lambda container, cmd, stdin_text=None: docker_calls.append((container, cmd)) or "")
 
     monkeypatch.setattr(sys, "argv", ["awg_helper.py", "qos-set", "--ip", "10.8.1.11", "--rate-mbit", "50"])
 
     rc = awg_helper.main()
 
     assert rc == 0
-    assert all(cmd[cmd.index("dev") + 1] == "amn0" for cmd in calls)
+    assert all(cmd[cmd.index("dev") + 1] == "amn0" for cmd in host_calls)
+    assert all(container == "awg" for container, _ in docker_calls)
+    assert all(cmd[cmd.index("dev") + 1] == "awg0" for _, cmd in docker_calls)
+    assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for cmd in host_calls)
+    assert any(_has_match_clause(cmd, "src", "10.8.1.11") for cmd in host_calls)
+    assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for _, cmd in docker_calls)
+    assert any(_has_match_clause(cmd, "src", "10.8.1.11") for _, cmd in docker_calls)
     assert "qos set 10.8.1.11 50mbit" in capsys.readouterr().out
 
 
@@ -85,17 +98,25 @@ def test_qos_set_falls_back_to_delete_add_when_replace_not_supported(monkeypatch
 
 
 def test_qos_sync_uses_host_interface(monkeypatch, capsys):
-    calls = []
+    host_calls = []
+    docker_calls = []
 
     monkeypatch.setattr(awg_helper, "_load_policy", lambda path=None: ("awg", "awg0", "amn0"))
-    monkeypatch.setattr(awg_helper, "_run", lambda args, stdin_text=None: calls.append(args) or "")
+    monkeypatch.setattr(awg_helper, "_run", lambda args, stdin_text=None: host_calls.append(args) or "")
+    monkeypatch.setattr(awg_helper, "_docker_exec", lambda container, cmd, stdin_text=None: docker_calls.append((container, cmd)) or "")
     monkeypatch.setattr(sys, "argv", ["awg_helper.py", "qos-sync"])
     monkeypatch.setattr(sys, "stdin", type("FakeStdin", (), {"read": lambda self: "10.8.1.11,50\n"})())
 
     rc = awg_helper.main()
 
     assert rc == 0
-    assert all(cmd[cmd.index("dev") + 1] == "amn0" for cmd in calls)
+    assert all(cmd[cmd.index("dev") + 1] == "amn0" for cmd in host_calls)
+    assert all(container == "awg" for container, _ in docker_calls)
+    assert all(cmd[cmd.index("dev") + 1] == "awg0" for _, cmd in docker_calls)
+    assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for cmd in host_calls)
+    assert any(_has_match_clause(cmd, "src", "10.8.1.11") for cmd in host_calls)
+    assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for _, cmd in docker_calls)
+    assert any(_has_match_clause(cmd, "src", "10.8.1.11") for _, cmd in docker_calls)
     assert "qos synced 1" in capsys.readouterr().out
 
 
