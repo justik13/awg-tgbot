@@ -10,7 +10,7 @@ else
   DETECTED_REPO_OWNER=""
   DETECTED_REPO_NAME=""
 fi
-REPO_OWNER="${REPO_OWNER:-${DETECTED_REPO_OWNER:-awg-tgbot-selfhost}}"
+REPO_OWNER="${REPO_OWNER:-${DETECTED_REPO_OWNER:-Just1k13}}"
 REPO_NAME="${REPO_NAME:-${DETECTED_REPO_NAME:-awg-tgbot}}"
 DEFAULT_REPO_BRANCH="main"
 INSTALL_DIR="/opt/amnezia/bot"
@@ -1547,6 +1547,14 @@ get_bot_db_file() {
   printf '%s' "$db_file"
 }
 
+repair_runtime_file_access() {
+  local target_path="$1"
+  local mode="$2"
+  [[ -f "$target_path" ]] || return 0
+  chown "$BOT_USER:$BOT_USER" "$target_path" 2>/dev/null || true
+  chmod "$mode" "$target_path" 2>/dev/null || true
+}
+
 create_local_backup() {
   local db_file backup_root timestamp archive_file meta_dir meta_file local_sha
   if ! has_residual_files || [[ ! -f "$ENV_FILE" || ! -d "$BOT_DIR" ]]; then
@@ -1654,6 +1662,8 @@ restore_from_backup() {
     mkdir -p "$(dirname "$db_file")" "$INSTALL_DIR"
     install -m 600 "$tmp_restore/$db_basename" "$db_file"
     install -m 600 "$tmp_restore/.env" "$ENV_FILE"
+    repair_runtime_file_access "$db_file" 600
+    repair_runtime_file_access "$ENV_FILE" 600
     restore_ok=1
   else
     warn "Ошибка извлечения файлов из архива."
@@ -1663,6 +1673,8 @@ restore_from_backup() {
   if [[ "$restore_ok" != "1" ]]; then
     if [[ -f "$snapshot_dir/${db_basename}.before" ]]; then install -m 600 "$snapshot_dir/${db_basename}.before" "$db_file" && rollback_ok=1; fi
     if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
+    repair_runtime_file_access "$db_file" 600
+    repair_runtime_file_access "$ENV_FILE" 600
     warn "Восстановление не завершено. Откат: $([[ "$rollback_ok" == "1" ]] && echo 'выполнен' || echo 'частично/не выполнен')."
     if [[ "$service_active_before" == "active" ]] && require_command systemctl && service_exists; then
       systemctl start "$SERVICE_NAME" 2>/dev/null || true
@@ -1674,6 +1686,7 @@ restore_from_backup() {
     systemctl start "$SERVICE_NAME" 2>/dev/null || true
   fi
   echo "Восстановление завершено."
+  echo "Права файлов восстановлены для ${BOT_USER}: ${db_file}, ${ENV_FILE}"
   if require_command systemctl && service_exists; then
     echo "Сервис: $(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true) (enabled: ${service_enabled_before:-unknown})"
   fi
