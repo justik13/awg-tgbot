@@ -306,14 +306,16 @@ validate_awg_target_values() {
 }
 
 write_awg_helper_policy() {
-  local container="$1" interface="$2"
+  local container="$1" interface="$2" host_interface="${3:-$2}"
   validate_awg_target_values "$container" "$interface"
+  validate_awg_target_values "$container" "$host_interface"
   local tmp
   tmp="$(mktemp)"
   cat > "$tmp" <<POLICY
 {
   "container": "${container}",
-  "interface": "${interface}"
+  "interface": "${interface}",
+  "host_interface": "${host_interface}"
 }
 POLICY
   install -o root -g "$BOT_USER" -m 640 "$tmp" "$AWG_HELPER_POLICY"
@@ -322,13 +324,14 @@ POLICY
 }
 
 sync_awg_helper_policy_from_env() {
-  local container interface
+  local container interface host_interface
   container="$(get_env_value DOCKER_CONTAINER)"
   interface="$(get_env_value WG_INTERFACE)"
+  host_interface="$(get_env_value WG_HOST_INTERFACE)"
   [[ -n "$container" ]] || die "DOCKER_CONTAINER не задан в ${ENV_FILE}. Синхронизация policy невозможна."
   [[ -n "$interface" ]] || die "WG_INTERFACE не задан в ${ENV_FILE}. Синхронизация policy невозможна."
-  write_awg_helper_policy "$container" "$interface"
-  ok "Helper policy синхронизирована: ${AWG_HELPER_POLICY} (${container}/${interface})"
+  write_awg_helper_policy "$container" "$interface" "${host_interface:-$interface}"
+  ok "Helper policy синхронизирована: ${AWG_HELPER_POLICY} (${container}/${interface}; host=${host_interface:-$interface})"
   return 0
 }
 
