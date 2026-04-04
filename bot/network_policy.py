@@ -180,6 +180,7 @@ async def policy_metrics() -> dict[str, int]:
         "qos_errors": await get_metric("qos_errors"),
         "denylist_errors": await get_metric("denylist_errors"),
         "qos_last_sync_ok": await get_metric("qos_last_sync_ok"),
+        "qos_last_sync_ts": await get_metric("qos_last_sync_ts"),
         "denylist_last_sync_ok": await get_metric("denylist_last_sync_ok"),
         "denylist_last_sync_ts": await get_metric("denylist_last_sync_ts"),
         "denylist_entries": await get_metric("denylist_entries"),
