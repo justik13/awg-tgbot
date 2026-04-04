@@ -159,3 +159,34 @@ def test_navigation_callbacks_clear_stale_promo_pending(monkeypatch):
     asyncio.run(handlers_user.support_back_callback(cb))
 
     assert handlers_user._clear_promo_input_pending.await_count == 8
+
+
+def test_pending_promo_filter_does_not_match_without_state(monkeypatch):
+    message = DummyMessage(text='hello')
+    monkeypatch.setattr(handlers_user, 'get_pending_admin_action', AsyncMock(return_value=None))
+
+    has_pending = asyncio.run(handlers_user.HasPendingPromoInput()(message))
+
+    assert has_pending is False
+
+
+def test_pending_promo_filter_matches_only_with_state(monkeypatch):
+    message = DummyMessage(text='promo')
+    monkeypatch.setattr(handlers_user, 'get_pending_admin_action', AsyncMock(return_value={'action': handlers_user.USER_PROMO_INPUT_ACTION_KEY}))
+
+    has_pending = asyncio.run(handlers_user.HasPendingPromoInput()(message))
+
+    assert has_pending is True
+
+
+def test_fallback_reachable_when_no_pending_promo_input(monkeypatch):
+    message = DummyMessage(text='something unknown')
+    monkeypatch.setattr(handlers_user, 'get_pending_admin_action', AsyncMock(return_value=None))
+    monkeypatch.setattr(handlers_user, 'get_text', AsyncMock(return_value='unknown'))
+    monkeypatch.setattr(handlers_user, 'get_main_menu', lambda *_: None)
+
+    has_pending = asyncio.run(handlers_user.HasPendingPromoInput()(message))
+    assert has_pending is False
+
+    asyncio.run(handlers_user.fallback_message(message))
+    message.answer.assert_awaited_once()

@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 
 from aiogram import F, Router, types
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
@@ -87,6 +87,12 @@ from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_e
 
 router = Router()
 USER_PROMO_INPUT_ACTION_KEY = "user_promo_input"
+
+
+class HasPendingPromoInput(BaseFilter):
+    async def __call__(self, message: types.Message) -> bool:
+        pending_action = await get_pending_admin_action(message.from_user.id, USER_PROMO_INPUT_ACTION_KEY)
+        return bool(pending_action)
 
 
 def _config_filename_prefix() -> str:
@@ -810,10 +816,9 @@ async def promo_input_cancel_callback(cb: types.CallbackQuery):
         await cb.message.answer("❌ Ввод промокода отменён.")
 
 
-@router.message()
+@router.message(HasPendingPromoInput())
 async def promo_input_pending_message(message: types.Message):
-    if await _handle_promo_input_message(message):
-        return
+    await _handle_promo_input_message(message)
 
 
 @router.message()
