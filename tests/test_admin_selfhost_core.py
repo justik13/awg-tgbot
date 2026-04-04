@@ -129,10 +129,11 @@ def test_network_policy_screen_renders_state(monkeypatch):
     assert "QoS: <b>включено</b>" in text
     assert "Скорость по умолчанию: <b>150 Mbit/s</b>" in text
     assert "Режим denylist: <b>soft</b>" in text
-    assert "Статус синхронизации QoS: <b>1</b>" in text
-    assert "Последняя синхронизация QoS: <b>1711111111</b>" in text
+    assert "Статус синхронизации QoS: <b>успешно</b>" in text
+    assert "Последняя синхронизация QoS: <b>22.03.2024 12:38</b>" in text
     assert "AWG: <b>amnezia-awg2 / awg0</b>" in text
     assert "QoS host-интерфейс: <b>amn0</b>" in text
+    assert "1711111111" not in text
 
 
 def test_service_settings_support_and_download_update(monkeypatch):
@@ -279,6 +280,8 @@ def test_qos_status_command_clears_both_pending_and_uses_polished_wording(monkey
     assert "Включено: включено" in rendered
     assert "Статус синхронизации QoS: не было" in rendered
     assert "Последняя синхронизация QoS: не было" in rendered
+    assert "Статус синхронизации QoS: 0" not in rendered
+    assert "Последняя синхронизация QoS: 0" not in rendered
 
 
 def test_network_policy_screen_shows_warning_and_ne_bilo(monkeypatch):
@@ -353,7 +356,8 @@ def test_health_text_uses_readable_russian_labels(monkeypatch):
     assert "Получено задач: <b>4</b>" in text
     assert "Застряли на ручной обработке: <b>0</b>" in text
     assert "Ошибки QoS: <b>1</b>" in text
-    assert "Последняя синхронизация QoS: <b>555</b>" in text
+    assert "Статус последней синхронизации QoS: <b>успешно</b>" in text
+    assert "Последняя синхронизация QoS: <b>01.01.1970 00:09</b>" in text
     assert "Время последней синхронизации denylist: <b>123</b>" in text
     assert "Ограничение запросов: отклонено кнопок: <b>4</b>" in text
 
