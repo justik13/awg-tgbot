@@ -1004,7 +1004,7 @@ print_update_status_line() {
 
 
 print_detailed_startup_summary() {
-  local ab_stats ab_latest ab_count
+  local ab_stats ab_latest ab_count env_container env_interface env_host_interface policy_container policy_interface policy_host_interface
   print_line
   echo "Предварительная проверка:"
   echo "AWG: $(status_found_text "$STATE_AWG_FOUND")"
@@ -1024,6 +1024,20 @@ print_detailed_startup_summary() {
   echo "BOT_DIR/app.py: $(status_found_text "$STATE_BOT_APP_FOUND")"
   echo "Symlink /usr/local/bin/awg-tgbot: $(status_found_text "$STATE_BOT_SYMLINK_FOUND")"
   echo ".env: $(status_found_text "$STATE_BOT_ENV_FOUND")"
+  env_container="$(get_env_value DOCKER_CONTAINER)"
+  env_interface="$(get_env_value WG_INTERFACE)"
+  env_host_interface="$(get_env_value WG_HOST_INTERFACE)"
+  [[ -n "$env_host_interface" ]] || env_host_interface="$env_interface"
+  echo "AWG target (.env): ${env_container:-не задан}/${env_interface:-не задан}"
+  echo "QoS host-интерфейс (.env): ${env_host_interface:-не задан}"
+  if [[ -f "$AWG_HELPER_POLICY" ]]; then
+    policy_container="$(helper_policy_field container)"
+    policy_interface="$(helper_policy_field interface)"
+    policy_host_interface="$(helper_policy_field host_interface)"
+    [[ -n "$policy_host_interface" ]] || policy_host_interface="$policy_interface"
+    echo "AWG target (helper policy): ${policy_container:-не задан}/${policy_interface:-не задан}"
+    echo "QoS host-интерфейс (helper policy): ${policy_host_interface:-не задан}"
+  fi
   echo "Служебное состояние установки: $(status_found_text "$STATE_BOT_STATE_FOUND")"
   ab_stats="$(autobackup_archive_stats)"
   ab_latest="${ab_stats%%|*}"

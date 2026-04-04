@@ -297,6 +297,24 @@ def test_network_policy_screen_shows_warning_and_ne_bilo(monkeypatch):
     assert "Последняя синхронизация denylist: <b>не было</b>" in text
 
 
+def test_network_policy_callback_prefers_edit_text(monkeypatch):
+    msg = SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock())
+    cb = SimpleNamespace(
+        data=handlers_admin.CB_ADMIN_NETWORK_POLICY,
+        from_user=SimpleNamespace(id=handlers_admin.ADMIN_ID),
+        message=msg,
+        answer=AsyncMock(),
+    )
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_render_network_policy_text", AsyncMock(return_value="ok"))
+
+    asyncio.run(handlers_admin.admin_network_policy_screen(cb))
+
+    msg.edit_text.assert_awaited_once()
+    msg.answer.assert_not_awaited()
+
+
 def test_health_text_uses_readable_russian_labels(monkeypatch):
     monkeypatch.setattr(
         handlers_admin,

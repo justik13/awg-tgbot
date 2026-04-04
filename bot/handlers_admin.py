@@ -529,6 +529,18 @@ async def _denylist_keyboard():
     return get_admin_denylist_kb(denylist_enabled=enabled, denylist_mode=mode)
 
 
+async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_markup) -> None:
+    message = cb.message
+    if message is not None and hasattr(message, "edit_text"):
+        try:
+            await message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
+            return
+        except Exception:
+            pass
+    if message is not None:
+        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+
+
 async def _render_network_policy_text() -> str:
     policy_stats = await policy_metrics()
     qos_enabled = int(await get_setting("QOS_ENABLED", int) or 0)
@@ -1125,7 +1137,7 @@ async def admin_network_policy_screen(cb: types.CallbackQuery):
         return
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await cb.message.answer(await _render_network_policy_text(), parse_mode="HTML", reply_markup=get_admin_network_policy_kb())
+    await _send_or_edit_admin_message(cb, await _render_network_policy_text(), get_admin_network_policy_kb())
     await cb.answer()
 
 
@@ -1133,7 +1145,7 @@ async def admin_network_policy_screen(cb: types.CallbackQuery):
 async def admin_network_policy_qos_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await cb.message.answer("📶 <b>Настройки QoS</b>", parse_mode="HTML", reply_markup=await _qos_keyboard())
+    await _send_or_edit_admin_message(cb, "📶 <b>Настройки QoS</b>", await _qos_keyboard())
     await cb.answer()
 
 
@@ -1141,7 +1153,7 @@ async def admin_network_policy_qos_screen(cb: types.CallbackQuery):
 async def admin_network_policy_denylist_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await cb.message.answer("🛡 <b>Настройки denylist</b>", parse_mode="HTML", reply_markup=await _denylist_keyboard())
+    await _send_or_edit_admin_message(cb, "🛡 <b>Настройки denylist</b>", await _denylist_keyboard())
     await cb.answer()
 
 

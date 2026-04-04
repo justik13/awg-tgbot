@@ -50,6 +50,7 @@ def test_installer_status_and_detection_show_host_interface_for_qos():
     assert 'DETECTED_HOST_INTERFACE="$(pick_existing_or_default "$(get_env_value WG_HOST_INTERFACE)" "$(detect_host_qos_interface "$DETECTED_INTERFACE")")"' in script
     assert "QoS host-интерфейс (.env):" in script
     assert "QoS host-интерфейс (helper policy):" in script
+    assert "AWG target (helper policy):" in script
 
 
 def test_installer_integrates_autobackup_timer_and_manual_prompts():
