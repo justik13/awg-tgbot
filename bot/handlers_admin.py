@@ -409,8 +409,9 @@ async def run_runtime_smokecheck() -> dict[str, object]:
             }
         )
 
+    expected_host_interface = str(WG_HOST_INTERFACE or WG_INTERFACE or "").strip() or WG_INTERFACE
     if AWG_HELPER_POLICY_PATH and DOCKER_CONTAINER and WG_INTERFACE:
-        policy_container, policy_interface, _, policy_error = read_helper_policy(Path(AWG_HELPER_POLICY_PATH))
+        policy_container, policy_interface, policy_host_interface, policy_error = read_helper_policy(Path(AWG_HELPER_POLICY_PATH))
         if policy_error:
             detail = policy_error
             if "parse failed:" in policy_error:
@@ -423,12 +424,20 @@ async def run_runtime_smokecheck() -> dict[str, object]:
                     "hint": _hint_for_helper_policy_error(policy_error),
                 }
             )
-        elif policy_container != DOCKER_CONTAINER or policy_interface != WG_INTERFACE:
+        elif (
+            policy_container != DOCKER_CONTAINER
+            or policy_interface != WG_INTERFACE
+            or policy_host_interface != expected_host_interface
+        ):
             checks.append(
                 {
                     "name": "Политика helper",
                     "state": "warning",
-                    "detail": f"расхождение: env={DOCKER_CONTAINER}/{WG_INTERFACE}, policy={policy_container}/{policy_interface}",
+                    "detail": (
+                        "расхождение: "
+                        f"env={DOCKER_CONTAINER}/{WG_INTERFACE}/{expected_host_interface}, "
+                        f"policy={policy_container}/{policy_interface}/{policy_host_interface}"
+                    ),
                     "hint": "синхронизируй политику helper с .env",
                 }
             )
@@ -492,7 +501,8 @@ async def build_health_text() -> str:
         f"Ошибки helper-сервиса: <b>{helper_failures}</b>\n"
         f"QoS: <b>{qos_enabled}</b> · строгий режим: <b>{qos_strict}</b>\n"
         f"Ошибки QoS: <b>{policy_stats['qos_errors']}</b>\n"
-        f"Последняя синхронизация QoS: <b>{policy_stats['qos_last_sync_ok']}</b>\n"
+        f"Статус последней синхронизации QoS: <b>{policy_stats['qos_last_sync_ok']}</b>\n"
+        f"Последняя синхронизация QoS: <b>{policy_stats['qos_last_sync_ts']}</b>\n"
         f"denylist: <b>{denylist_enabled}</b> · режим: <b>{denylist_mode}</b>\n"
         f"Ошибки denylist: <b>{policy_stats['denylist_errors']}</b>\n"
         f"Последняя синхронизация denylist: <b>{policy_stats['denylist_last_sync_ok']}</b>\n"
@@ -566,7 +576,8 @@ async def _render_network_policy_text() -> str:
         f"Режим denylist: <b>{escape_html(deny_mode)}</b>\n"
         f"Интервал обновления denylist: <b>{deny_refresh} мин</b>\n\n"
         + ("\n".join(health_lines) + "\n\n" if health_lines else "")
-        + f"Последняя синхронизация QoS: <b>{_metric_or_ne_bilo(policy_stats['qos_last_sync_ok'])}</b>\n"
+        + f"Статус синхронизации QoS: <b>{_metric_or_ne_bilo(policy_stats['qos_last_sync_ok'])}</b>\n"
+        f"Последняя синхронизация QoS: <b>{_metric_or_ne_bilo(policy_stats['qos_last_sync_ts'])}</b>\n"
         f"Ошибки QoS: <b>{policy_stats['qos_errors']}</b>\n"
         f"Последняя синхронизация denylist: <b>{_metric_or_ne_bilo(policy_stats['denylist_last_sync_ok'])}</b>\n"
         f"Время последней синхронизации denylist: <b>{_metric_or_ne_bilo(policy_stats['denylist_last_sync_ts'])}</b>\n"
@@ -2694,7 +2705,8 @@ async def qos_status_cmd(message: types.Message):
             f"Включено: {_bool_on_off(qos_enabled)}\n"
             f"Скорость по умолчанию: {default_rate} Mbit/s\n"
             f"Строгий режим: {_bool_on_off(qos_strict)}\n"
-            f"Последняя синхронизация QoS: {_metric_or_ne_bilo(metrics['qos_last_sync_ok'])}\n"
+            f"Статус синхронизации QoS: {_metric_or_ne_bilo(metrics['qos_last_sync_ok'])}\n"
+            f"Последняя синхронизация QoS: {_metric_or_ne_bilo(metrics['qos_last_sync_ts'])}\n"
             f"Ошибки: {metrics['qos_errors']}"
         ),
         parse_mode="HTML",

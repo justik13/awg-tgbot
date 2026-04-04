@@ -57,6 +57,12 @@ def test_network_policy_keyboards_have_explicit_labels():
     assert "🔄 Синхронизировать denylist" in deny_texts
 
 
+def test_policy_metrics_includes_qos_last_sync_ts(monkeypatch):
+    monkeypatch.setattr(network_policy, "get_metric", AsyncMock(side_effect=[3, 4, 1, 1234567890, 1, 2, 7]))
+    metrics = asyncio.run(network_policy.policy_metrics())
+    assert metrics["qos_last_sync_ts"] == 1234567890
+
+
 def test_payment_lookup_by_charge_uses_trim_and_shows_jump(monkeypatch):
     message = _msg("  tg-1  ")
     monkeypatch.setattr(handlers_admin, "get_pending_admin_action", AsyncMock(side_effect=[{"a": 1}, None]))
@@ -110,6 +116,7 @@ def test_network_policy_screen_renders_state(monkeypatch):
         "qos_errors": 1,
         "denylist_errors": 2,
         "qos_last_sync_ok": 1,
+        "qos_last_sync_ts": 1711111111,
         "denylist_last_sync_ok": 1,
         "denylist_last_sync_ts": 123,
         "denylist_entries": 5,
@@ -122,7 +129,8 @@ def test_network_policy_screen_renders_state(monkeypatch):
     assert "QoS: <b>включено</b>" in text
     assert "Скорость по умолчанию: <b>150 Mbit/s</b>" in text
     assert "Режим denylist: <b>soft</b>" in text
-    assert "Последняя синхронизация QoS: <b>1</b>" in text
+    assert "Статус синхронизации QoS: <b>1</b>" in text
+    assert "Последняя синхронизация QoS: <b>1711111111</b>" in text
     assert "AWG: <b>amnezia-awg2 / awg0</b>" in text
     assert "QoS host-интерфейс: <b>amn0</b>" in text
 
@@ -262,13 +270,14 @@ def test_qos_status_command_clears_both_pending_and_uses_polished_wording(monkey
     monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
     monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
     monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[1, 150, 0]))
-    monkeypatch.setattr(handlers_admin, "policy_metrics", AsyncMock(return_value={"qos_last_sync_ok": 0, "qos_errors": 0}))
+    monkeypatch.setattr(handlers_admin, "policy_metrics", AsyncMock(return_value={"qos_last_sync_ok": 0, "qos_last_sync_ts": 0, "qos_errors": 0}))
     asyncio.run(handlers_admin.qos_status_cmd(message))
     handlers_admin._clear_service_settings_pending.assert_awaited_once()
     handlers_admin._clear_network_policy_pending.assert_awaited_once()
     rendered = message.answer.await_args.args[0]
     assert "Скорость по умолчанию: 150 Mbit/s" in rendered
     assert "Включено: включено" in rendered
+    assert "Статус синхронизации QoS: не было" in rendered
     assert "Последняя синхронизация QoS: не было" in rendered
 
 
@@ -281,6 +290,7 @@ def test_network_policy_screen_shows_warning_and_ne_bilo(monkeypatch):
                 "qos_errors": 2,
                 "denylist_errors": 0,
                 "qos_last_sync_ok": 0,
+                "qos_last_sync_ts": 0,
                 "denylist_last_sync_ok": 0,
                 "denylist_last_sync_ts": 0,
                 "denylist_entries": 0,
@@ -331,6 +341,7 @@ def test_health_text_uses_readable_russian_labels(monkeypatch):
                 "qos_errors": 1,
                 "denylist_errors": 2,
                 "qos_last_sync_ok": 1,
+                "qos_last_sync_ts": 555,
                 "denylist_last_sync_ok": 0,
                 "denylist_last_sync_ts": 123,
                 "denylist_entries": 6,
@@ -342,8 +353,28 @@ def test_health_text_uses_readable_russian_labels(monkeypatch):
     assert "Получено задач: <b>4</b>" in text
     assert "Застряли на ручной обработке: <b>0</b>" in text
     assert "Ошибки QoS: <b>1</b>" in text
+    assert "Последняя синхронизация QoS: <b>555</b>" in text
     assert "Время последней синхронизации denylist: <b>123</b>" in text
     assert "Ограничение запросов: отклонено кнопок: <b>4</b>" in text
+
+
+def test_runtime_smokecheck_warns_on_helper_host_interface_mismatch(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "DOCKER_CONTAINER", "amnezia-awg2")
+    monkeypatch.setattr(handlers_admin, "WG_INTERFACE", "awg0")
+    monkeypatch.setattr(handlers_admin, "WG_HOST_INTERFACE", "amn0")
+    monkeypatch.setattr(handlers_admin, "AWG_HELPER_POLICY_PATH", "/tmp/helper-policy.json")
+    monkeypatch.setattr(handlers_admin, "db_health_info", AsyncMock(return_value={"is_healthy": True}))
+    monkeypatch.setattr(handlers_admin, "check_awg_container", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        handlers_admin,
+        "read_helper_policy",
+        lambda _path: ("amnezia-awg2", "awg0", "eth0", ""),
+    )
+    report = asyncio.run(handlers_admin.run_runtime_smokecheck())
+    helper_check = next(item for item in report["checks"] if item["name"] == "Политика helper")
+    assert helper_check["state"] == "warning"
+    assert "env=amnezia-awg2/awg0/amn0" in helper_check["detail"]
+    assert "policy=amnezia-awg2/awg0/eth0" in helper_check["detail"]
 
 
 def test_denylist_sync_command_uses_polished_wording(monkeypatch):
@@ -476,7 +507,7 @@ def test_required_admin_slash_commands_clear_network_policy_pending(monkeypatch)
         monkeypatch.setattr(handlers_admin, "get_recent_audit", AsyncMock(return_value=[]))
         monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(return_value=0))
         monkeypatch.setattr(handlers_admin, "policy_metrics", AsyncMock(return_value={
-            "qos_last_sync_ok": 1, "qos_errors": 0, "denylist_last_sync_ok": 1,
+            "qos_last_sync_ok": 1, "qos_last_sync_ts": 0, "qos_errors": 0, "denylist_last_sync_ok": 1,
             "denylist_last_sync_ts": 0, "denylist_entries": 0, "denylist_errors": 0,
         }))
         monkeypatch.setattr(handlers_admin, "denylist_sync", AsyncMock())
