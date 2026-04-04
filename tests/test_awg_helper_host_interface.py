@@ -107,6 +107,46 @@ def test_qos_set_falls_back_to_delete_add_when_replace_not_supported(monkeypatch
     ]
 
 
+def test_ingress_qdisc_falls_back_on_exclusivity_error(monkeypatch):
+    calls = []
+
+    def fake_tc_run(dev, container, args):
+        calls.append(args)
+        if args[:2] == ["qdisc", "replace"] and args[-1] == "ingress":
+            raise RuntimeError("Error: Exclusivity flag on, cannot modify.")
+        return ""
+
+    monkeypatch.setattr(awg_helper, "_tc_run", fake_tc_run)
+
+    awg_helper._ensure_qos_ingress_qdisc("amn0", None)
+
+    assert calls == [
+        ["qdisc", "replace", "dev", "amn0", "handle", "ffff:", "ingress"],
+        ["qdisc", "del", "dev", "amn0", "ingress"],
+        ["qdisc", "add", "dev", "amn0", "handle", "ffff:", "ingress"],
+    ]
+
+
+def test_ifb_root_qdisc_falls_back_when_replace_unsupported(monkeypatch):
+    calls = []
+
+    def fake_tc_run(dev, container, args):
+        calls.append(args)
+        if args[:2] == ["qdisc", "replace"] and args[3] == "ifbamn0":
+            raise RuntimeError("Error: Change operation not supported by specified qdisc.")
+        return ""
+
+    monkeypatch.setattr(awg_helper, "_tc_run", fake_tc_run)
+
+    awg_helper._ensure_qos_ifb_root_qdisc("ifbamn0", None)
+
+    assert calls == [
+        ["qdisc", "replace", "dev", "ifbamn0", "root", "handle", "2:", "htb", "default", "9999"],
+        ["qdisc", "del", "dev", "ifbamn0", "root"],
+        ["qdisc", "add", "dev", "ifbamn0", "root", "handle", "2:", "htb", "default", "9999"],
+    ]
+
+
 def test_qos_sync_uses_host_interface(monkeypatch, capsys):
     host_calls = []
     docker_calls = []
