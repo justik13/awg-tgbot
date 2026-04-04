@@ -13,8 +13,7 @@ from ui_constants import (
     CB_ADMIN_TEXT_RESET_PREFIX,
     CB_ADMIN_PROMOCODES, CB_ADMIN_PROMO_CREATE, CB_ADMIN_PROMO_DISABLE, CB_ADMIN_PROMO_LIST,
     CB_ADMIN_STATS, CB_ADMIN_SYNC, CB_ADMIN_NETWORK_POLICY,
-    CB_ADMIN_NET_QOS, CB_ADMIN_NET_DENYLIST, CB_ADMIN_NET_SYNC_NOW,
-    CB_ADMIN_QOS_TOGGLE, CB_ADMIN_QOS_DEFAULT_RATE, CB_ADMIN_QOS_STRICT_TOGGLE, CB_ADMIN_QOS_SYNC,
+    CB_ADMIN_NET_DENYLIST, CB_ADMIN_NET_SYNC_NOW,
     CB_ADMIN_DENYLIST_TOGGLE, CB_ADMIN_DENYLIST_MODE, CB_ADMIN_DENYLIST_VIEW_DOMAINS, CB_ADMIN_DENYLIST_VIEW_CIDRS,
     CB_ADMIN_DENYLIST_REPLACE_DOMAINS, CB_ADMIN_DENYLIST_REPLACE_CIDRS, CB_ADMIN_DENYLIST_SYNC,
     CB_ADMIN_DENYLIST_MODE_SOFT, CB_ADMIN_DENYLIST_MODE_STRICT,
@@ -273,21 +272,9 @@ def get_admin_promocodes_kb() -> InlineKeyboardMarkup:
 def get_admin_network_policy_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📶 QoS", callback_data=CB_ADMIN_NET_QOS), InlineKeyboardButton(text="🛡 Denylist", callback_data=CB_ADMIN_NET_DENYLIST)],
+            [InlineKeyboardButton(text="🛡 Denylist", callback_data=CB_ADMIN_NET_DENYLIST)],
             [InlineKeyboardButton(text="🔄 Синхронизировать", callback_data=CB_ADMIN_NET_SYNC_NOW)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
-        ]
-    )
-
-
-def get_admin_qos_kb(*, qos_enabled: int, qos_strict: int, default_rate_mbit: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=f"QoS: {'ВКЛ' if int(qos_enabled) == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_QOS_TOGGLE)],
-            [InlineKeyboardButton(text=f"Скорость: {int(default_rate_mbit)} Mbit/s", callback_data=CB_ADMIN_QOS_DEFAULT_RATE)],
-            [InlineKeyboardButton(text=f"Strict: {'ВКЛ' if int(qos_strict) == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_QOS_STRICT_TOGGLE)],
-            [InlineKeyboardButton(text="🔄 Синхронизировать QoS", callback_data=CB_ADMIN_QOS_SYNC)],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_NETWORK_POLICY)],
         ]
     )
 

@@ -64,63 +64,6 @@ async def resolve_domains(domains_raw: str) -> list[str]:
     return sorted(resolved)
 
 
-async def qos_rate_for_key(rate_limit_mbit: int | None) -> int:
-    if rate_limit_mbit is not None:
-        value = int(rate_limit_mbit)
-        if value <= 0:
-            return 0
-        return value
-    return int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
-
-
-async def qos_set(run_docker, ip: str, rate_mbit: int, user_id: int) -> None:
-    if int(await get_setting("QOS_ENABLED", int) or 0) != 1:
-        return
-    if int(rate_mbit) <= 0:
-        await qos_clear(run_docker, ip, user_id)
-        return
-    strict = int(await get_setting("QOS_STRICT", int) or 0) == 1
-    try:
-        await run_docker(["qos-set", "--ip", ip, "--rate-mbit", str(rate_mbit)])
-    except Exception as e:
-        await increment_metric("qos_errors")
-        await write_audit_log(user_id, "qos_set_failed", f"ip={ip}; rate={rate_mbit}; error={str(e)[:200]}")
-        if strict:
-            raise
-        logger.warning("qos_set failed for ip=%s: %s", ip, e)
-
-
-async def qos_clear(run_docker, ip: str, user_id: int) -> None:
-    if int(await get_setting("QOS_ENABLED", int) or 0) != 1:
-        return
-    strict = int(await get_setting("QOS_STRICT", int) or 0) == 1
-    try:
-        await run_docker(["qos-clear", "--ip", ip])
-    except Exception as e:
-        await increment_metric("qos_errors")
-        await write_audit_log(user_id, "qos_clear_failed", f"ip={ip}; error={str(e)[:200]}")
-        if strict:
-            raise
-        logger.warning("qos_clear failed for ip=%s: %s", ip, e)
-
-
-async def qos_sync(run_docker, active_ips_with_rate: list[tuple[str, int]]) -> None:
-    if int(await get_setting("QOS_ENABLED", int) or 0) != 1:
-        return
-    strict = int(await get_setting("QOS_STRICT", int) or 0) == 1
-    payload = "\n".join(f"{ip},{rate}" for ip, rate in active_ips_with_rate if int(rate) > 0)
-    try:
-        await run_docker(["qos-sync"], input_data=payload)
-        await set_metric("qos_last_sync_ok", 1)
-        await set_metric("qos_last_sync_ts", int(datetime.utcnow().timestamp()))
-    except Exception as e:
-        await increment_metric("qos_errors")
-        await set_metric("qos_last_sync_ok", 0)
-        if strict:
-            raise
-        logger.warning("qos_sync failed: %s", e)
-
-
 async def denylist_sync(run_docker) -> None:
     enabled = int(await get_setting("EGRESS_DENYLIST_ENABLED", int) or 0) == 1
     if not enabled:
@@ -177,10 +120,7 @@ async def denylist_should_refresh() -> bool:
 
 async def policy_metrics() -> dict[str, int]:
     return {
-        "qos_errors": await get_metric("qos_errors"),
         "denylist_errors": await get_metric("denylist_errors"),
-        "qos_last_sync_ok": await get_metric("qos_last_sync_ok"),
-        "qos_last_sync_ts": await get_metric("qos_last_sync_ts"),
         "denylist_last_sync_ok": await get_metric("denylist_last_sync_ok"),
         "denylist_last_sync_ts": await get_metric("denylist_last_sync_ts"),
         "denylist_entries": await get_metric("denylist_entries"),
