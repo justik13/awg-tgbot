@@ -12,6 +12,10 @@ def _has_match_clause(cmd: list[str], direction: str, ip: str) -> bool:
     return any(cmd[i:i + len(needle)] == needle for i in range(len(cmd) - len(needle) + 1))
 
 
+def _is_tc_for_dev(cmd: list[str], dev: str) -> bool:
+    return len(cmd) > 0 and cmd[0] == "tc" and "dev" in cmd and cmd[cmd.index("dev") + 1] == dev
+
+
 def _patch_root_owned_regular_lstat(monkeypatch, policy: Path):
     original_lstat = awg_helper.Path.lstat
 
@@ -65,13 +69,19 @@ def test_qos_set_uses_host_interface(monkeypatch, capsys):
     rc = awg_helper.main()
 
     assert rc == 0
-    assert all(cmd[cmd.index("dev") + 1] == "amn0" for cmd in host_calls)
+    host_tc_calls = [cmd for cmd in host_calls if _is_tc_for_dev(cmd, "amn0")]
+    assert host_tc_calls
     assert all(container == "awg" for container, _ in docker_calls)
-    assert all(cmd[cmd.index("dev") + 1] == "awg0" for _, cmd in docker_calls)
+    docker_tc_calls = [cmd for _, cmd in docker_calls if _is_tc_for_dev(cmd, "awg0")]
+    assert docker_tc_calls
+    assert any(cmd[:4] == ["ip", "link", "add", "ifbamn0"] for cmd in host_calls)
+    assert any(cmd[:4] == ["ip", "link", "add", "ifbawg0"] for _, cmd in docker_calls)
     assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for cmd in host_calls)
     assert any(_has_match_clause(cmd, "src", "10.8.1.11") for cmd in host_calls)
     assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for _, cmd in docker_calls)
     assert any(_has_match_clause(cmd, "src", "10.8.1.11") for _, cmd in docker_calls)
+    assert any(["filter", "replace", "dev", "amn0", "parent", "ffff:"] == cmd[1:7] for cmd in host_calls if cmd and cmd[0] == "tc")
+    assert any(["filter", "replace", "dev", "ifbamn0", "protocol", "ip"] == cmd[1:7] for cmd in host_calls if cmd and cmd[0] == "tc")
     assert "qos set 10.8.1.11 50mbit" in capsys.readouterr().out
 
 
@@ -110,13 +120,17 @@ def test_qos_sync_uses_host_interface(monkeypatch, capsys):
     rc = awg_helper.main()
 
     assert rc == 0
-    assert all(cmd[cmd.index("dev") + 1] == "amn0" for cmd in host_calls)
+    host_tc_calls = [cmd for cmd in host_calls if _is_tc_for_dev(cmd, "amn0")]
+    assert host_tc_calls
     assert all(container == "awg" for container, _ in docker_calls)
-    assert all(cmd[cmd.index("dev") + 1] == "awg0" for _, cmd in docker_calls)
+    docker_tc_calls = [cmd for _, cmd in docker_calls if _is_tc_for_dev(cmd, "awg0")]
+    assert docker_tc_calls
     assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for cmd in host_calls)
     assert any(_has_match_clause(cmd, "src", "10.8.1.11") for cmd in host_calls)
     assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for _, cmd in docker_calls)
     assert any(_has_match_clause(cmd, "src", "10.8.1.11") for _, cmd in docker_calls)
+    assert any(cmd[:4] == ["ip", "link", "add", "ifbamn0"] for cmd in host_calls)
+    assert any(cmd[:4] == ["ip", "link", "add", "ifbawg0"] for _, cmd in docker_calls)
     assert "qos synced 1" in capsys.readouterr().out
 
 

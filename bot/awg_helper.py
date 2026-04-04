@@ -111,6 +111,40 @@ def _tc_run(dev: str, container: str | None, args: list[str]) -> str:
     return _run(["tc", *args])
 
 
+def _ip_run(container: str | None, args: list[str]) -> str:
+    if container:
+        return _docker_exec(container, ["ip", *args])
+    return _run(["ip", *args])
+
+
+def _ifb_name_for_dev(dev: str) -> str:
+    normalized = "".join(ch for ch in dev if ch.isalnum())
+    suffix = normalized[-11:] if normalized else "qos"
+    return f"ifb{suffix}"
+
+
+def _ensure_qos_ingress_redirect(dev: str, container: str | None) -> str:
+    ifb_dev = _ifb_name_for_dev(dev)
+    try:
+        _ip_run(container, ["link", "add", ifb_dev, "type", "ifb"])
+    except RuntimeError as e:
+        err = str(e).lower()
+        if "file exists" not in err:
+            raise
+    _ip_run(container, ["link", "set", "dev", ifb_dev, "up"])
+    _tc_run(dev, container, ["qdisc", "replace", "dev", dev, "handle", "ffff:", "ingress"])
+    _tc_run(
+        dev,
+        container,
+        [
+            "filter", "replace", "dev", dev, "parent", "ffff:", "protocol", "ip", "prio", "1", "u32",
+            "match", "u32", "0", "0", "action", "mirred", "egress", "redirect", "dev", ifb_dev,
+        ],
+    )
+    _tc_run(ifb_dev, container, ["qdisc", "replace", "dev", ifb_dev, "root", "handle", "2:", "htb", "default", "9999"])
+    return ifb_dev
+
+
 def _ensure_qos_roots(container: str, interface: str, host_interface: str) -> None:
     _ensure_qos_root_qdisc(host_interface)
     if interface != host_interface:
@@ -245,18 +279,26 @@ def main() -> int:
             classid_suffix = ip.split(".")[-1]
             _ensure_qos_roots(container, interface, host_interface)
             for dev, tc_container in _qos_targets(container, interface, host_interface):
+                ifb_dev = _ensure_qos_ingress_redirect(dev, tc_container)
                 _tc_run(dev, tc_container, ["class", "replace", "dev", dev, "parent", "1:", "classid", f"1:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
                 _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
                 _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
+                _tc_run(ifb_dev, tc_container, ["class", "replace", "dev", ifb_dev, "parent", "2:", "classid", f"2:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
+                _tc_run(ifb_dev, tc_container, ["filter", "replace", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"2:{classid_suffix}"])
+                _tc_run(ifb_dev, tc_container, ["filter", "replace", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32", "flowid", f"2:{classid_suffix}"])
             print(f"qos set {ip} {rate_mbit}mbit")
             return 0
         if args.op == "qos-clear":
             ip = _safe_ipv4(args.ip.strip())
             classid_suffix = ip.split(".")[-1]
             for dev, tc_container in _qos_targets(container, interface, host_interface):
+                ifb_dev = _ifb_name_for_dev(dev)
                 _tc_run(dev, tc_container, ["filter", "delete", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32"])
                 _tc_run(dev, tc_container, ["filter", "delete", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32"])
                 _tc_run(dev, tc_container, ["class", "delete", "dev", dev, "classid", f"1:{classid_suffix}"])
+                _tc_run(ifb_dev, tc_container, ["filter", "delete", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32"])
+                _tc_run(ifb_dev, tc_container, ["filter", "delete", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32"])
+                _tc_run(ifb_dev, tc_container, ["class", "delete", "dev", ifb_dev, "classid", f"2:{classid_suffix}"])
             print(f"qos clear {ip}")
             return 0
         if args.op == "qos-sync":
@@ -268,9 +310,13 @@ def main() -> int:
                 rate_mbit = int(rate_raw.strip())
                 classid_suffix = ip.split(".")[-1]
                 for dev, tc_container in _qos_targets(container, interface, host_interface):
+                    ifb_dev = _ensure_qos_ingress_redirect(dev, tc_container)
                     _tc_run(dev, tc_container, ["class", "replace", "dev", dev, "parent", "1:", "classid", f"1:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
                     _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
                     _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
+                    _tc_run(ifb_dev, tc_container, ["class", "replace", "dev", ifb_dev, "parent", "2:", "classid", f"2:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
+                    _tc_run(ifb_dev, tc_container, ["filter", "replace", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"2:{classid_suffix}"])
+                    _tc_run(ifb_dev, tc_container, ["filter", "replace", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32", "flowid", f"2:{classid_suffix}"])
             print(f"qos synced {len(payload)}")
             return 0
         if args.op == "denylist-check":
