@@ -4,6 +4,7 @@ import string
 from typing import Any, Callable
 
 from config import (
+    CONFIGS_PER_USER,
     DEFAULT_KEY_RATE_MBIT,
     EGRESS_DENYLIST_CIDRS,
     EGRESS_DENYLIST_DOMAINS,
@@ -30,12 +31,12 @@ TEXT_DEFAULTS: dict[str, str] = {
     "support_unavailable": "🆘 Поддержка временно не настроена. Попробуйте позже или напишите администратору сервиса.",
     "support_short": "🆘 <b>Поддержка:</b> {support_username}",
     "unknown_slash": "Неизвестная команда. Используйте кнопки меню или /start.",
-    "buy_menu": "💳 <b>Выберите срок доступа</b>\n\nВ подписку входит доступ до <b>2 устройств</b> на текущем сервере.\n\n{price_lines}",
+    "buy_menu": "💳 <b>Выберите срок доступа</b>\n\nВ подписку входит доступ до <b>{configs_per_user} устройств</b> на текущем сервере.\n\n{price_lines}",
     "renew_menu": "🔄 <b>У вас уже есть активная подписка</b>\n⏳ Осталось: <b>{remaining}</b>\n\n💡 Можно продлить заранее.\n\n{price_lines}",
     "guide_hint": "Если активация задержалась — нажмите «Проверить статус активации».",
     "instruction_body": (
         "📖 <b>Как подключиться</b>\n\n"
-        "1. Нажмите <b>💳 Оплатить доступ</b>\n"
+        "1. Нажмите <b>💳 Купить / Продлить</b>\n"
         "2. Выберите тариф: <b>7, 30 или 90 дней</b>\n"
         "3. После оплаты дождитесь статуса <b>«Доступ готов»</b>\n"
         "4. Выберите устройство и скопируйте <code>vpn://</code> ключ\n"
@@ -87,7 +88,7 @@ TEXT_DEFAULTS: dict[str, str] = {
     "config_invalid_device": "Некорректный выбор устройства.",
     "config_invalid_conf_request": "Некорректный запрос .conf.",
     "callback_message_unavailable": "Сообщение недоступно.",
-    "activation_status_no_payments": "Платежей пока нет. Нажмите «💳 Оплатить доступ», чтобы начать.",
+    "activation_status_no_payments": "Платежей пока нет. Нажмите «💳 Купить / Продлить», чтобы начать.",
     "payment_success": "🎉 <b>Доступ готов</b>\n\nМожно сразу открыть <b>🔑 Подключение</b> и импортировать ключ.",
     "payment_pending": "⏳ Платёж принят. Активация ещё идёт (обычно до минуты).",
     "payment_error": "⚠️ Платёж получен, но активация не завершилась. Проверьте статус через минуту или напишите в поддержку.",
@@ -139,6 +140,7 @@ SETTING_DEFAULTS: dict[str, Any] = {
     "EGRESS_DENYLIST_MODE": EGRESS_DENYLIST_MODE,
     "TORRENT_POLICY_TEXT_ENABLED": int(TORRENT_POLICY_TEXT_ENABLED),
     "VPN_SUBNET_PREFIX": VPN_SUBNET_PREFIX,
+    "CONFIGS_PER_USER": CONFIGS_PER_USER,
 }
 
 

@@ -81,7 +81,7 @@ from ui_constants import (
     CB_USER_REISSUE_CANCEL,
     CB_USER_REISSUE_CONFIRM,
 )
-from content_settings import get_text
+from content_settings import get_setting, get_text
 from referrals import capture_referral_start, get_referral_screen_data
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 
@@ -229,7 +229,11 @@ async def _send_buy_menu(target, user_id: int):
         )
         return
     await target.answer(
-        await get_text("buy_menu", price_lines="\n".join(price_lines)),
+        await get_text(
+            "buy_menu",
+            price_lines="\n".join(price_lines),
+            configs_per_user=int(await get_setting("CONFIGS_PER_USER", int) or config.CONFIGS_PER_USER),
+        ),
         parse_mode="HTML",
         reply_markup=get_buy_inline_kb(),
     )
@@ -493,7 +497,7 @@ async def profile(message: types.Message):
     elif is_active:
         next_step = "Нажмите «⏱ Проверить статус активации» или откройте «🔑 Подключение»"
     else:
-        next_step = "Нажмите «💳 Оплатить доступ»"
+        next_step = "Нажмите «💳 Купить / Продлить»"
     payment_summary = await get_latest_user_payment_summary(message.from_user.id)
     payment_fields = _build_last_payment_fields(payment_summary)
     device_activity_lines = await _build_user_device_activity_lines(message.from_user.id)

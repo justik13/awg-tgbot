@@ -6,6 +6,11 @@ from ui_constants import (
     CB_ADMIN_BACK_MAIN, CB_ADMIN_BROADCAST, CB_ADMIN_COMMANDS, CB_ADMIN_HEALTH, CB_ADMIN_LIST, CB_ADMIN_MAINTENANCE,
     CB_ADMIN_MAINTENANCE_OFF, CB_ADMIN_MAINTENANCE_ON, CB_ADMIN_MAINTENANCE_REFRESH, CB_ADMIN_PAYMENTS, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30,
     CB_ADMIN_PRICE_EDIT_7, CB_ADMIN_PRICE_EDIT_90, CB_ADMIN_PRICE_SAVE, CB_ADMIN_PRICES, CB_ADMIN_REFERRALS,
+    CB_ADMIN_SERVICE_SETTINGS, CB_ADMIN_SERVICE_SUPPORT, CB_ADMIN_SERVICE_DOWNLOAD, CB_ADMIN_SERVICE_REFERRAL_TOGGLE,
+    CB_ADMIN_SERVICE_INVITEE_BONUS, CB_ADMIN_SERVICE_INVITER_BONUS, CB_ADMIN_SERVICE_TORRENT_TOGGLE,
+    CB_ADMIN_TEXT_OVERRIDES, CB_ADMIN_TEXT_START, CB_ADMIN_TEXT_BUY_MENU, CB_ADMIN_TEXT_RENEW_MENU, CB_ADMIN_TEXT_SUPPORT,
+    CB_ADMIN_TEXT_SET_PREFIX,
+    CB_ADMIN_TEXT_RESET_PREFIX,
     CB_ADMIN_PROMOCODES, CB_ADMIN_PROMO_CREATE, CB_ADMIN_PROMO_DISABLE, CB_ADMIN_PROMO_LIST,
     CB_ADMIN_STATS, CB_ADMIN_SYNC, CB_ADMIN_NETWORK_POLICY,
     CB_ADMIN_NET_QOS, CB_ADMIN_NET_DENYLIST, CB_ADMIN_NET_SYNC_NOW,
@@ -54,7 +59,7 @@ def get_profile_inline_kb(subscription_active: bool) -> InlineKeyboardMarkup:
     if subscription_active:
         rows.append([InlineKeyboardButton(text="🔄 Продлить доступ", callback_data=CB_SHOW_BUY_MENU)])
     else:
-        rows.append([InlineKeyboardButton(text="💳 Оплатить доступ", callback_data=CB_SHOW_BUY_MENU)])
+        rows.append([InlineKeyboardButton(text="💳 Купить / Продлить", callback_data=CB_SHOW_BUY_MENU)])
     rows.append([InlineKeyboardButton(text="🔑 Подключение", callback_data=CB_OPEN_CONFIGS)])
     rows.append([InlineKeyboardButton(text="🎟 Ввести промокод", callback_data=CB_PROMO_INPUT_START)])
     rows.append([InlineKeyboardButton(text="⏱ Статус активации", callback_data=CB_CHECK_ACTIVATION_STATUS)])
@@ -150,8 +155,10 @@ def get_admin_inline_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💸 Цены", callback_data=CB_ADMIN_PRICES), InlineKeyboardButton(text="📢 Рассылка", callback_data=CB_ADMIN_BROADCAST)],
             [InlineKeyboardButton(text="🟠 Maintenance", callback_data=CB_ADMIN_MAINTENANCE), InlineKeyboardButton(text="🩺 Состояние", callback_data=CB_ADMIN_HEALTH)],
             [InlineKeyboardButton(text="🎁 Рефералы", callback_data=CB_ADMIN_REFERRALS), InlineKeyboardButton(text="🎟 Промокоды", callback_data=CB_ADMIN_PROMOCODES)],
+            [InlineKeyboardButton(text="⚙️ Настройки сервиса", callback_data=CB_ADMIN_SERVICE_SETTINGS)],
             [InlineKeyboardButton(text="📊 Статистика", callback_data=CB_ADMIN_STATS), InlineKeyboardButton(text="🔄 Синхронизация", callback_data=CB_ADMIN_SYNC)],
             [InlineKeyboardButton(text="🌐 Сеть", callback_data=CB_ADMIN_NETWORK_POLICY)],
+            [InlineKeyboardButton(text="📝 Тексты", callback_data=CB_ADMIN_TEXT_OVERRIDES)],
             [InlineKeyboardButton(text="⌨️ Команды", callback_data=CB_ADMIN_COMMANDS)],
         ]
     )
@@ -215,7 +222,7 @@ def get_admin_confirm_kb(action_key: str) -> InlineKeyboardMarkup:
 def get_admin_simple_back_kb(back_cb: str, refresh_cb: str | None = None) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if refresh_cb:
-        rows.append([InlineKeyboardButton(text="🔄 Refresh", callback_data=refresh_cb)])
+        rows.append([InlineKeyboardButton(text="🔄 Обновить", callback_data=refresh_cb)])
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -267,7 +274,7 @@ def get_admin_network_policy_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📶 QoS", callback_data=CB_ADMIN_NET_QOS), InlineKeyboardButton(text="🛡 Denylist", callback_data=CB_ADMIN_NET_DENYLIST)],
-            [InlineKeyboardButton(text="🔄 Sync now", callback_data=CB_ADMIN_NET_SYNC_NOW)],
+            [InlineKeyboardButton(text="🔄 Синхронизировать", callback_data=CB_ADMIN_NET_SYNC_NOW)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
         ]
     )
@@ -277,9 +284,9 @@ def get_admin_qos_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🟢/⚪ QoS", callback_data=CB_ADMIN_QOS_TOGGLE)],
-            [InlineKeyboardButton(text="✏️ Default Mbit/s", callback_data=CB_ADMIN_QOS_DEFAULT_RATE)],
+            [InlineKeyboardButton(text="✏️ Скорость по умолчанию", callback_data=CB_ADMIN_QOS_DEFAULT_RATE)],
             [InlineKeyboardButton(text="🟢/⚪ Strict", callback_data=CB_ADMIN_QOS_STRICT_TOGGLE)],
-            [InlineKeyboardButton(text="🔄 QoS sync", callback_data=CB_ADMIN_QOS_SYNC)],
+            [InlineKeyboardButton(text="🔄 Синхронизировать QoS", callback_data=CB_ADMIN_QOS_SYNC)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_NETWORK_POLICY)],
         ]
     )
@@ -289,11 +296,47 @@ def get_admin_denylist_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🟢/⚪ Denylist", callback_data=CB_ADMIN_DENYLIST_TOGGLE)],
-            [InlineKeyboardButton(text="Soft mode", callback_data=CB_ADMIN_DENYLIST_MODE_SOFT), InlineKeyboardButton(text="Strict mode", callback_data=CB_ADMIN_DENYLIST_MODE_STRICT)],
+            [InlineKeyboardButton(text="Soft режим", callback_data=CB_ADMIN_DENYLIST_MODE_SOFT), InlineKeyboardButton(text="Strict режим", callback_data=CB_ADMIN_DENYLIST_MODE_STRICT)],
             [InlineKeyboardButton(text="👁 Домены", callback_data=CB_ADMIN_DENYLIST_VIEW_DOMAINS), InlineKeyboardButton(text="👁 CIDR", callback_data=CB_ADMIN_DENYLIST_VIEW_CIDRS)],
-            [InlineKeyboardButton(text="✏️ Replace domains", callback_data=CB_ADMIN_DENYLIST_REPLACE_DOMAINS)],
-            [InlineKeyboardButton(text="✏️ Replace CIDRs", callback_data=CB_ADMIN_DENYLIST_REPLACE_CIDRS)],
-            [InlineKeyboardButton(text="🔄 Denylist sync", callback_data=CB_ADMIN_DENYLIST_SYNC)],
+            [InlineKeyboardButton(text="✏️ Заменить домены", callback_data=CB_ADMIN_DENYLIST_REPLACE_DOMAINS)],
+            [InlineKeyboardButton(text="✏️ Заменить CIDR", callback_data=CB_ADMIN_DENYLIST_REPLACE_CIDRS)],
+            [InlineKeyboardButton(text="🔄 Синхронизировать denylist", callback_data=CB_ADMIN_DENYLIST_SYNC)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_NETWORK_POLICY)],
+        ]
+    )
+
+
+def get_admin_service_settings_kb(ref_enabled: int, torrent_enabled: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🆘 Поддержка", callback_data=CB_ADMIN_SERVICE_SUPPORT)],
+            [InlineKeyboardButton(text="🔗 Ссылка на загрузку", callback_data=CB_ADMIN_SERVICE_DOWNLOAD)],
+            [InlineKeyboardButton(text=f"🎁 Рефералы: {'ON' if ref_enabled == 1 else 'OFF'}", callback_data=CB_ADMIN_SERVICE_REFERRAL_TOGGLE)],
+            [InlineKeyboardButton(text="🎁 Бонус другу", callback_data=CB_ADMIN_SERVICE_INVITEE_BONUS)],
+            [InlineKeyboardButton(text="🏅 Бонус пригласившему", callback_data=CB_ADMIN_SERVICE_INVITER_BONUS)],
+            [InlineKeyboardButton(text=f"⚠️ Предупреждение о торрентах: {'ON' if torrent_enabled == 1 else 'OFF'}", callback_data=CB_ADMIN_SERVICE_TORRENT_TOGGLE)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
+        ]
+    )
+
+
+def get_admin_text_overrides_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="start", callback_data=CB_ADMIN_TEXT_START)],
+            [InlineKeyboardButton(text="buy_menu", callback_data=CB_ADMIN_TEXT_BUY_MENU)],
+            [InlineKeyboardButton(text="renew_menu", callback_data=CB_ADMIN_TEXT_RENEW_MENU)],
+            [InlineKeyboardButton(text="support_contact", callback_data=CB_ADMIN_TEXT_SUPPORT)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
+        ]
+    )
+
+
+def get_admin_text_override_item_kb(key: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Заменить", callback_data=f"{CB_ADMIN_TEXT_SET_PREFIX}{key}")],
+            [InlineKeyboardButton(text="♻️ Сбросить", callback_data=f"{CB_ADMIN_TEXT_RESET_PREFIX}{key}")],
+            [InlineKeyboardButton(text="⬅️ К списку", callback_data=CB_ADMIN_TEXT_OVERRIDES)],
         ]
     )
