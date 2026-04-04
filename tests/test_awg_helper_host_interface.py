@@ -7,7 +7,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bot"))
 import awg_helper  # noqa: E402
 
 
-
 def _patch_root_owned_regular_lstat(monkeypatch, policy: Path):
     original_lstat = awg_helper.Path.lstat
 
@@ -36,7 +35,6 @@ def test_load_policy_uses_host_interface_when_present(tmp_path: Path, monkeypatc
     assert host_interface == "amn0"
 
 
-
 def test_load_policy_falls_back_to_interface_when_host_missing(tmp_path: Path, monkeypatch):
     policy = tmp_path / "policy.json"
     policy.write_text('{"container":"awg","interface":"awg0"}', encoding="utf-8")
@@ -47,7 +45,6 @@ def test_load_policy_falls_back_to_interface_when_host_missing(tmp_path: Path, m
 
     assert interface == "awg0"
     assert host_interface == "awg0"
-
 
 
 def test_qos_set_uses_host_interface(monkeypatch, capsys):
@@ -64,6 +61,42 @@ def test_qos_set_uses_host_interface(monkeypatch, capsys):
     assert all(cmd[cmd.index("dev") + 1] == "amn0" for cmd in calls)
     assert "qos set 10.8.1.11 50mbit" in capsys.readouterr().out
 
+
+def test_qos_set_falls_back_to_delete_add_when_replace_not_supported(monkeypatch):
+    calls = []
+
+    def fake_run(args, stdin_text=None):
+        calls.append(args)
+        if args[:3] == ["tc", "qdisc", "replace"]:
+            raise RuntimeError("Error: Change operation not supported by specified qdisc.")
+        if args[:3] == ["tc", "qdisc", "del"]:
+            raise RuntimeError("RTNETLINK answers: No such file or directory")
+        return ""
+
+    monkeypatch.setattr(awg_helper, "_run", fake_run)
+
+    awg_helper._ensure_qos_root_qdisc("amn0")
+
+    assert calls == [
+        ["tc", "qdisc", "replace", "dev", "amn0", "root", "handle", "1:", "htb", "default", "9999"],
+        ["tc", "qdisc", "del", "dev", "amn0", "root"],
+        ["tc", "qdisc", "add", "dev", "amn0", "root", "handle", "1:", "htb", "default", "9999"],
+    ]
+
+
+def test_qos_sync_uses_host_interface(monkeypatch, capsys):
+    calls = []
+
+    monkeypatch.setattr(awg_helper, "_load_policy", lambda path=None: ("awg", "awg0", "amn0"))
+    monkeypatch.setattr(awg_helper, "_run", lambda args, stdin_text=None: calls.append(args) or "")
+    monkeypatch.setattr(sys, "argv", ["awg_helper.py", "qos-sync"])
+    monkeypatch.setattr(sys, "stdin", type("FakeStdin", (), {"read": lambda self: "10.8.1.11,50\n"})())
+
+    rc = awg_helper.main()
+
+    assert rc == 0
+    assert all(cmd[cmd.index("dev") + 1] == "amn0" for cmd in calls)
+    assert "qos synced 1" in capsys.readouterr().out
 
 
 def test_show_uses_awg_interface(monkeypatch, capsys):
@@ -82,7 +115,6 @@ def test_show_uses_awg_interface(monkeypatch, capsys):
     assert rc == 0
     assert docker_calls == [("awg", ["awg", "show", "awg0"])]
     assert "ok" in capsys.readouterr().out
-
 
 
 def test_installer_policy_writer_includes_host_interface_field():
