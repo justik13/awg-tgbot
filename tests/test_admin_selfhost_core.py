@@ -507,7 +507,7 @@ def test_required_admin_slash_commands_clear_network_policy_pending(monkeypatch)
         monkeypatch.setattr(handlers_admin, "get_recent_audit", AsyncMock(return_value=[]))
         monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(return_value=0))
         monkeypatch.setattr(handlers_admin, "policy_metrics", AsyncMock(return_value={
-            "qos_last_sync_ok": 1, "qos_errors": 0, "denylist_last_sync_ok": 1,
+            "qos_last_sync_ok": 1, "qos_last_sync_ts": 0, "qos_errors": 0, "denylist_last_sync_ok": 1,
             "denylist_last_sync_ts": 0, "denylist_entries": 0, "denylist_errors": 0,
         }))
         monkeypatch.setattr(handlers_admin, "denylist_sync", AsyncMock())
