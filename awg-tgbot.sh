@@ -1968,7 +1968,7 @@ remove_everything() {
 }
 
 remove_keep_db_and_env() {
-  local db_path db_file db_tmp env_tmp restored_dir backup_tmp backup_count
+  local db_path db_file db_tmp env_tmp restored_dir backup_tmp_root backup_stash backup_count
   REMOVE_BACKUPS_WERE_PRESENT=0
   REMOVE_BACKUPS_RESTORED=0
   db_path="$(get_env_value DB_PATH)"
@@ -1988,13 +1988,19 @@ remove_keep_db_and_env() {
     env_tmp="$(mktemp)"
     cp -a "$ENV_FILE" "$env_tmp"
   fi
-  backup_tmp=""
+  backup_tmp_root=""
+  backup_stash=""
   backup_count="$(find "$BACKUP_ROOT" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' 2>/dev/null | wc -l | tr -d ' ' || true)"
   [[ -n "$backup_count" ]] || backup_count="0"
   if [[ "$backup_count" != "0" ]]; then
     REMOVE_BACKUPS_WERE_PRESENT=1
-    backup_tmp="$(mktemp -d)"
-    cp -a "$BACKUP_ROOT/." "$backup_tmp/" 2>/dev/null || true
+    backup_tmp_root="$(mktemp -d)"
+    backup_stash="${backup_tmp_root}/backups"
+    if ! mv "$BACKUP_ROOT" "$backup_stash"; then
+      warn "Не удалось сохранить локальные backup-архивы из ${BACKUP_ROOT}. Удаление отменено."
+      rm -rf "$backup_tmp_root"
+      return 1
+    fi
   fi
   remove_everything
   mkdir -p "$INSTALL_DIR"
@@ -2014,25 +2020,29 @@ remove_keep_db_and_env() {
     chmod 600 "$ENV_FILE" || true
     rm -f "$env_tmp"
   fi
-  if [[ -n "$backup_tmp" && -d "$backup_tmp" ]]; then
-    mkdir -p "$BACKUP_ROOT"
-    chmod 700 "$BACKUP_ROOT" || true
-    if cp -a "$backup_tmp/." "$BACKUP_ROOT/"; then
+  if [[ -n "$backup_stash" && -d "$backup_stash" ]]; then
+    if mv "$backup_stash" "$BACKUP_ROOT"; then
+      chmod 700 "$BACKUP_ROOT" || true
       REMOVE_BACKUPS_RESTORED=1
     else
       warn "Не удалось полностью восстановить локальные backup-архивы в ${BACKUP_ROOT}."
     fi
-    rm -rf "$backup_tmp"
+  fi
+  if [[ -n "$backup_tmp_root" && -d "$backup_tmp_root" ]]; then
+    rm -rf "$backup_tmp_root"
   fi
   return 0
 }
 
 remove_default() {
-  if ! confirm_explicit "Удалить приложение и сервис, оставив БД и .env?"; then
+  if ! confirm_explicit "Удалить приложение и сервис, оставив БД, .env и локальные backup-архивы?"; then
     warn "Удаление отменено."
     return 0
   fi
-  remove_keep_db_and_env
+  if ! remove_keep_db_and_env; then
+    warn "Удаление остановлено до удаления данных, потому что не удалось безопасно сохранить backup-архивы."
+    return 1
+  fi
   if [[ "$REMOVE_BACKUPS_WERE_PRESENT" == "1" && "$REMOVE_BACKUPS_RESTORED" == "1" ]]; then
     ok "Удалено приложение и сервис. Сохранены: БД, .env и локальные backup-архивы."
   elif [[ "$REMOVE_BACKUPS_WERE_PRESENT" == "1" ]]; then
