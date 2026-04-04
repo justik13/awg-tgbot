@@ -594,6 +594,7 @@ async def send_selected_device_conf(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_OPEN_CONFIGS)
 async def open_configs_from_profile(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     if cb.from_user.id == ADMIN_ID:
         maybe_set_support_username(cb.from_user.username)
@@ -606,6 +607,7 @@ async def open_configs_from_profile(cb: types.CallbackQuery):
 
 @router.message(F.text == BTN_GUIDE)
 async def guide(message: types.Message):
+    await _clear_promo_input_pending(message.from_user.id)
     await message.answer(await get_instruction_with_policy_text(), parse_mode="HTML", disable_web_page_preview=True)
 
 
@@ -681,6 +683,7 @@ async def user_reissue_confirm(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_CHECK_ACTIVATION_STATUS)
 async def check_activation_status(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     sub_until = await get_user_subscription(cb.from_user.id)
     is_active = subscription_is_active(sub_until)
@@ -701,6 +704,7 @@ async def check_activation_status(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_OPEN_SUPPORT)
 async def open_support_callback(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
         await _send_support_center(cb.message)
@@ -708,6 +712,7 @@ async def open_support_callback(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_SUPPORT_PAYMENT)
 async def support_payment_callback(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
         await cb.message.answer(_payment_support_text(), parse_mode="HTML", reply_markup=get_support_back_kb())
@@ -715,6 +720,7 @@ async def support_payment_callback(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_SUPPORT_CONNECTION)
 async def support_connection_callback(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
         await cb.message.answer(
@@ -727,6 +733,7 @@ async def support_connection_callback(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_SUPPORT_TERMS)
 async def support_terms_callback(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
         await cb.message.answer(_terms_text(), parse_mode="HTML", reply_markup=get_support_back_kb())
@@ -734,6 +741,7 @@ async def support_terms_callback(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_SUPPORT_BACK)
 async def support_back_callback(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
         sub_until = await get_user_subscription(cb.from_user.id)
@@ -754,6 +762,7 @@ async def buy(message: types.Message):
 
 @router.message(F.text == BTN_REFERRALS)
 async def referrals_screen(message: types.Message, bot):
+    await _clear_promo_input_pending(message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     me = await bot.get_me()
     bot_username = getattr(me, "username", "") or "bot"
@@ -763,6 +772,7 @@ async def referrals_screen(message: types.Message, bot):
 
 @router.callback_query(F.data == CB_SHOW_BUY_MENU)
 async def show_buy_menu_callback(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer()
     if not cb.message:
@@ -773,6 +783,7 @@ async def show_buy_menu_callback(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_SHOW_INSTRUCTION)
 async def show_instruction_callback(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
         await cb.message.answer(await get_instruction_with_policy_text(), parse_mode="HTML", disable_web_page_preview=True)
