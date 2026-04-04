@@ -39,3 +39,80 @@ def test_auto_manual_install_share_selfhost_default_population():
     assert 'ensure_selfhost_network_defaults' in script
     assert 'set_env_value QOS_ENABLED "$SELFHOST_QOS_ENABLED_DEFAULT"' in script
     assert 'set_env_value EGRESS_DENYLIST_MODE "$SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT"' in script
+    assert 'set_env_value AUTO_BACKUP_ENABLED "$SELFHOST_AUTO_BACKUP_ENABLED_DEFAULT"' in script
+    assert 'set_env_value AUTO_BACKUP_KEEP_COUNT "$SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT"' in script
+
+
+def test_installer_integrates_autobackup_timer_and_manual_prompts():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'AUTO_BACKUP_ENABLED=1' not in script  # must come from defaults/prompt, not hardcoded runtime overrides
+    assert "prompt_with_default 'Включить autobackup (1=ON,0=OFF)'" in script
+    assert "prompt_with_default 'Сколько autobackup хранить (шт)'" in script
+    assert "configure_autobackup_timer || die" in script
+    assert "systemctl enable --now \"$AUTO_BACKUP_TIMER_NAME\"" in script
+    assert "systemctl disable --now \"$AUTO_BACKUP_TIMER_NAME\"" in script
+
+
+def test_deploy_rollback_preserves_scripts_and_packaging():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert '[[ -d "$INSTALL_DIR/scripts" ]] && mv "$INSTALL_DIR/scripts" "$backup_dir/scripts"' in script
+    assert '[[ -d "$INSTALL_DIR/packaging" ]] && mv "$INSTALL_DIR/packaging" "$backup_dir/packaging"' in script
+    assert '[[ -d "$backup_dir/scripts" ]] && mv "$backup_dir/scripts" "$INSTALL_DIR/scripts"' in script
+    assert '[[ -d "$backup_dir/packaging" ]] && mv "$backup_dir/packaging" "$INSTALL_DIR/packaging"' in script
+
+
+def test_installer_does_not_have_unused_autobackup_schedule_setting():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "AUTO_BACKUP_TIMER_ONCALENDAR" not in script
+
+
+def test_normal_remove_preserves_local_backups_and_full_remove_still_deletes_everything():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'find "$BACKUP_ROOT" -maxdepth 1 -type f -name \'awg-tgbot-backup-*.tar.gz\'' in script
+    assert 'if ! mv "$BACKUP_ROOT" "$backup_stash"; then' in script
+    assert 'if mv "$backup_stash" "$BACKUP_ROOT"; then' in script
+    assert "Удаление остановлено до удаления данных, потому что не удалось безопасно сохранить backup-архивы." in script
+    assert "Сохранены: БД, .env и локальные backup-архивы." in script
+    assert 'cleanup_backup_tmp=0' in script
+    assert 'warn "Архивы сохранены для ручного восстановления: ${backup_tmp_root}"' in script
+    assert 'warn "Полное удаление уничтожит код, сервис, БД, .env и логи."' in script
+    assert 'cp -a "$BACKUP_ROOT/." "$backup_tmp/" 2>/dev/null || true' not in script
+    assert 'remove_everything' in script
+
+
+def test_normal_remove_snapshots_backups_before_destructive_remove():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    snapshot_pos = script.find('if ! mv "$BACKUP_ROOT" "$backup_stash"; then')
+    remove_pos = script.find("  remove_everything", snapshot_pos)
+    assert snapshot_pos != -1
+    assert remove_pos != -1
+    assert snapshot_pos < remove_pos
+
+
+def test_success_message_for_backup_preservation_is_guarded_by_restore_flags():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'if [[ "$REMOVE_BACKUPS_WERE_PRESENT" == "1" && "$REMOVE_BACKUPS_RESTORED" == "1" ]]; then' in script
+    assert 'ok "Удалено приложение и сервис. Сохранены: БД, .env и локальные backup-архивы."' in script
+
+
+def test_restore_fail_path_keeps_stash_and_reports_recovery_path():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'recovery_root="/var/tmp/awg-tgbot-backups-recovery-' in script
+    assert 'if mv "$backup_tmp_root" "$recovery_root" 2>/dev/null; then' in script
+    assert 'if [[ "$cleanup_backup_tmp" == "1" && -n "$backup_tmp_root" && -d "$backup_tmp_root" ]]; then' in script
+
+
+def test_readme_contains_owner_operator_sections():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "## Что это" in readme
+    assert "## Быстрый старт" in readme
+    assert "## Как устроены бэкапы" in readme
+    assert "AUTO_BACKUP_ENABLED" in readme
+    assert "## Где смотреть код" in readme
+    assert "раз в день" in readme
+    assert "пункт `1) Установить`" in readme
+
+
+def test_remove_confirmation_mentions_backups():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "оставив БД, .env и локальные backup-архивы?" in script
