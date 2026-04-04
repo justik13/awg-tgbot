@@ -162,6 +162,30 @@ def test_top_level_admin_screens_clear_network_policy_pending(monkeypatch):
     handlers_admin._clear_network_policy_pending.assert_awaited_once()
 
 
+def test_stats_and_sync_callbacks_clear_network_policy_pending(monkeypatch):
+    cb_stats = _cb(handlers_admin.CB_ADMIN_STATS)
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "build_stats_text", AsyncMock(return_value="ok"))
+    asyncio.run(handlers_admin.admin_stats_cb(cb_stats))
+    handlers_admin._clear_network_policy_pending.assert_awaited_once()
+
+    cb_sync = _cb(handlers_admin.CB_ADMIN_SYNC)
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "sync_qos_state", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "denylist_sync", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "build_awg_sync_text", AsyncMock(return_value="sync"))
+    asyncio.run(handlers_admin.admin_sync_awg(cb_sync))
+    handlers_admin._clear_network_policy_pending.assert_awaited_once()
+
+
+def test_stats_slash_command_clears_network_policy_pending(monkeypatch):
+    message = _msg("/stats")
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "build_stats_text", AsyncMock(return_value="stats"))
+    asyncio.run(handlers_admin.stats_cmd(message))
+    handlers_admin._clear_network_policy_pending.assert_awaited_once()
+
+
 def test_denylist_domains_and_cidrs_input(monkeypatch):
     assert handlers_admin._normalize_domains_multiline(" ExAmple.com\nexample.com \n\nTest.ORG ") == "example.com,test.org"
     assert handlers_admin._normalize_cidrs_multiline("10.0.0.1/24\n10.0.0.0/24") == "10.0.0.0/24"

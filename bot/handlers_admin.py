@@ -982,6 +982,7 @@ async def admin_prices_cancel(cb: types.CallbackQuery):
 async def admin_stats_cb(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(await build_stats_text(), parse_mode="HTML")
     await cb.answer("Готово")
 
@@ -990,6 +991,7 @@ async def admin_stats_cb(cb: types.CallbackQuery):
 async def admin_sync_awg(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     try:
         await sync_qos_state()
         await denylist_sync(run_docker)
@@ -2191,6 +2193,7 @@ async def findpay_cmd(message: types.Message, command: CommandObject):
 
 @router.message(Command("stats"), IsAdmin())
 async def stats_cmd(message: types.Message):
+    await _clear_network_policy_pending()
     await message.answer(await build_stats_text(), parse_mode="HTML")
 
 
@@ -2222,6 +2225,7 @@ async def audit_cmd(message: types.Message, command: CommandObject):
 
 @router.message(Command("sync_awg"), IsAdmin())
 async def sync_awg_cmd(message: types.Message):
+    await _clear_network_policy_pending()
     try:
         await sync_qos_state()
         await denylist_sync(run_docker)
@@ -2264,6 +2268,7 @@ async def broadcast_prepare(message: types.Message, command: CommandObject):
 
 @router.message(Command("health"), IsAdmin())
 async def health_cmd(message: types.Message):
+    await _clear_network_policy_pending()
     await message.answer(await build_runtime_smokecheck_text(), parse_mode="HTML")
 
 
@@ -2301,6 +2306,7 @@ async def maintenance_off_cmd(message: types.Message):
 
 @router.message(Command("netpolicy"), IsAdmin())
 async def netpolicy_cmd(message: types.Message):
+    await _clear_network_policy_pending()
     await message.answer(await _render_network_policy_text(), parse_mode="HTML", reply_markup=get_admin_network_policy_kb())
 
 
@@ -2353,4 +2359,5 @@ async def denylist_sync_cmd(message: types.Message):
 
 @router.message(Command("ref_stats"), IsAdmin())
 async def ref_stats_cmd(message: types.Message):
+    await _clear_network_policy_pending()
     await message.answer(await build_ref_stats_text(), parse_mode="HTML")
