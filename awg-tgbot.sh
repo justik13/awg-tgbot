@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO_OWNER="Just1k13"
-REPO_NAME="awg-tgbot"
-DEFAULT_REPO_BRANCH="selfhost"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ORIGIN_URL="$(git -C "$SCRIPT_DIR" config --get remote.origin.url 2>/dev/null || true)"
+if [[ "$ORIGIN_URL" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
+  DETECTED_REPO_OWNER="${BASH_REMATCH[1]}"
+  DETECTED_REPO_NAME="${BASH_REMATCH[2]}"
+else
+  DETECTED_REPO_OWNER=""
+  DETECTED_REPO_NAME=""
+fi
+REPO_OWNER="${REPO_OWNER:-${DETECTED_REPO_OWNER:-awg-tgbot-selfhost}}"
+REPO_NAME="${REPO_NAME:-${DETECTED_REPO_NAME:-awg-tgbot}}"
+DEFAULT_REPO_BRANCH="main"
 INSTALL_DIR="/opt/amnezia/bot"
 STATE_DIR="${INSTALL_DIR}/.state"
 REPO_BRANCH_FILE="${STATE_DIR}/repo_branch"
@@ -1589,6 +1598,88 @@ EOF
   return 0
 }
 
+restore_from_backup() {
+  local backup_root="${INSTALL_DIR}/backups"
+  local selected_index="" selected_archive="" confirm_restore=""
+  local db_file db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before
+  local restore_ok=0 rollback_ok=0
+  mapfile -t archives < <(find "$backup_root" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' | sort -r)
+  if [[ ${#archives[@]} -eq 0 ]]; then
+    warn "Локальные бэкапы не найдены: ${backup_root}"
+    return 1
+  fi
+
+  print_line
+  echo "Доступные бэкапы:"
+  local i=1
+  for archive in "${archives[@]}"; do
+    echo "${i}) $(basename "$archive")"
+    i=$((i + 1))
+  done
+  print_line
+  prompt_raw "Выберите номер бэкапа: " selected_index
+  if [[ ! "$selected_index" =~ ^[0-9]+$ ]] || (( selected_index < 1 || selected_index > ${#archives[@]} )); then
+    warn "Некорректный выбор."
+    return 1
+  fi
+  selected_archive="${archives[$((selected_index - 1))]}"
+  db_file="$(get_bot_db_file)"
+  db_basename="$(basename "$db_file")"
+  meta_content="$(tar -xOf "$selected_archive" metadata.txt 2>/dev/null || true)"
+  if [[ -n "$meta_content" ]]; then
+    db_basename="$(printf '%s\n' "$meta_content" | awk -F= '/^db_file=/{print $2}' | tail -n1)"
+    [[ -n "$db_basename" ]] || db_basename="$(basename "$db_file")"
+  fi
+
+  echo "Выбран архив: $(basename "$selected_archive")"
+  echo "Будет восстановлено: ${db_basename}, .env"
+  if ! confirm_explicit "Продолжить восстановление?"; then
+    warn "Восстановление отменено."
+    return 1
+  fi
+
+  if require_command systemctl && service_exists; then
+    service_active_before="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+    service_enabled_before="$(systemctl is-enabled "$SERVICE_NAME" 2>/dev/null || true)"
+    systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  fi
+
+  snapshot_dir="$(mktemp -d "${backup_root}/pre-restore-$(date -u +%Y%m%d_%H%M%S)-XXXXXX")"
+  chmod 700 "$snapshot_dir" || true
+  if [[ -f "$db_file" ]]; then cp -a "$db_file" "$snapshot_dir/${db_basename}.before"; fi
+  if [[ -f "$ENV_FILE" ]]; then cp -a "$ENV_FILE" "$snapshot_dir/.env.before"; fi
+
+  tmp_restore="$(mktemp -d)"
+  if tar -xzf "$selected_archive" -C "$tmp_restore" "$db_basename" ".env"; then
+    mkdir -p "$(dirname "$db_file")" "$INSTALL_DIR"
+    install -m 600 "$tmp_restore/$db_basename" "$db_file"
+    install -m 600 "$tmp_restore/.env" "$ENV_FILE"
+    restore_ok=1
+  else
+    warn "Ошибка извлечения файлов из архива."
+  fi
+  rm -rf "$tmp_restore"
+
+  if [[ "$restore_ok" != "1" ]]; then
+    if [[ -f "$snapshot_dir/${db_basename}.before" ]]; then install -m 600 "$snapshot_dir/${db_basename}.before" "$db_file" && rollback_ok=1; fi
+    if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
+    warn "Восстановление не завершено. Откат: $([[ "$rollback_ok" == "1" ]] && echo 'выполнен' || echo 'частично/не выполнен')."
+    if [[ "$service_active_before" == "active" ]] && require_command systemctl && service_exists; then
+      systemctl start "$SERVICE_NAME" 2>/dev/null || true
+    fi
+    return 1
+  fi
+
+  if require_command systemctl && service_exists; then
+    systemctl start "$SERVICE_NAME" 2>/dev/null || true
+  fi
+  echo "Восстановление завершено."
+  if require_command systemctl && service_exists; then
+    echo "Сервис: $(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true) (enabled: ${service_enabled_before:-unknown})"
+  fi
+  return 0
+}
+
 list_bot_managed_peer_keys() {
   local db_file="$1"
   [[ -f "$db_file" ]] || return 0
@@ -2214,8 +2305,9 @@ print_menu_awg_yes_bot_yes() {
   echo "2) Логи"
   echo "3) Переустановить"
   echo "4) Бэкап"
-  echo "5) Удалить"
-  echo "6) Диагностика"
+  echo "5) Restore backup"
+  echo "6) Удалить"
+  echo "7) Диагностика"
   echo "0) Выход"
   print_line
 }
@@ -2226,9 +2318,10 @@ print_menu_awg_no_bot_yes() {
   echo "2) Логи"
   echo "3) Переустановить"
   echo "4) Бэкап"
-  echo "5) Удалить"
-  echo "6) Диагностика"
-  echo "7) Повторить проверку"
+  echo "5) Restore backup"
+  echo "6) Удалить"
+  echo "7) Диагностика"
+  echo "8) Повторить проверку"
   echo "0) Выход"
   print_line
 }
@@ -2252,6 +2345,7 @@ run_action() {
     status) show_status ;;
     logs) show_logs ;;
     backup) create_local_backup ;;
+    restore) restore_from_backup ;;
     diagnostics) detect_install_state; refresh_update_status_quiet; print_detailed_startup_summary ;;
     preflight|detect-install-state) detect_install_state; refresh_update_status_quiet; print_detailed_startup_summary ;;
     sync-helper-policy) sync_awg_helper_policy_from_env ;;
@@ -2278,8 +2372,9 @@ main_menu() {
           2) show_logs ;;
           3) install_or_reinstall_flow reinstall ;;
           4) create_local_backup ;;
-          5) remove_bot ;;
-          6) print_detailed_startup_summary ;;
+          5) restore_from_backup ;;
+          6) remove_bot ;;
+          7) print_detailed_startup_summary ;;
           0) cleanup_transient_install_state; clear_if_tty; print_exit_hint; exit 0 ;;
           *) warn "Неизвестный пункт меню." ;;
         esac
@@ -2303,9 +2398,10 @@ main_menu() {
           2) show_logs ;;
           3) install_or_reinstall_flow reinstall ;;
           4) create_local_backup ;;
-          5) remove_bot ;;
-          6) print_detailed_startup_summary ;;
-          7) should_pause=0 ;;
+          5) restore_from_backup ;;
+          6) remove_bot ;;
+          7) print_detailed_startup_summary ;;
+          8) should_pause=0 ;;
           0) cleanup_transient_install_state; clear_if_tty; print_exit_hint; exit 0 ;;
           *) warn "Неизвестный пункт меню." ;;
         esac

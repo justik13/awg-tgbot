@@ -770,6 +770,7 @@ async def get_latest_user_payment_summary(user_id: int) -> dict[str, Any] | None
     if not row:
         return None
     return {
+        "user_id": user_id,
         "payment_id": row[0],
         "payload": row[1],
         "status": row[2],
@@ -779,6 +780,32 @@ async def get_latest_user_payment_summary(user_id: int) -> dict[str, Any] | None
         "updated_at": row[6],
         "provisioned_until": row[7],
         "last_provision_status": row[8],
+    }
+
+
+async def get_payment_summary_by_charge_id(charge_id: str) -> dict[str, Any] | None:
+    row = await fetchone(
+        """
+        SELECT user_id, telegram_payment_charge_id, payload, status, amount, currency, created_at, updated_at, provisioned_until, last_provision_status
+        FROM payments
+        WHERE telegram_payment_charge_id = ?
+        LIMIT 1
+        """,
+        (charge_id,),
+    )
+    if not row:
+        return None
+    return {
+        "user_id": row[0],
+        "payment_id": row[1],
+        "payload": row[2],
+        "status": row[3],
+        "amount": row[4],
+        "currency": row[5],
+        "created_at": row[6],
+        "updated_at": row[7],
+        "provisioned_until": row[8],
+        "last_provision_status": row[9],
     }
 
 
