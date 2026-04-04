@@ -20,6 +20,7 @@ from config import (
     DOCKER_CONTAINER,
     WG_INTERFACE,
     logger,
+    save_env_value,
     set_stars_price,
 )
 from database import (
@@ -28,10 +29,10 @@ from database import (
     get_latest_user_payment_summary,
     get_user_device_traffic_summary,
     get_user_total_traffic_bytes,
-    list_promo_codes,
+    list_promo_codes, list_text_overrides,
     get_metric, get_pending_jobs_stats, get_recovery_lag_seconds,
     get_pending_admin_action, get_pending_broadcast, get_recent_audit, get_referral_admin_stats, get_referral_summary, get_user_keys, get_user_meta, normalize_promo_code, pop_pending_admin_action,
-    set_active_key_rate_limit, set_app_setting, set_pending_admin_action, set_pending_broadcast, write_audit_log,
+    reset_text_override, set_active_key_rate_limit, set_app_setting, set_pending_admin_action, set_pending_broadcast, set_text_override, write_audit_log,
 )
 from helpers import escape_html, format_tg_username, get_status_text, utc_now_naive
 from device_activity import render_device_activity_line
@@ -40,12 +41,17 @@ from keyboards import (
     get_admin_confirm_kb, get_admin_inline_kb, get_admin_maintenance_kb, get_admin_payments_kb, get_admin_price_confirm_kb, get_admin_prices_kb, get_admin_promocodes_kb,
     get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb, get_open_user_card_kb,
     get_admin_network_policy_kb, get_admin_qos_kb, get_admin_denylist_kb,
+    get_admin_service_settings_kb, get_admin_text_override_item_kb, get_admin_text_overrides_kb,
 )
 from ui_constants import (
     BTN_ADMIN, CB_ADMIN_BACK_MAIN, CB_ADMIN_BROADCAST,
     CB_ADMIN_COMMANDS, CB_ADMIN_FIND_CHARGE, CB_ADMIN_HEALTH, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_LIST, CB_ADMIN_MAINTENANCE, CB_ADMIN_MAINTENANCE_OFF, CB_ADMIN_MAINTENANCE_ON,
     CB_ADMIN_MAINTENANCE_REFRESH, CB_ADMIN_OPEN_USER_CARD_PREFIX, CB_ADMIN_PAYMENTS, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30, CB_ADMIN_PRICE_EDIT_7,
     CB_ADMIN_PRICE_EDIT_90, CB_ADMIN_PRICE_SAVE, CB_ADMIN_PRICES, CB_ADMIN_PROMOCODES, CB_ADMIN_PROMO_CREATE, CB_ADMIN_PROMO_DISABLE, CB_ADMIN_PROMO_LIST, CB_ADMIN_REFERRALS,
+    CB_ADMIN_SERVICE_SETTINGS, CB_ADMIN_SERVICE_SUPPORT, CB_ADMIN_SERVICE_DOWNLOAD, CB_ADMIN_SERVICE_REFERRAL_TOGGLE,
+    CB_ADMIN_SERVICE_INVITEE_BONUS, CB_ADMIN_SERVICE_INVITER_BONUS, CB_ADMIN_SERVICE_TORRENT_TOGGLE,
+    CB_ADMIN_TEXT_OVERRIDES, CB_ADMIN_TEXT_START, CB_ADMIN_TEXT_BUY_MENU, CB_ADMIN_TEXT_RENEW_MENU, CB_ADMIN_TEXT_SUPPORT,
+    CB_ADMIN_TEXT_RESET_PREFIX, CB_ADMIN_TEXT_SET_PREFIX,
     CB_ADMIN_REFRESH_HEALTH, CB_ADMIN_REFRESH_REFERRALS, CB_ADMIN_STATS, CB_ADMIN_SYNC,
     CB_ADMIN_NETWORK_POLICY, CB_ADMIN_NET_QOS, CB_ADMIN_NET_DENYLIST, CB_ADMIN_NET_SYNC_NOW,
     CB_ADMIN_QOS_TOGGLE, CB_ADMIN_QOS_DEFAULT_RATE, CB_ADMIN_QOS_STRICT_TOGGLE, CB_ADMIN_QOS_SYNC,
@@ -62,7 +68,7 @@ from ui_constants import (
 )
 from config_validate import read_helper_policy
 from network_policy import denylist_sync, parse_cidrs, policy_metrics
-from content_settings import get_setting
+from content_settings import TEXT_DEFAULTS, get_setting, get_text, validate_text_template
 from payments import manual_retry_activation
 
 router = Router()
@@ -103,6 +109,18 @@ QOS_DEFAULT_RATE_INPUT_ACTION_KEY = "qos_default_rate_input"
 DEVICE_SPEED_INPUT_ACTION_KEY = "device_speed_input"
 DENYLIST_DOMAINS_INPUT_ACTION_KEY = "denylist_domains_input"
 DENYLIST_CIDRS_INPUT_ACTION_KEY = "denylist_cidrs_input"
+SERVICE_SUPPORT_INPUT_ACTION_KEY = "service_support_input"
+SERVICE_DOWNLOAD_INPUT_ACTION_KEY = "service_download_input"
+SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY = "service_invitee_bonus_input"
+SERVICE_INVITER_BONUS_INPUT_ACTION_KEY = "service_inviter_bonus_input"
+TEXT_OVERRIDE_INPUT_ACTION_KEY = "text_override_input"
+TEXT_OVERRIDE_ALLOWED_KEYS = {"start", "buy_menu", "renew_menu", "support_contact"}
+TEXT_OVERRIDE_CALLBACK_KEY_MAP = {
+    CB_ADMIN_TEXT_START: "start",
+    CB_ADMIN_TEXT_BUY_MENU: "buy_menu",
+    CB_ADMIN_TEXT_RENEW_MENU: "renew_menu",
+    CB_ADMIN_TEXT_SUPPORT: "support_contact",
+}
 PRICE_TARGETS = {
     CB_ADMIN_PRICE_EDIT_7: ("STARS_PRICE_7_DAYS", "7 дней"),
     CB_ADMIN_PRICE_EDIT_30: ("STARS_PRICE_30_DAYS", "30 дней"),
@@ -206,6 +224,25 @@ class HasPendingNetworkPolicyInput(BaseFilter):
         return False
 
 
+class HasPendingServiceSettingsInput(BaseFilter):
+    async def __call__(self, message: types.Message) -> bool:
+        keys = (
+            SERVICE_SUPPORT_INPUT_ACTION_KEY,
+            SERVICE_DOWNLOAD_INPUT_ACTION_KEY,
+            SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY,
+            SERVICE_INVITER_BONUS_INPUT_ACTION_KEY,
+        )
+        for key in keys:
+            if await get_pending_admin_action(ADMIN_ID, key):
+                return True
+        return False
+
+
+class HasPendingTextOverrideInput(BaseFilter):
+    async def __call__(self, message: types.Message) -> bool:
+        return bool(await get_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY))
+
+
 async def _clear_network_policy_pending() -> None:
     for key in (
         QOS_DEFAULT_RATE_INPUT_ACTION_KEY,
@@ -214,6 +251,17 @@ async def _clear_network_policy_pending() -> None:
         DENYLIST_CIDRS_INPUT_ACTION_KEY,
     ):
         await clear_pending_admin_action(ADMIN_ID, key)
+
+
+async def _clear_service_settings_pending() -> None:
+    for key in (
+        SERVICE_SUPPORT_INPUT_ACTION_KEY,
+        SERVICE_DOWNLOAD_INPUT_ACTION_KEY,
+        SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY,
+        SERVICE_INVITER_BONUS_INPUT_ACTION_KEY,
+    ):
+        await clear_pending_admin_action(ADMIN_ID, key)
+    await clear_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY)
 
 
 async def notify_user_subscription_granted(bot: Bot, user_id: int, days: int, new_until) -> bool:
@@ -281,12 +329,12 @@ async def build_ref_stats_text() -> str:
     top = "\n".join([f"• inviter={row[0]} rewards={row[1]}" for row in stats["top"]]) or "—"
     total_bonus_days = int(stats["total_bonus_days"])
     return (
-        "🎁 <b>Referral admin summary</b>\n\n"
+        "🎁 <b>Сводка по рефералам</b>\n\n"
         f"pending=<b>{stats['pending']}</b>\n"
         f"rewarded=<b>{stats['rewarded']}</b>\n"
         f"total_bonus_days=<b>{total_bonus_days}</b>\n\n"
         f"<b>Последние начисления</b>\n{recent}\n\n"
-        f"<b>Top inviters</b>\n{top}"
+        f"<b>Топ пригласивших</b>\n{top}"
     )
 
 
@@ -469,18 +517,43 @@ async def _render_network_policy_text() -> str:
     deny_refresh = int(await get_setting("EGRESS_DENYLIST_REFRESH_MINUTES", int) or 30)
     return (
         "🌐 <b>Сеть</b>\n\n"
-        f"QoS enabled: <b>{_bool_on_off(qos_enabled)}</b>\n"
-        f"Default rate: <b>{default_rate} Mbit/s</b>\n"
-        f"QoS strict mode: <b>{_bool_on_off(qos_strict)}</b>\n"
-        f"Denylist enabled: <b>{_bool_on_off(deny_enabled)}</b>\n"
-        f"Denylist mode: <b>{escape_html(deny_mode)}</b>\n"
-        f"Denylist refresh interval: <b>{deny_refresh} min</b>\n\n"
+        f"QoS: <b>{_bool_on_off(qos_enabled)}</b>\n"
+        f"Скорость по умолчанию: <b>{default_rate} Mbit/s</b>\n"
+        f"QoS strict: <b>{_bool_on_off(qos_strict)}</b>\n"
+        f"Denylist: <b>{_bool_on_off(deny_enabled)}</b>\n"
+        f"Режим denylist: <b>{escape_html(deny_mode)}</b>\n"
+        f"Интервал обновления denylist: <b>{deny_refresh} мин</b>\n\n"
         f"qos_last_sync_ok: <b>{policy_stats['qos_last_sync_ok']}</b>\n"
         f"qos_errors: <b>{policy_stats['qos_errors']}</b>\n"
         f"denylist_last_sync_ok: <b>{policy_stats['denylist_last_sync_ok']}</b>\n"
         f"denylist_last_sync_ts: <b>{policy_stats['denylist_last_sync_ts']}</b>\n"
         f"denylist_entries: <b>{policy_stats['denylist_entries']}</b>\n"
         f"denylist_errors: <b>{policy_stats['denylist_errors']}</b>"
+    )
+
+
+def _normalize_support_username(value: str) -> str:
+    raw = value.strip().lstrip("@").strip()
+    if not raw:
+        return ""
+    return f"@{raw}"
+
+
+async def _render_service_settings_text() -> str:
+    referral_enabled = int(await get_setting("REFERRAL_ENABLED", int) or 0)
+    invitee_bonus = int(await get_setting("REFERRAL_INVITEE_BONUS_DAYS", int) or 5)
+    inviter_bonus = int(await get_setting("REFERRAL_INVITER_BONUS_DAYS", int) or 3)
+    torrent_enabled = int(await get_setting("TORRENT_POLICY_TEXT_ENABLED", int) or 0)
+    support_username = str(getattr(config, "SUPPORT_USERNAME", "") or "").strip() or "не задан"
+    download_url = str(getattr(config, "DOWNLOAD_URL", "") or "").strip() or "не задан"
+    return (
+        "⚙️ <b>Настройки сервиса</b>\n\n"
+        f"🆘 Поддержка: <b>{escape_html(support_username)}</b>\n"
+        f"🔗 Ссылка: <code>{escape_html(download_url)}</code>\n"
+        f"🎁 Рефералы: <b>{_bool_on_off(referral_enabled)}</b>\n"
+        f"🎁 Бонус другу: <b>{invitee_bonus} дн.</b>\n"
+        f"🏅 Бонус пригласившему: <b>{inviter_bonus} дн.</b>\n"
+        f"⚠️ Torrent warning: <b>{_bool_on_off(torrent_enabled)}</b>"
     )
 
 
@@ -551,7 +624,7 @@ def _user_manage_kb(
         rows.append(
             [
                 types.InlineKeyboardButton(
-                    text="🛠 Retry activation now",
+                    text="🛠 Повторить активацию",
                     callback_data=f"{CB_ADMIN_RETRY_ACTIVATION_PREFIX}{uid}_{page}",
                 ),
             ]
@@ -603,14 +676,14 @@ def _is_retry_activation_relevant(payment_summary: dict | None, has_keys: bool) 
 
 def _operator_next_step(payment_status: str | None, activation_status: str | None, has_keys: bool) -> str:
     if has_keys:
-        return "wait/close: доступ уже выдан"
+        return "ожидание/закрыть: доступ уже выдан"
     if payment_status in {"stuck_manual", "failed"} or activation_status in {"stuck_manual", "failed", "needs_repair"}:
-        return "investigate: проверить audit + при необходимости выдать вручную"
+        return "проверить: аудит + при необходимости выдать вручную"
     if payment_status in {"needs_repair", "provisioning", "received"} or activation_status in {"payment_received", "provisioning", "ready_config_pending"}:
-        return "sync/wait: дождаться recovery, затем обновить карточку"
+        return "синхронизация/ожидание: дождаться recovery, затем обновить карточку"
     if payment_status == "applied" and not has_keys:
-        return "manual give: подписка активна, но ключа нет"
-    return "wait/sync: обновить карточку после /sync_awg"
+        return "ручная выдача: подписка активна, но ключа нет"
+    return "ожидание/синхронизация: обновить карточку после /sync_awg"
 
 
 async def _build_admin_device_activity_lines(uid: int) -> list[str]:
@@ -812,6 +885,7 @@ def build_admin_manual_commands_text() -> str:
 @router.message(F.text == BTN_ADMIN, IsAdmin())
 async def admin_panel(message: types.Message):
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     stats_text = await build_stats_text()
     db_info = await db_health_info()
     db_status = "🟢 Нормально" if db_info["is_healthy"] else "🟡 Нужна проверка"
@@ -827,6 +901,7 @@ async def admin_back_main(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await cb.message.answer("⚙️ Админ-меню", reply_markup=get_admin_inline_kb())
     await cb.answer()
 
@@ -836,6 +911,7 @@ async def admin_manual_commands(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
     await cb.message.answer(
         build_admin_manual_commands_text(),
         parse_mode="HTML",
@@ -1726,6 +1802,84 @@ async def admin_referrals_summary(cb: types.CallbackQuery):
     await cb.answer("Готово")
 
 
+@router.callback_query(F.data == CB_ADMIN_SERVICE_SETTINGS)
+async def admin_service_settings_screen(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
+    referral_enabled = int(await get_setting("REFERRAL_ENABLED", int) or 0)
+    torrent_enabled = int(await get_setting("TORRENT_POLICY_TEXT_ENABLED", int) or 0)
+    await cb.message.answer(
+        await _render_service_settings_text(),
+        parse_mode="HTML",
+        reply_markup=get_admin_service_settings_kb(referral_enabled, torrent_enabled),
+    )
+    await cb.answer("Готово")
+
+
+@router.callback_query(F.data == CB_ADMIN_SERVICE_SUPPORT)
+async def admin_service_support_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, SERVICE_DOWNLOAD_INPUT_ACTION_KEY)
+    await set_pending_admin_action(ADMIN_ID, SERVICE_SUPPORT_INPUT_ACTION_KEY, {"action": SERVICE_SUPPORT_INPUT_ACTION_KEY})
+    await cb.message.answer("Введите username поддержки (пример: @support).")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_SERVICE_DOWNLOAD)
+async def admin_service_download_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, SERVICE_SUPPORT_INPUT_ACTION_KEY)
+    await set_pending_admin_action(ADMIN_ID, SERVICE_DOWNLOAD_INPUT_ACTION_KEY, {"action": SERVICE_DOWNLOAD_INPUT_ACTION_KEY})
+    await cb.message.answer("Введите ссылку на загрузку (не пустую).")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_SERVICE_REFERRAL_TOGGLE)
+async def admin_service_referral_toggle(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    enabled = int(await get_setting("REFERRAL_ENABLED", int) or 0)
+    new_value = "0" if enabled == 1 else "1"
+    await set_app_setting("REFERRAL_ENABLED", new_value, updated_by=ADMIN_ID)
+    await write_audit_log(ADMIN_ID, "admin_referral_enabled_set", f"value={new_value}")
+    await admin_service_settings_screen(cb)
+
+
+@router.callback_query(F.data == CB_ADMIN_SERVICE_INVITEE_BONUS)
+async def admin_service_invitee_bonus_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, SERVICE_INVITER_BONUS_INPUT_ACTION_KEY)
+    await set_pending_admin_action(ADMIN_ID, SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY})
+    await cb.message.answer("Введите бонус другу в днях (целое > 0).")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_SERVICE_INVITER_BONUS)
+async def admin_service_inviter_bonus_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY)
+    await set_pending_admin_action(ADMIN_ID, SERVICE_INVITER_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_INVITER_BONUS_INPUT_ACTION_KEY})
+    await cb.message.answer("Введите бонус пригласившему в днях (целое > 0).")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_SERVICE_TORRENT_TOGGLE)
+async def admin_service_torrent_toggle(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    enabled = int(await get_setting("TORRENT_POLICY_TEXT_ENABLED", int) or 0)
+    new_value = "0" if enabled == 1 else "1"
+    await set_app_setting("TORRENT_POLICY_TEXT_ENABLED", new_value, updated_by=ADMIN_ID)
+    await write_audit_log(ADMIN_ID, "admin_torrent_policy_text_enabled_set", f"value={new_value}")
+    await admin_service_settings_screen(cb)
+
+
 @router.callback_query(F.data == CB_ADMIN_HEALTH)
 @router.callback_query(F.data == CB_ADMIN_REFRESH_HEALTH)
 async def admin_health_summary(cb: types.CallbackQuery):
@@ -1734,6 +1888,69 @@ async def admin_health_summary(cb: types.CallbackQuery):
     await _clear_network_policy_pending()
     await cb.message.answer(await build_runtime_smokecheck_text(), parse_mode="HTML")
     await cb.answer("Готово")
+
+
+@router.callback_query(F.data == CB_ADMIN_TEXT_OVERRIDES)
+async def admin_text_overrides_screen(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await _clear_network_policy_pending()
+    await clear_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY)
+    overrides_count = len(await list_text_overrides())
+    await cb.message.answer(
+        f"📝 <b>Текстовые overrides</b>\nАктивных override: <b>{overrides_count}</b>",
+        parse_mode="HTML",
+        reply_markup=get_admin_text_overrides_kb(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.in_(set(TEXT_OVERRIDE_CALLBACK_KEY_MAP.keys())))
+async def admin_text_override_view_key(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    key = TEXT_OVERRIDE_CALLBACK_KEY_MAP.get(cb.data)
+    if not key:
+        await cb.answer("Неизвестный ключ", show_alert=True)
+        return
+    text = await get_text(key)
+    await cb.message.answer(
+        f"📝 <b>{key}</b>\n\n{text}",
+        parse_mode="HTML",
+        reply_markup=get_admin_text_override_item_kb(key),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith(CB_ADMIN_TEXT_SET_PREFIX))
+async def admin_text_override_set_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    key = cb.data.removeprefix(CB_ADMIN_TEXT_SET_PREFIX)
+    if key not in TEXT_OVERRIDE_ALLOWED_KEYS:
+        await cb.answer("Ключ недоступен", show_alert=True)
+        return
+    await set_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY, {"action": TEXT_OVERRIDE_INPUT_ACTION_KEY, "key": key})
+    await cb.message.answer(f"Отправьте новый текст для <b>{key}</b>.", parse_mode="HTML")
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith(CB_ADMIN_TEXT_RESET_PREFIX))
+async def admin_text_override_reset(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    key = cb.data.removeprefix(CB_ADMIN_TEXT_RESET_PREFIX)
+    if key not in TEXT_OVERRIDE_ALLOWED_KEYS:
+        await cb.answer("Ключ недоступен", show_alert=True)
+        return
+    await reset_text_override(key)
+    await write_audit_log(ADMIN_ID, "admin_text_override_reset", f"key={key}")
+    await cb.message.answer(
+        f"✅ Сброшено: <b>{key}</b>\n\n{TEXT_DEFAULTS.get(key, '')}",
+        parse_mode="HTML",
+        reply_markup=get_admin_text_override_item_kb(key),
+    )
+    await cb.answer("Сброшено")
 
 
 @router.callback_query(F.data == CB_ADMIN_MAINTENANCE)
@@ -1911,6 +2128,67 @@ async def admin_promo_capture_input(message: types.Message):
         await message.answer(f"✅ Промокод <code>{code}</code> отключён.", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
 
 
+@router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingServiceSettingsInput())
+async def admin_service_settings_capture_input(message: types.Message):
+    raw = (message.text or "").strip()
+    if not raw:
+        await message.answer("Пустое значение не сохранено.")
+        return
+    if await get_pending_admin_action(ADMIN_ID, SERVICE_SUPPORT_INPUT_ACTION_KEY):
+        normalized = _normalize_support_username(raw)
+        if not normalized:
+            await message.answer("Введите корректный username.")
+            return
+        save_env_value("SUPPORT_USERNAME", normalized)
+        await clear_pending_admin_action(ADMIN_ID, SERVICE_SUPPORT_INPUT_ACTION_KEY)
+        await write_audit_log(ADMIN_ID, "admin_support_username_set", f"value={normalized}")
+        await message.answer(f"✅ Поддержка: {normalized}")
+        return
+    if await get_pending_admin_action(ADMIN_ID, SERVICE_DOWNLOAD_INPUT_ACTION_KEY):
+        save_env_value("DOWNLOAD_URL", raw)
+        await clear_pending_admin_action(ADMIN_ID, SERVICE_DOWNLOAD_INPUT_ACTION_KEY)
+        await write_audit_log(ADMIN_ID, "admin_download_url_set", f"value={raw[:120]}")
+        await message.answer("✅ Ссылка на загрузку сохранена.")
+        return
+    invitee_pending = await get_pending_admin_action(ADMIN_ID, SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY)
+    inviter_pending = await get_pending_admin_action(ADMIN_ID, SERVICE_INVITER_BONUS_INPUT_ACTION_KEY)
+    if not invitee_pending and not inviter_pending:
+        return
+    if not raw.isdigit() or int(raw) <= 0:
+        await message.answer("Нужно положительное целое число.")
+        return
+    key = "REFERRAL_INVITEE_BONUS_DAYS" if invitee_pending else "REFERRAL_INVITER_BONUS_DAYS"
+    action_key = SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY if invitee_pending else SERVICE_INVITER_BONUS_INPUT_ACTION_KEY
+    await set_app_setting(key, raw, updated_by=ADMIN_ID)
+    await clear_pending_admin_action(ADMIN_ID, action_key)
+    await write_audit_log(ADMIN_ID, "admin_referral_bonus_set", f"key={key};value={raw}")
+    await message.answer("✅ Значение сохранено.")
+
+
+@router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingTextOverrideInput())
+async def admin_text_override_capture_input(message: types.Message):
+    action = await get_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY)
+    if not action:
+        return
+    key = str(action.get("key") or "").strip()
+    if key not in TEXT_OVERRIDE_ALLOWED_KEYS:
+        await clear_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY)
+        await message.answer("Ключ недоступен.")
+        return
+    value = (message.text or "").strip()
+    if not value:
+        await message.answer("Пустой текст не сохранён.")
+        return
+    valid, error = await validate_text_template(key, value)
+    if not valid:
+        await message.answer(f"Шаблон не сохранён: {escape_html(error)}", parse_mode="HTML")
+        return
+    await set_text_override(key, value, updated_by=ADMIN_ID)
+    await clear_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY)
+    await write_audit_log(ADMIN_ID, "admin_text_override_set", f"key={key}")
+    await message.answer(f"✅ Сохранено: <b>{key}</b>", parse_mode="HTML", reply_markup=get_admin_text_override_item_kb(key))
+
+
 @router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingNetworkPolicyInput())
 async def admin_network_policy_capture_input(message: types.Message):
     raw = (message.text or "").strip()
@@ -1927,7 +2205,7 @@ async def admin_network_policy_capture_input(message: types.Message):
         await set_app_setting("DEFAULT_KEY_RATE_MBIT", str(int(raw)), updated_by=ADMIN_ID)
         await sync_qos_state()
         await write_audit_log(ADMIN_ID, "admin_qos_default_rate_set", f"value={int(raw)}")
-        await message.answer(f"✅ Default QoS rate: {int(raw)} Mbit/s")
+        await message.answer(f"✅ Скорость QoS по умолчанию: {int(raw)} Mbit/s")
         return
 
     if device_pending:
@@ -2318,7 +2596,7 @@ async def qos_status_cmd(message: types.Message):
     metrics = await policy_metrics()
     await message.answer(
         (
-            "📶 <b>QoS status</b>\n"
+            "📶 <b>Статус QoS</b>\n"
             f"enabled={_bool_on_off(qos_enabled)}\n"
             f"default={default_rate} Mbit/s\n"
             f"strict={_bool_on_off(qos_strict)}\n"
@@ -2337,7 +2615,7 @@ async def denylist_status_cmd(message: types.Message):
     metrics = await policy_metrics()
     await message.answer(
         (
-            "🛡 <b>Denylist status</b>\n"
+            "🛡 <b>Статус denylist</b>\n"
             f"enabled={_bool_on_off(enabled)}\n"
             f"mode={escape_html(mode)}\n"
             f"refresh={refresh_minutes} min\n"

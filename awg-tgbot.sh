@@ -10,7 +10,7 @@ else
   DETECTED_REPO_OWNER=""
   DETECTED_REPO_NAME=""
 fi
-REPO_OWNER="${REPO_OWNER:-${DETECTED_REPO_OWNER:-Just1k13}}"
+REPO_OWNER="${REPO_OWNER:-${DETECTED_REPO_OWNER:-justik13}}"
 REPO_NAME="${REPO_NAME:-${DETECTED_REPO_NAME:-awg-tgbot}}"
 DEFAULT_REPO_BRANCH="main"
 INSTALL_DIR="/opt/amnezia/bot"
@@ -38,6 +38,12 @@ AWG_HELPER_SUDOERS="/etc/sudoers.d/awg-bot-helper"
 AWG_HELPER_POLICY="/etc/awg-bot-helper.json"
 TTY_DEVICE="/dev/tty"
 SELF_SYMLINK="/usr/local/bin/awg-tgbot"
+SELFHOST_QOS_ENABLED_DEFAULT="1"
+SELFHOST_DEFAULT_KEY_RATE_MBIT_DEFAULT="150"
+SELFHOST_QOS_STRICT_DEFAULT="0"
+SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT="1"
+SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT="soft"
+SELFHOST_EGRESS_DENYLIST_REFRESH_MINUTES_DEFAULT="30"
 
 DETECTED_CONTAINER=""
 DETECTED_INTERFACE=""
@@ -1180,6 +1186,22 @@ write_common_env() {
   return 0
 }
 
+ensure_selfhost_network_defaults() {
+  local current=""
+  current="$(get_env_value QOS_ENABLED)"
+  [[ -n "$current" ]] || set_env_value QOS_ENABLED "$SELFHOST_QOS_ENABLED_DEFAULT"
+  current="$(get_env_value DEFAULT_KEY_RATE_MBIT)"
+  [[ -n "$current" ]] || set_env_value DEFAULT_KEY_RATE_MBIT "$SELFHOST_DEFAULT_KEY_RATE_MBIT_DEFAULT"
+  current="$(get_env_value QOS_STRICT)"
+  [[ -n "$current" ]] || set_env_value QOS_STRICT "$SELFHOST_QOS_STRICT_DEFAULT"
+  current="$(get_env_value EGRESS_DENYLIST_ENABLED)"
+  [[ -n "$current" ]] || set_env_value EGRESS_DENYLIST_ENABLED "$SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT"
+  current="$(get_env_value EGRESS_DENYLIST_MODE)"
+  [[ -n "$current" ]] || set_env_value EGRESS_DENYLIST_MODE "$SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT"
+  current="$(get_env_value EGRESS_DENYLIST_REFRESH_MINUTES)"
+  [[ -n "$current" ]] || set_env_value EGRESS_DENYLIST_REFRESH_MINUTES "$SELFHOST_EGRESS_DENYLIST_REFRESH_MINUTES_DEFAULT"
+}
+
 write_detected_awg_env() {
   [[ -n "$DETECTED_CONTAINER" ]] && set_env_value DOCKER_CONTAINER "$DETECTED_CONTAINER"
   [[ -n "$DETECTED_INTERFACE" ]] && set_env_value WG_INTERFACE "$DETECTED_INTERFACE"
@@ -1483,6 +1505,7 @@ install_or_reinstall_flow() {
   migrate_legacy_tariff_defaults
 
   write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
+  ensure_selfhost_network_defaults
   ensure_fernet_key
 
   if [[ "$choice" == "1" ]]; then
@@ -1518,21 +1541,24 @@ install_or_reinstall_flow() {
     default="$(get_env_value SUPPORT_USERNAME)"
     prompt_with_default 'Username поддержки (можно @username)' "${default:-@support}" value
     set_env_value SUPPORT_USERNAME "$value"
-    default="$(pick_existing_or_default "$(get_env_value QOS_ENABLED)" "1")"
+    default="$(pick_existing_or_default "$(get_env_value QOS_ENABLED)" "$SELFHOST_QOS_ENABLED_DEFAULT")"
     prompt_with_default 'Включить QoS (1=ON,0=OFF)' "$default" value
     set_env_value QOS_ENABLED "$value"
-    default="$(pick_existing_or_default "$(get_env_value DEFAULT_KEY_RATE_MBIT)" "150")"
+    default="$(pick_existing_or_default "$(get_env_value DEFAULT_KEY_RATE_MBIT)" "$SELFHOST_DEFAULT_KEY_RATE_MBIT_DEFAULT")"
     prompt_with_default 'Default скорость на ключ (Mbit/s)' "$default" value
     set_env_value DEFAULT_KEY_RATE_MBIT "$value"
-    default="$(pick_existing_or_default "$(get_env_value QOS_STRICT)" "0")"
+    default="$(pick_existing_or_default "$(get_env_value QOS_STRICT)" "$SELFHOST_QOS_STRICT_DEFAULT")"
     prompt_with_default 'QOS_STRICT (1=strict,0=soft)' "$default" value
     set_env_value QOS_STRICT "$value"
-    default="$(pick_existing_or_default "$(get_env_value EGRESS_DENYLIST_ENABLED)" "1")"
+    default="$(pick_existing_or_default "$(get_env_value EGRESS_DENYLIST_ENABLED)" "$SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT")"
     prompt_with_default 'Включить egress denylist (1=ON,0=OFF)' "$default" value
     set_env_value EGRESS_DENYLIST_ENABLED "$value"
-    default="$(pick_existing_or_default "$(get_env_value EGRESS_DENYLIST_MODE)" "soft")"
+    default="$(pick_existing_or_default "$(get_env_value EGRESS_DENYLIST_MODE)" "$SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT")"
     prompt_with_default 'Режим denylist (soft/strict)' "$default" value
     set_env_value EGRESS_DENYLIST_MODE "$value"
+    default="$(pick_existing_or_default "$(get_env_value EGRESS_DENYLIST_REFRESH_MINUTES)" "$SELFHOST_EGRESS_DENYLIST_REFRESH_MINUTES_DEFAULT")"
+    prompt_with_default 'Интервал обновления denylist (мин)' "$default" value
+    set_env_value EGRESS_DENYLIST_REFRESH_MINUTES "$value"
   fi
 
   ensure_venv_and_requirements || die "Не удалось установить Python зависимости."
@@ -2333,7 +2359,7 @@ print_menu_awg_yes_bot_yes() {
   echo "2) Логи"
   echo "3) Переустановить"
   echo "4) Бэкап"
-  echo "5) Restore backup"
+  echo "5) Восстановить из бэкапа"
   echo "6) Удалить"
   echo "7) Диагностика"
   echo "0) Выход"
@@ -2346,7 +2372,7 @@ print_menu_awg_no_bot_yes() {
   echo "2) Логи"
   echo "3) Переустановить"
   echo "4) Бэкап"
-  echo "5) Restore backup"
+  echo "5) Восстановить из бэкапа"
   echo "6) Удалить"
   echo "7) Диагностика"
   echo "8) Повторить проверку"
