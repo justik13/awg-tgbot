@@ -58,34 +58,25 @@ def _docker_exec(container: str, cmd: list[str], stdin_text: str | None = None) 
     return _run(["docker", "exec", "-i", container, *cmd], stdin_text=stdin_text)
 
 
-def _run_nft(container: str, args: list[str], stdin_text: str | None = None) -> str:
-    if container == "host":
-        return _run(["nft", *args], stdin_text=stdin_text)
-    return _docker_exec(container, ["nft", *args], stdin_text=stdin_text)
+def _run_nft_script(script: str) -> str:
+    return _run(["nft", "-f", "-"], stdin_text=script)
 
 
-def _run_nft_script(container: str, script: str) -> str:
-    return _run_nft(container, ["-f", "-"], stdin_text=script)
-
-
-def _nft_exists(container: str, kind: str, family: str, table: str, name: str | None = None) -> bool:
-    args = ["list", kind, family, table]
+def _nft_exists(kind: str, family: str, table: str, name: str | None = None) -> bool:
+    args = ["nft", "list", kind, family, table]
     if name is not None:
         args.append(name)
-    if container == "host":
-        proc = subprocess.run(["nft", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-    else:
-        proc = subprocess.run(["docker", "exec", "-i", container, "nft", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     return proc.returncode == 0
 
 
-def _ensure_denylist_primitives(container: str) -> None:
-    if not _nft_exists(container, "table", "inet", "filter"):
-        _run_nft(container, ["add", "table", "inet", "filter"])
-    if not _nft_exists(container, "chain", "inet", "filter", "awg_forward"):
-        _run_nft_script(container, 'add chain inet filter awg_forward { type filter hook forward priority 0; policy accept; }\n')
-    if not _nft_exists(container, "set", "inet", "filter", "awg_denylist"):
-        _run_nft_script(container, 'add set inet filter awg_denylist { type ipv4_addr; flags interval; }\n')
+def _ensure_denylist_primitives() -> None:
+    if not _nft_exists("table", "inet", "filter"):
+        _run(["nft", "add", "table", "inet", "filter"])
+    if not _nft_exists("chain", "inet", "filter", "awg_forward"):
+        _run_nft_script('add chain inet filter awg_forward { type filter hook forward priority 0; policy accept; }\n')
+    if not _nft_exists("set", "inet", "filter", "awg_denylist"):
+        _run_nft_script('add set inet filter awg_denylist { type ipv4_addr; flags interval; }\n')
 
 
 def _load_policy(path: Path | None = None) -> tuple[str, str]:
@@ -177,27 +168,25 @@ def main() -> int:
             print(_docker_exec(container, ["awg", "set", interface, "peer", public_key, "remove"]))
             return 0
         if args.op == "denylist-check":
-            _ensure_denylist_primitives(container)
-            print(_run_nft(container, ["list", "chain", "inet", "filter", "awg_forward"]))
-            print(_run_nft(container, ["list", "set", "inet", "filter", "awg_denylist"]))
+            print(_run(["nft", "list", "table", "inet", "filter"]))
             return 0
         if args.op == "denylist-clear":
             ipaddress.ip_network(args.vpn_subnet.strip(), strict=False)
-            _ensure_denylist_primitives(container)
-            _run_nft(container, ["flush", "chain", "inet", "filter", "awg_forward"])
-            _run_nft(container, ["flush", "set", "inet", "filter", "awg_denylist"])
+            _ensure_denylist_primitives()
+            _run(["nft", "flush", "chain", "inet", "filter", "awg_forward"])
+            _run(["nft", "flush", "set", "inet", "filter", "awg_denylist"])
             print("denylist cleared")
             return 0
         if args.op == "denylist-sync":
             subnet = ipaddress.ip_network(args.vpn_subnet.strip(), strict=False)
             cidrs = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
             validated = [str(ipaddress.ip_network(c, strict=False)) for c in cidrs]
-            _ensure_denylist_primitives(container)
-            _run_nft(container, ["flush", "chain", "inet", "filter", "awg_forward"])
-            _run_nft(container, ["flush", "set", "inet", "filter", "awg_denylist"])
+            _ensure_denylist_primitives()
+            _run(["nft", "flush", "chain", "inet", "filter", "awg_forward"])
+            _run(["nft", "flush", "set", "inet", "filter", "awg_denylist"])
             if validated:
-                _run_nft_script(container, f"add element inet filter awg_denylist {{ {', '.join(validated)} }}\n")
-            _run_nft_script(container, f'add rule inet filter awg_forward iifname "{interface}" ip saddr {subnet} ip daddr @awg_denylist drop comment "awg_denylist"\n')
+                _run_nft_script(f"add element inet filter awg_denylist {{ {', '.join(validated)} }}\n")
+            _run_nft_script(f'add rule inet filter awg_forward ip saddr {subnet} ip daddr @awg_denylist drop comment "awg_denylist"\n')
             print(f"denylist synced {len(cidrs)}")
             return 0
     except Exception as e:
