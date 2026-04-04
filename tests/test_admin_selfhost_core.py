@@ -9,6 +9,7 @@ from aiogram.filters import CommandObject
 sys.path.append(str(Path(__file__).resolve().parents[1] / "bot"))
 
 import handlers_admin
+import network_policy
 from keyboards import get_admin_inline_kb
 
 
@@ -94,10 +95,10 @@ def test_network_policy_screen_renders_state(monkeypatch):
         "denylist_last_sync_ts": 123,
         "denylist_entries": 5,
     }))
-    monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[1, 25, 0, 1, "soft", 30]))
+    monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[1, 150, 0, 1, "soft", 30]))
     text = asyncio.run(handlers_admin._render_network_policy_text())
     assert "QoS enabled: <b>ON</b>" in text
-    assert "Default rate: <b>25 Mbit/s</b>" in text
+    assert "Default rate: <b>150 Mbit/s</b>" in text
     assert "Denylist mode: <b>soft</b>" in text
 
 
@@ -127,20 +128,38 @@ def test_device_speed_override_and_reset(monkeypatch):
     message = _msg("10")
     monkeypatch.setattr(handlers_admin, "get_pending_admin_action", AsyncMock(side_effect=[None, {"uid": 11, "device_num": 1, "page": 0}, None, None]))
     monkeypatch.setattr(handlers_admin, "clear_pending_admin_action", AsyncMock())
-    monkeypatch.setattr(handlers_admin, "fetchval", AsyncMock(return_value=1))
+    monkeypatch.setattr(handlers_admin, "set_active_key_rate_limit", AsyncMock(return_value=True))
     monkeypatch.setattr(handlers_admin, "sync_qos_state", AsyncMock())
     monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
     monkeypatch.setattr(handlers_admin, "_send_user_manage_card", AsyncMock())
     asyncio.run(handlers_admin.admin_network_policy_capture_input(message))
-    handlers_admin.fetchval.assert_awaited()
+    handlers_admin.set_active_key_rate_limit.assert_awaited_once_with(11, 1, 10)
 
     cb = _cb(f"{handlers_admin.CB_ADMIN_DEVICE_SPEED_RESET_PREFIX}11_1_0")
-    monkeypatch.setattr(handlers_admin, "fetchval", AsyncMock(return_value=1))
+    monkeypatch.setattr(handlers_admin, "set_active_key_rate_limit", AsyncMock(return_value=True))
     monkeypatch.setattr(handlers_admin, "sync_qos_state", AsyncMock())
     monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
     monkeypatch.setattr(handlers_admin, "_send_user_manage_card", AsyncMock())
     asyncio.run(handlers_admin.admin_device_speed_reset(cb))
-    handlers_admin.sync_qos_state.assert_awaited()
+    handlers_admin.set_active_key_rate_limit.assert_awaited_once_with(11, 1, None)
+
+
+def test_device_speed_missing_active_device_does_not_sync(monkeypatch):
+    message = _msg("15")
+    monkeypatch.setattr(handlers_admin, "get_pending_admin_action", AsyncMock(side_effect=[None, {"uid": 11, "device_num": 2, "page": 0}, None, None]))
+    monkeypatch.setattr(handlers_admin, "clear_pending_admin_action", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "set_active_key_rate_limit", AsyncMock(return_value=False))
+    monkeypatch.setattr(handlers_admin, "sync_qos_state", AsyncMock())
+    asyncio.run(handlers_admin.admin_network_policy_capture_input(message))
+    handlers_admin.sync_qos_state.assert_not_awaited()
+    message.answer.assert_awaited()
+
+
+def test_top_level_admin_screens_clear_network_policy_pending(monkeypatch):
+    cb = _cb(handlers_admin.CB_ADMIN_COMMANDS)
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    asyncio.run(handlers_admin.admin_manual_commands(cb))
+    handlers_admin._clear_network_policy_pending.assert_awaited_once()
 
 
 def test_denylist_domains_and_cidrs_input(monkeypatch):
@@ -162,3 +181,9 @@ def test_denylist_sync_action(monkeypatch):
     monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
     asyncio.run(handlers_admin.admin_denylist_sync_now(cb))
     handlers_admin.denylist_sync.assert_awaited_once()
+
+
+def test_qos_rate_fallback_default_is_150(monkeypatch):
+    monkeypatch.setattr(network_policy, "get_setting", AsyncMock(return_value=None))
+    value = asyncio.run(network_policy.qos_rate_for_key(None))
+    assert value == 150

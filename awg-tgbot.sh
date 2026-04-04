@@ -1521,7 +1521,7 @@ install_or_reinstall_flow() {
     default="$(pick_existing_or_default "$(get_env_value QOS_ENABLED)" "1")"
     prompt_with_default 'Включить QoS (1=ON,0=OFF)' "$default" value
     set_env_value QOS_ENABLED "$value"
-    default="$(pick_existing_or_default "$(get_env_value DEFAULT_KEY_RATE_MBIT)" "25")"
+    default="$(pick_existing_or_default "$(get_env_value DEFAULT_KEY_RATE_MBIT)" "150")"
     prompt_with_default 'Default скорость на ключ (Mbit/s)' "$default" value
     set_env_value DEFAULT_KEY_RATE_MBIT "$value"
     default="$(pick_existing_or_default "$(get_env_value QOS_STRICT)" "0")"

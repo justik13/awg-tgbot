@@ -661,6 +661,25 @@ async def get_user_total_traffic_bytes(user_id: int) -> int:
     return int(row[0]) if row and row[0] is not None else 0
 
 
+async def set_active_key_rate_limit(user_id: int, device_num: int, rate_limit_mbit: int | None) -> bool:
+    db = await open_db()
+    try:
+        cursor = await db.execute(
+            """
+            UPDATE keys
+            SET rate_limit_mbit = ?
+            WHERE user_id = ?
+              AND device_num = ?
+              AND state = 'active'
+            """,
+            (rate_limit_mbit, user_id, device_num),
+        )
+        await db.commit()
+        return int(cursor.rowcount or 0) > 0
+    finally:
+        await db.close()
+
+
 async def sync_traffic_counters_from_runtime_peers(runtime_peers: list[dict[str, Any]]) -> int:
     runtime_by_public_key: dict[str, dict[str, int | None]] = {}
     for peer in runtime_peers:

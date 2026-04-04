@@ -27,6 +27,7 @@ def test_manual_install_flow_prompts_network_policy_defaults():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "QOS_ENABLED" in script
     assert "DEFAULT_KEY_RATE_MBIT" in script
+    assert 'pick_existing_or_default "$(get_env_value DEFAULT_KEY_RATE_MBIT)" "150"' in script
     assert "QOS_STRICT" in script
     assert "EGRESS_DENYLIST_ENABLED" in script
     assert "EGRESS_DENYLIST_MODE" in script

@@ -70,7 +70,7 @@ async def qos_rate_for_key(rate_limit_mbit: int | None) -> int:
         if value <= 0:
             return 0
         return value
-    return int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 100)
+    return int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
 
 
 async def qos_set(run_docker, ip: str, rate_mbit: int, user_id: int) -> None:

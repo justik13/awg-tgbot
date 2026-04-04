@@ -31,7 +31,7 @@ from database import (
     list_promo_codes,
     get_metric, get_pending_jobs_stats, get_recovery_lag_seconds,
     get_pending_admin_action, get_pending_broadcast, get_recent_audit, get_referral_admin_stats, get_referral_summary, get_user_keys, get_user_meta, normalize_promo_code, pop_pending_admin_action,
-    set_app_setting, set_pending_admin_action, set_pending_broadcast, write_audit_log,
+    set_active_key_rate_limit, set_app_setting, set_pending_admin_action, set_pending_broadcast, write_audit_log,
 )
 from helpers import escape_html, format_tg_username, get_status_text, utc_now_naive
 from device_activity import render_device_activity_line
@@ -204,6 +204,16 @@ class HasPendingNetworkPolicyInput(BaseFilter):
             if await get_pending_admin_action(ADMIN_ID, key):
                 return True
         return False
+
+
+async def _clear_network_policy_pending() -> None:
+    for key in (
+        QOS_DEFAULT_RATE_INPUT_ACTION_KEY,
+        DEVICE_SPEED_INPUT_ACTION_KEY,
+        DENYLIST_DOMAINS_INPUT_ACTION_KEY,
+        DENYLIST_CIDRS_INPUT_ACTION_KEY,
+    ):
+        await clear_pending_admin_action(ADMIN_ID, key)
 
 
 async def notify_user_subscription_granted(bot: Bot, user_id: int, days: int, new_until) -> bool:
@@ -452,7 +462,7 @@ def _bool_on_off(value: int | bool) -> str:
 async def _render_network_policy_text() -> str:
     policy_stats = await policy_metrics()
     qos_enabled = int(await get_setting("QOS_ENABLED", int) or 0)
-    default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 100)
+    default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
     qos_strict = int(await get_setting("QOS_STRICT", int) or 0)
     deny_enabled = int(await get_setting("EGRESS_DENYLIST_ENABLED", int) or 0)
     deny_mode = str(await get_setting("EGRESS_DENYLIST_MODE", str) or "soft").strip().lower()
@@ -741,7 +751,7 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
         (uid,),
     )
     admin_device_nums = [int(row[0]) for row in admin_device_rows]
-    default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 100)
+    default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
     speed_lines = []
     for device_num, rate_limit_mbit in admin_device_rows:
         if rate_limit_mbit is None:
@@ -801,6 +811,7 @@ def build_admin_manual_commands_text() -> str:
 
 @router.message(F.text == BTN_ADMIN, IsAdmin())
 async def admin_panel(message: types.Message):
+    await _clear_network_policy_pending()
     stats_text = await build_stats_text()
     db_info = await db_health_info()
     db_status = "🟢 Нормально" if db_info["is_healthy"] else "🟡 Нужна проверка"
@@ -815,6 +826,7 @@ async def admin_panel(message: types.Message):
 async def admin_back_main(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer("⚙️ Админ-меню", reply_markup=get_admin_inline_kb())
     await cb.answer()
 
@@ -823,6 +835,7 @@ async def admin_back_main(cb: types.CallbackQuery):
 async def admin_manual_commands(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(
         build_admin_manual_commands_text(),
         parse_mode="HTML",
@@ -835,6 +848,7 @@ async def admin_manual_commands(cb: types.CallbackQuery):
 async def admin_payments_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
     await cb.message.answer("💳 <b>Платежи</b>", parse_mode="HTML", reply_markup=get_admin_payments_kb())
@@ -865,6 +879,7 @@ async def admin_payments_latest_by_user_start(cb: types.CallbackQuery):
 async def admin_prices(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(
         _render_admin_prices_text(),
         parse_mode="HTML",
@@ -989,6 +1004,7 @@ async def admin_sync_awg(cb: types.CallbackQuery):
 async def admin_network_policy_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(await _render_network_policy_text(), parse_mode="HTML", reply_markup=get_admin_network_policy_kb())
     await cb.answer()
 
@@ -1049,7 +1065,7 @@ async def admin_qos_strict_toggle(cb: types.CallbackQuery):
 async def admin_qos_default_rate_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    current = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 100)
+    current = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
     await set_pending_admin_action(ADMIN_ID, QOS_DEFAULT_RATE_INPUT_ACTION_KEY, {"action": QOS_DEFAULT_RATE_INPUT_ACTION_KEY})
     await cb.message.answer(f"Введите default скорость в Mbit/s (целое > 0). Текущее: {current}")
     await cb.answer()
@@ -1145,6 +1161,7 @@ async def admin_denylist_sync_now(cb: types.CallbackQuery):
 async def admin_list_all(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await _render_users_page(cb.message, 0)
     await cb.answer()
 
@@ -1210,15 +1227,11 @@ async def admin_device_speed_reset(cb: types.CallbackQuery):
     except ValueError:
         await cb.answer("Некорректные параметры", show_alert=True)
         return
-    await fetchval(
-        """
-        UPDATE keys
-        SET rate_limit_mbit = NULL
-        WHERE user_id = ? AND device_num = ? AND state = 'active'
-        RETURNING id
-        """,
-        (uid, device_num),
-    )
+    updated = await set_active_key_rate_limit(uid, device_num, None)
+    if not updated:
+        await cb.message.answer("Активное устройство не найдено.")
+        await cb.answer("Не найдено", show_alert=True)
+        return
     await sync_qos_state()
     await write_audit_log(ADMIN_ID, "admin_device_speed_reset", f"target={uid}; device_num={device_num}")
     await _send_user_manage_card(cb.message, uid, page)
@@ -1702,6 +1715,7 @@ async def broadcast_capture_text(message: types.Message):
 async def admin_referrals_summary(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(
         await build_ref_stats_text(),
         parse_mode="HTML",
@@ -1715,6 +1729,7 @@ async def admin_referrals_summary(cb: types.CallbackQuery):
 async def admin_health_summary(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await cb.message.answer(await build_runtime_smokecheck_text(), parse_mode="HTML")
     await cb.answer("Готово")
 
@@ -1724,6 +1739,7 @@ async def admin_health_summary(cb: types.CallbackQuery):
 async def admin_maintenance_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
     status_line = "🟠 maintenance: ON" if enabled else "🟢 maintenance: OFF"
     await cb.message.answer(status_line, reply_markup=get_admin_maintenance_kb(enabled))
@@ -1754,6 +1770,7 @@ async def admin_maintenance_off_cb(cb: types.CallbackQuery):
 async def admin_promocodes_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
+    await _clear_network_policy_pending()
     await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
     await cb.message.answer("🎟 <b>Промокоды</b>", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
@@ -1919,15 +1936,10 @@ async def admin_network_policy_capture_input(message: types.Message):
         device_num = int(device_pending.get("device_num", 0))
         page = int(device_pending.get("page", 0))
         await clear_pending_admin_action(ADMIN_ID, DEVICE_SPEED_INPUT_ACTION_KEY)
-        await fetchval(
-            """
-            UPDATE keys
-            SET rate_limit_mbit = ?
-            WHERE user_id = ? AND device_num = ? AND state = 'active'
-            RETURNING id
-            """,
-            (int(raw), uid, device_num),
-        )
+        updated = await set_active_key_rate_limit(uid, device_num, int(raw))
+        if not updated:
+            await message.answer("Активное устройство не найдено.")
+            return
         await sync_qos_state()
         await write_audit_log(ADMIN_ID, "admin_device_speed_set", f"target={uid}; device_num={device_num}; rate={int(raw)}")
         await _send_user_manage_card(message, uid, page)
@@ -2295,7 +2307,7 @@ async def netpolicy_cmd(message: types.Message):
 @router.message(Command("qos_status"), IsAdmin())
 async def qos_status_cmd(message: types.Message):
     qos_enabled = int(await get_setting("QOS_ENABLED", int) or 0)
-    default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 100)
+    default_rate = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
     qos_strict = int(await get_setting("QOS_STRICT", int) or 0)
     metrics = await policy_metrics()
     await message.answer(
