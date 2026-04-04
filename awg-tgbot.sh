@@ -1968,7 +1968,8 @@ remove_everything() {
 }
 
 remove_keep_db_and_env() {
-  local db_path db_file db_tmp env_tmp restored_dir backup_tmp_root backup_stash backup_count
+  local db_path db_file db_tmp env_tmp restored_dir backup_tmp_root backup_stash backup_count recovery_root
+  local cleanup_backup_tmp=1
   REMOVE_BACKUPS_WERE_PRESENT=0
   REMOVE_BACKUPS_RESTORED=0
   db_path="$(get_env_value DB_PATH)"
@@ -2025,10 +2026,16 @@ remove_keep_db_and_env() {
       chmod 700 "$BACKUP_ROOT" || true
       REMOVE_BACKUPS_RESTORED=1
     else
-      warn "Не удалось полностью восстановить локальные backup-архивы в ${BACKUP_ROOT}."
+      recovery_root="/var/tmp/awg-tgbot-backups-recovery-$(date -u +%Y%m%d_%H%M%S)-$$"
+      if mv "$backup_tmp_root" "$recovery_root" 2>/dev/null; then
+        backup_tmp_root="$recovery_root"
+      fi
+      cleanup_backup_tmp=0
+      warn "Локальные backup-архивы не восстановлены в ${BACKUP_ROOT}."
+      warn "Архивы сохранены для ручного восстановления: ${backup_tmp_root}"
     fi
   fi
-  if [[ -n "$backup_tmp_root" && -d "$backup_tmp_root" ]]; then
+  if [[ "$cleanup_backup_tmp" == "1" && -n "$backup_tmp_root" && -d "$backup_tmp_root" ]]; then
     rm -rf "$backup_tmp_root"
   fi
   return 0

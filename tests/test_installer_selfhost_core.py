@@ -73,6 +73,8 @@ def test_normal_remove_preserves_local_backups_and_full_remove_still_deletes_eve
     assert 'if mv "$backup_stash" "$BACKUP_ROOT"; then' in script
     assert "Удаление остановлено до удаления данных, потому что не удалось безопасно сохранить backup-архивы." in script
     assert "Сохранены: БД, .env и локальные backup-архивы." in script
+    assert 'cleanup_backup_tmp=0' in script
+    assert 'warn "Архивы сохранены для ручного восстановления: ${backup_tmp_root}"' in script
     assert 'warn "Полное удаление уничтожит код, сервис, БД, .env и логи."' in script
     assert 'cp -a "$BACKUP_ROOT/." "$backup_tmp/" 2>/dev/null || true' not in script
     assert 'remove_everything' in script
@@ -91,6 +93,13 @@ def test_success_message_for_backup_preservation_is_guarded_by_restore_flags():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert 'if [[ "$REMOVE_BACKUPS_WERE_PRESENT" == "1" && "$REMOVE_BACKUPS_RESTORED" == "1" ]]; then' in script
     assert 'ok "Удалено приложение и сервис. Сохранены: БД, .env и локальные backup-архивы."' in script
+
+
+def test_restore_fail_path_keeps_stash_and_reports_recovery_path():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'recovery_root="/var/tmp/awg-tgbot-backups-recovery-' in script
+    assert 'if mv "$backup_tmp_root" "$recovery_root" 2>/dev/null; then' in script
+    assert 'if [[ "$cleanup_backup_tmp" == "1" && -n "$backup_tmp_root" && -d "$backup_tmp_root" ]]; then' in script
 
 
 def test_readme_contains_owner_operator_sections():
