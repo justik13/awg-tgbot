@@ -44,6 +44,16 @@ SELFHOST_QOS_STRICT_DEFAULT="0"
 SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT="1"
 SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT="soft"
 SELFHOST_EGRESS_DENYLIST_REFRESH_MINUTES_DEFAULT="30"
+SELFHOST_AUTO_BACKUP_ENABLED_DEFAULT="1"
+SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT="14"
+SELFHOST_AUTO_BACKUP_TIMER_ONCALENDAR_DEFAULT="daily"
+AUTO_BACKUP_SCRIPT_REL="scripts/awg-tgbot-autobackup.sh"
+AUTO_BACKUP_SCRIPT="${INSTALL_DIR}/${AUTO_BACKUP_SCRIPT_REL}"
+AUTO_BACKUP_SERVICE_NAME="awg-tgbot-backup.service"
+AUTO_BACKUP_TIMER_NAME="awg-tgbot-backup.timer"
+AUTO_BACKUP_SERVICE_FILE="/etc/systemd/system/${AUTO_BACKUP_SERVICE_NAME}"
+AUTO_BACKUP_TIMER_FILE="/etc/systemd/system/${AUTO_BACKUP_TIMER_NAME}"
+BACKUP_ROOT="${INSTALL_DIR}/backups"
 
 DETECTED_CONTAINER=""
 DETECTED_INTERFACE=""
@@ -962,6 +972,7 @@ print_update_status_line() {
 
 
 print_detailed_startup_summary() {
+  local ab_stats ab_latest ab_count
   print_line
   echo "Предварительная проверка:"
   echo "AWG: $(status_found_text "$STATE_AWG_FOUND")"
@@ -982,6 +993,14 @@ print_detailed_startup_summary() {
   echo "Symlink /usr/local/bin/awg-tgbot: $(status_found_text "$STATE_BOT_SYMLINK_FOUND")"
   echo ".env: $(status_found_text "$STATE_BOT_ENV_FOUND")"
   echo "Служебное состояние установки: $(status_found_text "$STATE_BOT_STATE_FOUND")"
+  ab_stats="$(autobackup_archive_stats)"
+  ab_latest="${ab_stats%%|*}"
+  ab_count="${ab_stats##*|}"
+  echo "Autobackup enabled: $(autobackup_enabled && echo 'да' || echo 'нет')"
+  echo "Autobackup timer: $(autobackup_timer_state)"
+  echo "Autobackup keep count: $(autobackup_keep_count)"
+  echo "Backup directory: ${BACKUP_ROOT}"
+  echo "Backup archives: ${ab_count}, latest: ${ab_latest}"
   if [[ "$STATE_BOT_RESIDUAL" == "1" && "$STATE_BOT_INSTALLED" != "1" ]]; then
     echo "Остаточные файлы: найдены"
   fi
@@ -1083,9 +1102,13 @@ deploy_repo() {
   fi
   rm -rf "$BOT_DIR"
   mkdir -p "$BOT_DIR"
+  rm -rf "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging"
   if cp -a "$src_dir/bot/." "$BOT_DIR/" \
     && cp "$src_dir/awg-tgbot.sh" "$INSTALL_DIR/awg-tgbot.sh" \
+    && [[ ! -d "$src_dir/scripts" || cp -a "$src_dir/scripts" "$INSTALL_DIR/scripts" ]] \
+    && [[ ! -d "$src_dir/packaging" || cp -a "$src_dir/packaging" "$INSTALL_DIR/packaging" ]] \
     && chmod +x "$INSTALL_DIR/awg-tgbot.sh" \
+    && [[ ! -f "$AUTO_BACKUP_SCRIPT" || chmod +x "$AUTO_BACKUP_SCRIPT" ]] \
     && ln -sfn "$INSTALL_DIR/awg-tgbot.sh" "$SELF_SYMLINK"; then
     [[ -n "$backup_dir" ]] && rm -rf "$backup_dir"
     return 0
@@ -1093,6 +1116,7 @@ deploy_repo() {
   warn "Не удалось развернуть файлы репозитория. Выполняю откат."
   rm -rf "$BOT_DIR"
   rm -f "$INSTALL_DIR/awg-tgbot.sh"
+  rm -rf "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging"
   if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
     [[ -d "$backup_dir/bot" ]] && mv "$backup_dir/bot" "$BOT_DIR"
     [[ -f "$backup_dir/awg-tgbot.sh" ]] && mv "$backup_dir/awg-tgbot.sh" "$INSTALL_DIR/awg-tgbot.sh"
@@ -1200,6 +1224,29 @@ ensure_selfhost_network_defaults() {
   [[ -n "$current" ]] || set_env_value EGRESS_DENYLIST_MODE "$SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT"
   current="$(get_env_value EGRESS_DENYLIST_REFRESH_MINUTES)"
   [[ -n "$current" ]] || set_env_value EGRESS_DENYLIST_REFRESH_MINUTES "$SELFHOST_EGRESS_DENYLIST_REFRESH_MINUTES_DEFAULT"
+  current="$(get_env_value AUTO_BACKUP_ENABLED)"
+  [[ -n "$current" ]] || set_env_value AUTO_BACKUP_ENABLED "$SELFHOST_AUTO_BACKUP_ENABLED_DEFAULT"
+  current="$(get_env_value AUTO_BACKUP_KEEP_COUNT)"
+  [[ -n "$current" ]] || set_env_value AUTO_BACKUP_KEEP_COUNT "$SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT"
+  current="$(get_env_value AUTO_BACKUP_TIMER_ONCALENDAR)"
+  [[ -n "$current" ]] || set_env_value AUTO_BACKUP_TIMER_ONCALENDAR "$SELFHOST_AUTO_BACKUP_TIMER_ONCALENDAR_DEFAULT"
+}
+
+autobackup_enabled() {
+  local enabled
+  enabled="$(get_env_value AUTO_BACKUP_ENABLED)"
+  [[ -n "$enabled" ]] || enabled="$SELFHOST_AUTO_BACKUP_ENABLED_DEFAULT"
+  [[ "$enabled" == "1" ]]
+}
+
+autobackup_keep_count() {
+  local keep
+  keep="$(get_env_value AUTO_BACKUP_KEEP_COUNT)"
+  [[ -n "$keep" ]] || keep="$SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT"
+  if [[ ! "$keep" =~ ^[0-9]+$ ]] || (( keep < 1 )); then
+    keep="$SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT"
+  fi
+  printf '%s' "$keep"
 }
 
 write_detected_awg_env() {
@@ -1332,6 +1379,37 @@ SERVICE
   return 0
 }
 
+install_autobackup_units() {
+  local service_src timer_src
+  service_src="${INSTALL_DIR}/packaging/systemd/${AUTO_BACKUP_SERVICE_NAME}"
+  timer_src="${INSTALL_DIR}/packaging/systemd/${AUTO_BACKUP_TIMER_NAME}"
+  if [[ ! -f "$service_src" || ! -f "$timer_src" ]]; then
+    warn "Файлы autobackup systemd unit не найдены: ${service_src}, ${timer_src}"
+    return 1
+  fi
+  cp "$service_src" "$AUTO_BACKUP_SERVICE_FILE"
+  cp "$timer_src" "$AUTO_BACKUP_TIMER_FILE"
+  chmod 644 "$AUTO_BACKUP_SERVICE_FILE" "$AUTO_BACKUP_TIMER_FILE" || true
+  systemctl daemon-reload
+  return 0
+}
+
+configure_autobackup_timer() {
+  if ! require_command systemctl; then
+    warn "systemctl не найден. Автобэкап таймер не настроен."
+    return 0
+  fi
+  install_autobackup_units || return 1
+  if autobackup_enabled; then
+    systemctl enable --now "$AUTO_BACKUP_TIMER_NAME" >/dev/null 2>&1 || return 1
+    ok "Автобэкап включён: ${AUTO_BACKUP_TIMER_NAME} (keep=$(autobackup_keep_count))."
+  else
+    systemctl disable --now "$AUTO_BACKUP_TIMER_NAME" >/dev/null 2>&1 || true
+    ok "Автобэкап выключен (AUTO_BACKUP_ENABLED=0)."
+  fi
+  return 0
+}
+
 persist_remote_sha() {
   local sha
   sha="$(fetch_remote_sha)"
@@ -1349,6 +1427,25 @@ start_service() {
   return 0
 }
 
+autobackup_timer_state() {
+  local state
+  if ! require_command systemctl; then
+    printf '%s' 'unavailable'
+    return 0
+  fi
+  state="$(systemctl is-active "$AUTO_BACKUP_TIMER_NAME" 2>/dev/null || true)"
+  [[ -n "$state" ]] || state="inactive"
+  printf '%s' "$state"
+}
+
+autobackup_archive_stats() {
+  local latest count
+  latest="$(find "$BACKUP_ROOT" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' -printf '%T@ %f\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+  count="$(find "$BACKUP_ROOT" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' 2>/dev/null | wc -l | tr -d ' ' || true)"
+  [[ -n "$count" ]] || count="0"
+  printf '%s|%s' "${latest:-нет}" "$count"
+}
+
 stop_service_if_exists() {
   if service_exists; then
     systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
@@ -1358,6 +1455,7 @@ stop_service_if_exists() {
 
 show_status() {
   local active_state enabled_state local_sha branch_info env_state env_container env_interface policy_container policy_interface docker_membership
+  local ab_stats ab_latest ab_count
   local remote_sha
   detect_install_state
   refresh_update_status_quiet
@@ -1378,6 +1476,9 @@ show_status() {
   env_interface="$(get_env_value WG_INTERFACE)"
   policy_container="$(helper_policy_field container)"
   policy_interface="$(helper_policy_field interface)"
+  ab_stats="$(autobackup_archive_stats)"
+  ab_latest="${ab_stats%%|*}"
+  ab_count="${ab_stats##*|}"
 
   echo "Проект: ${REPO_OWNER}/${REPO_NAME}"
   echo "Установлен: $([[ -d "$INSTALL_DIR" ]] && echo 'да' || echo 'нет')"
@@ -1392,6 +1493,11 @@ show_status() {
   echo "Обновление: через «Переустановить» (reinstall)"
   echo "Логи приложения: ${APP_LOG_FILE}"
   echo "Лог установки: ${INSTALL_LOG}"
+  echo "Autobackup enabled: $(autobackup_enabled && echo 'да' || echo 'нет')"
+  echo "Autobackup timer: $(autobackup_timer_state)"
+  echo "Autobackup keep count: $(autobackup_keep_count)"
+  echo "Backup directory: ${BACKUP_ROOT}"
+  echo "Backup archives: ${ab_count}, latest: ${ab_latest}"
   if id -u "$BOT_USER" >/dev/null 2>&1 && id -nG "$BOT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
     docker_membership="в группе docker (небезопасно)"
   else
@@ -1559,6 +1665,12 @@ install_or_reinstall_flow() {
     default="$(pick_existing_or_default "$(get_env_value EGRESS_DENYLIST_REFRESH_MINUTES)" "$SELFHOST_EGRESS_DENYLIST_REFRESH_MINUTES_DEFAULT")"
     prompt_with_default 'Интервал обновления denylist (мин)' "$default" value
     set_env_value EGRESS_DENYLIST_REFRESH_MINUTES "$value"
+    default="$(pick_existing_or_default "$(get_env_value AUTO_BACKUP_ENABLED)" "$SELFHOST_AUTO_BACKUP_ENABLED_DEFAULT")"
+    prompt_with_default 'Включить autobackup (1=ON,0=OFF)' "$default" value
+    set_env_value AUTO_BACKUP_ENABLED "$value"
+    default="$(pick_existing_or_default "$(get_env_value AUTO_BACKUP_KEEP_COUNT)" "$SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT")"
+    prompt_with_default 'Сколько autobackup хранить (шт)' "$default" value
+    set_env_value AUTO_BACKUP_KEEP_COUNT "$value"
   fi
 
   ensure_venv_and_requirements || die "Не удалось установить Python зависимости."
@@ -1566,6 +1678,7 @@ install_or_reinstall_flow() {
   install_awg_helper || die "Не удалось установить helper для AWG."
   setup_logrotate || die "Не удалось настроить logrotate."
   write_service || die "Не удалось создать systemd сервис."
+  configure_autobackup_timer || die "Не удалось настроить systemd timer autobackup."
   persist_repo_branch
   persist_remote_sha
   start_service || die "Не удалось запустить сервис."
@@ -1597,7 +1710,7 @@ repair_runtime_file_access() {
 }
 
 create_local_backup() {
-  local db_file backup_root timestamp archive_file meta_dir meta_file local_sha
+  local db_file timestamp archive_file meta_dir meta_file local_sha
   if ! has_residual_files || [[ ! -f "$ENV_FILE" || ! -d "$BOT_DIR" ]]; then
     warn "Бот не установлен полностью. Нечего архивировать."
     return 1
@@ -1610,12 +1723,11 @@ create_local_backup() {
   fi
 
   timestamp="$(date -u +%Y%m%d_%H%M%S)"
-  backup_root="${INSTALL_DIR}/backups"
-  archive_file="${backup_root}/awg-tgbot-backup-${timestamp}.tar.gz"
+  archive_file="${BACKUP_ROOT}/awg-tgbot-backup-${timestamp}.tar.gz"
   meta_dir="$(mktemp -d)"
   meta_file="${meta_dir}/metadata.txt"
-  mkdir -p "$backup_root"
-  chmod 700 "$backup_root" || true
+  mkdir -p "$BACKUP_ROOT"
+  chmod 700 "$BACKUP_ROOT" || true
 
   local_sha="$(cat "$VERSION_FILE" 2>/dev/null | tr -d '\r\n' || true)"
   if [[ -z "$local_sha" && -d "$INSTALL_DIR/.git" ]]; then
@@ -1648,7 +1760,7 @@ EOF
 }
 
 restore_from_backup() {
-  local backup_root="${INSTALL_DIR}/backups"
+  local backup_root="${BACKUP_ROOT}"
   local selected_index="" selected_archive="" confirm_restore=""
   local db_file db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before
   local restore_ok=0 rollback_ok=0
@@ -1840,7 +1952,9 @@ remove_bot_managed_peers_from_awg() {
 
 remove_everything() {
   systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+  systemctl disable --now "$AUTO_BACKUP_TIMER_NAME" 2>/dev/null || true
   rm -f "$SERVICE_FILE"
+  rm -f "$AUTO_BACKUP_SERVICE_FILE" "$AUTO_BACKUP_TIMER_FILE"
   systemctl daemon-reload || true
   systemctl reset-failed || true
   rm -f "$SELF_SYMLINK"

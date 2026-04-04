@@ -1,0 +1,10 @@
+[Unit]
+Description=AWG Telegram Bot daily autobackup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=awg-tgbot-backup.service
+
+[Install]
+WantedBy=timers.target

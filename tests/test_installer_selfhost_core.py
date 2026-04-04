@@ -39,3 +39,24 @@ def test_auto_manual_install_share_selfhost_default_population():
     assert 'ensure_selfhost_network_defaults' in script
     assert 'set_env_value QOS_ENABLED "$SELFHOST_QOS_ENABLED_DEFAULT"' in script
     assert 'set_env_value EGRESS_DENYLIST_MODE "$SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT"' in script
+    assert 'set_env_value AUTO_BACKUP_ENABLED "$SELFHOST_AUTO_BACKUP_ENABLED_DEFAULT"' in script
+    assert 'set_env_value AUTO_BACKUP_KEEP_COUNT "$SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT"' in script
+
+
+def test_installer_integrates_autobackup_timer_and_manual_prompts():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'AUTO_BACKUP_ENABLED=1' not in script  # must come from defaults/prompt, not hardcoded runtime overrides
+    assert "prompt_with_default 'Включить autobackup (1=ON,0=OFF)'" in script
+    assert "prompt_with_default 'Сколько autobackup хранить (шт)'" in script
+    assert "configure_autobackup_timer || die" in script
+    assert "systemctl enable --now \"$AUTO_BACKUP_TIMER_NAME\"" in script
+    assert "systemctl disable --now \"$AUTO_BACKUP_TIMER_NAME\"" in script
+
+
+def test_readme_contains_owner_operator_sections():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "## Что это" in readme
+    assert "## Быстрый старт" in readme
+    assert "## Как устроены бэкапы" in readme
+    assert "AUTO_BACKUP_ENABLED" in readme
+    assert "## Где смотреть код" in readme
