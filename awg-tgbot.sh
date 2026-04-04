@@ -103,6 +103,8 @@ UPDATE_LOCAL_SHA=""
 UPDATE_CHECK_TS=0
 UPDATE_CACHE_TTL=15
 UPDATE_CACHE_BRANCH=""
+REMOVE_BACKUPS_WERE_PRESENT=0
+REMOVE_BACKUPS_RESTORED=0
 
 print_line() { printf '%s\n' "------------------------------------------------------------"; }
 info() { printf '[*] %s\n' "$*" >&2; }
@@ -1966,7 +1968,9 @@ remove_everything() {
 }
 
 remove_keep_db_and_env() {
-  local db_path db_file db_tmp env_tmp restored_dir
+  local db_path db_file db_tmp env_tmp restored_dir backup_tmp backup_count
+  REMOVE_BACKUPS_WERE_PRESENT=0
+  REMOVE_BACKUPS_RESTORED=0
   db_path="$(get_env_value DB_PATH)"
   [[ -n "$db_path" ]] || db_path="vpn_bot.db"
   if [[ "$db_path" = /* ]]; then
@@ -1983,6 +1987,14 @@ remove_keep_db_and_env() {
   if [[ -f "$ENV_FILE" ]]; then
     env_tmp="$(mktemp)"
     cp -a "$ENV_FILE" "$env_tmp"
+  fi
+  backup_tmp=""
+  backup_count="$(find "$BACKUP_ROOT" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' 2>/dev/null | wc -l | tr -d ' ' || true)"
+  [[ -n "$backup_count" ]] || backup_count="0"
+  if [[ "$backup_count" != "0" ]]; then
+    REMOVE_BACKUPS_WERE_PRESENT=1
+    backup_tmp="$(mktemp -d)"
+    cp -a "$BACKUP_ROOT/." "$backup_tmp/" 2>/dev/null || true
   fi
   remove_everything
   mkdir -p "$INSTALL_DIR"
@@ -2002,6 +2014,16 @@ remove_keep_db_and_env() {
     chmod 600 "$ENV_FILE" || true
     rm -f "$env_tmp"
   fi
+  if [[ -n "$backup_tmp" && -d "$backup_tmp" ]]; then
+    mkdir -p "$BACKUP_ROOT"
+    chmod 700 "$BACKUP_ROOT" || true
+    if cp -a "$backup_tmp/." "$BACKUP_ROOT/"; then
+      REMOVE_BACKUPS_RESTORED=1
+    else
+      warn "Не удалось полностью восстановить локальные backup-архивы в ${BACKUP_ROOT}."
+    fi
+    rm -rf "$backup_tmp"
+  fi
   return 0
 }
 
@@ -2011,7 +2033,13 @@ remove_default() {
     return 0
   fi
   remove_keep_db_and_env
-  ok "Удалено приложение и сервис. Сохранены: БД и .env."
+  if [[ "$REMOVE_BACKUPS_WERE_PRESENT" == "1" && "$REMOVE_BACKUPS_RESTORED" == "1" ]]; then
+    ok "Удалено приложение и сервис. Сохранены: БД, .env и локальные backup-архивы."
+  elif [[ "$REMOVE_BACKUPS_WERE_PRESENT" == "1" ]]; then
+    warn "Удалено приложение и сервис. Сохранены: БД и .env. Локальные backup-архивы восстановлены не полностью."
+  else
+    ok "Удалено приложение и сервис. Сохранены: БД и .env."
+  fi
   return 0
 }
 

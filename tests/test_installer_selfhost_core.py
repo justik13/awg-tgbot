@@ -66,6 +66,15 @@ def test_installer_does_not_have_unused_autobackup_schedule_setting():
     assert "AUTO_BACKUP_TIMER_ONCALENDAR" not in script
 
 
+def test_normal_remove_preserves_local_backups_and_full_remove_still_deletes_everything():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'find "$BACKUP_ROOT" -maxdepth 1 -type f -name \'awg-tgbot-backup-*.tar.gz\'' in script
+    assert 'cp -a "$BACKUP_ROOT/." "$backup_tmp/"' in script
+    assert 'cp -a "$backup_tmp/." "$BACKUP_ROOT/"' in script
+    assert "Сохранены: БД, .env и локальные backup-архивы." in script
+    assert 'warn "Полное удаление уничтожит код, сервис, БД, .env и логи."' in script
+
+
 def test_readme_contains_owner_operator_sections():
     readme = Path("README.md").read_text(encoding="utf-8")
     assert "## Что это" in readme
@@ -74,3 +83,4 @@ def test_readme_contains_owner_operator_sections():
     assert "AUTO_BACKUP_ENABLED" in readme
     assert "## Где смотреть код" in readme
     assert "раз в день" in readme
+    assert "пункт `1) Установить`" in readme
