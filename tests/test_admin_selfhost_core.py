@@ -104,7 +104,7 @@ def test_network_policy_screen_renders_state(monkeypatch):
     assert "QoS: <b>включено</b>" in text
     assert "Скорость по умолчанию: <b>150 Mbit/s</b>" in text
     assert "Режим denylist: <b>soft</b>" in text
-    assert "Последний sync QoS: <b>1</b>" in text
+    assert "Последняя синхронизация QoS: <b>1</b>" in text
 
 
 def test_service_settings_support_and_download_update(monkeypatch):
@@ -249,7 +249,7 @@ def test_qos_status_command_clears_both_pending_and_uses_polished_wording(monkey
     rendered = message.answer.await_args.args[0]
     assert "Скорость по умолчанию: 150 Mbit/s" in rendered
     assert "Включено: включено" in rendered
-    assert "Последний sync QoS: 1" in rendered
+    assert "Последняя синхронизация QoS: 1" in rendered
 
 
 def test_health_text_uses_readable_russian_labels(monkeypatch):
@@ -279,7 +279,8 @@ def test_health_text_uses_readable_russian_labels(monkeypatch):
     assert "Получено задач: <b>4</b>" in text
     assert "Застряли на ручной обработке: <b>0</b>" in text
     assert "Ошибки QoS: <b>1</b>" in text
-    assert "Время последнего sync denylist: <b>123</b>" in text
+    assert "Время последней синхронизации denylist: <b>123</b>" in text
+    assert "Ограничение запросов: отклонено кнопок: <b>4</b>" in text
 
 
 def test_denylist_sync_command_uses_polished_wording(monkeypatch):
@@ -291,6 +292,19 @@ def test_denylist_sync_command_uses_polished_wording(monkeypatch):
     asyncio.run(handlers_admin.denylist_sync_cmd(message))
     rendered = message.answer.await_args.args[0]
     assert rendered == "✅ Синхронизация denylist выполнена."
+
+
+def test_payment_charge_prompt_and_empty_value_are_polished(monkeypatch):
+    cb = _cb(handlers_admin.CB_ADMIN_FIND_CHARGE)
+    monkeypatch.setattr(handlers_admin, "clear_pending_admin_action", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "set_pending_admin_action", AsyncMock())
+    asyncio.run(handlers_admin.admin_payments_find_charge_start(cb))
+    assert cb.message.answer.await_args.args[0] == "Введите Charge ID платежа"
+
+    message = _msg("   ")
+    monkeypatch.setattr(handlers_admin, "get_pending_admin_action", AsyncMock(side_effect=[{"a": 1}, None]))
+    asyncio.run(handlers_admin.admin_payment_lookup_capture_input(message))
+    assert message.answer.await_args.args[0] == "Charge ID не указан."
 
 
 def test_denylist_domains_and_cidrs_input(monkeypatch):
