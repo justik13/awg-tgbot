@@ -101,9 +101,10 @@ def test_network_policy_screen_renders_state(monkeypatch):
     }))
     monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[1, 150, 0, 1, "soft", 30]))
     text = asyncio.run(handlers_admin._render_network_policy_text())
-    assert "QoS: <b>ON</b>" in text
+    assert "QoS: <b>включено</b>" in text
     assert "Скорость по умолчанию: <b>150 Mbit/s</b>" in text
     assert "Режим denylist: <b>soft</b>" in text
+    assert "Последняя синхронизация QoS: <b>1</b>" in text
 
 
 def test_service_settings_support_and_download_update(monkeypatch):
@@ -247,6 +248,63 @@ def test_qos_status_command_clears_both_pending_and_uses_polished_wording(monkey
     handlers_admin._clear_network_policy_pending.assert_awaited_once()
     rendered = message.answer.await_args.args[0]
     assert "Скорость по умолчанию: 150 Mbit/s" in rendered
+    assert "Включено: включено" in rendered
+    assert "Последняя синхронизация QoS: 1" in rendered
+
+
+def test_health_text_uses_readable_russian_labels(monkeypatch):
+    monkeypatch.setattr(
+        handlers_admin,
+        "get_pending_jobs_stats",
+        AsyncMock(return_value={"received": 4, "provisioning": 2, "needs_repair": 1, "stuck_manual": 0}),
+    )
+    monkeypatch.setattr(handlers_admin, "get_recovery_lag_seconds", AsyncMock(return_value=15))
+    monkeypatch.setattr(handlers_admin, "get_metric", AsyncMock(side_effect=[3, 9, 5, 4, 7]))
+    monkeypatch.setattr(
+        handlers_admin,
+        "policy_metrics",
+        AsyncMock(
+            return_value={
+                "qos_errors": 1,
+                "denylist_errors": 2,
+                "qos_last_sync_ok": 1,
+                "denylist_last_sync_ok": 0,
+                "denylist_last_sync_ts": 123,
+                "denylist_entries": 6,
+            }
+        ),
+    )
+    monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[1, "soft", 1, 0]))
+    text = asyncio.run(handlers_admin.build_health_text())
+    assert "Получено задач: <b>4</b>" in text
+    assert "Застряли на ручной обработке: <b>0</b>" in text
+    assert "Ошибки QoS: <b>1</b>" in text
+    assert "Время последней синхронизации denylist: <b>123</b>" in text
+    assert "Ограничение запросов: отклонено кнопок: <b>4</b>" in text
+
+
+def test_denylist_sync_command_uses_polished_wording(monkeypatch):
+    message = _msg("/denylist_sync")
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "denylist_sync", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
+    asyncio.run(handlers_admin.denylist_sync_cmd(message))
+    rendered = message.answer.await_args.args[0]
+    assert rendered == "✅ Синхронизация denylist выполнена."
+
+
+def test_payment_charge_prompt_and_empty_value_are_polished(monkeypatch):
+    cb = _cb(handlers_admin.CB_ADMIN_FIND_CHARGE)
+    monkeypatch.setattr(handlers_admin, "clear_pending_admin_action", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "set_pending_admin_action", AsyncMock())
+    asyncio.run(handlers_admin.admin_payments_find_charge_start(cb))
+    assert cb.message.answer.await_args.args[0] == "Введите Charge ID платежа"
+
+    message = _msg("   ")
+    monkeypatch.setattr(handlers_admin, "get_pending_admin_action", AsyncMock(side_effect=[{"a": 1}, None]))
+    asyncio.run(handlers_admin.admin_payment_lookup_capture_input(message))
+    assert message.answer.await_args.args[0] == "Charge ID не указан."
 
 
 def test_denylist_domains_and_cidrs_input(monkeypatch):

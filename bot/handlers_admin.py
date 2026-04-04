@@ -76,7 +76,7 @@ router = Router()
 admin_command_rate_limit: dict[str, object] = {}
 ADMIN_USERS_PAGE_SIZE = 10
 ADMIN_MANUAL_COMMANDS: tuple[tuple[str, str], ...] = (
-    ("/health", "быстрая проверка готовности selfhost"),
+    ("/health", "быстрая проверка готовности"),
     ("/sync_awg", "сверка AWG и БД"),
     ("/stats", "краткая статистика"),
     ("/users", "короткий список пользователей"),
@@ -91,13 +91,13 @@ ADMIN_MANUAL_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/promo_list", "краткий список промокодов"),
     ("/promo_disable CODE", "отключить промокод"),
     ("/revoke USER_ID", "отключить доступ вручную (осторожно)"),
-    ("/maintenance_status", "статус freeze новых покупок"),
-    ("/maintenance_on", "включить freeze новых покупок"),
-    ("/maintenance_off", "выключить freeze новых покупок"),
+    ("/maintenance_status", "статус блокировки новых покупок"),
+    ("/maintenance_on", "включить блокировку новых покупок"),
+    ("/maintenance_off", "выключить блокировку новых покупок"),
     ("/netpolicy", "сводка по сетевой политике"),
     ("/qos_status", "текущий статус QoS"),
     ("/denylist_status", "текущий статус denylist"),
-    ("/denylist_sync", "принудительный denylist sync"),
+    ("/denylist_sync", "принудительная синхронизация denylist"),
 )
 BROADCAST_INPUT_ACTION_KEY = "broadcast_input"
 PRICE_INPUT_ACTION_KEY = "price_input"
@@ -349,15 +349,15 @@ def _smoke_status_line(name: str, state: str, detail: str) -> str:
 def _hint_for_awg_target_error(error: str) -> str:
     lowered = error.lower()
     if "not configured" in lowered or "missing" in lowered:
-        return "проверь .env target и перезапусти сервис"
-    return "проверь контейнер/helper и сервис awg-bot"
+        return "проверь цель AWG в .env и перезапусти сервис"
+    return "проверь контейнер, helper и сервис бота"
 
 
 def _hint_for_helper_policy_error(error: str) -> str:
     lowered = error.lower()
     if "parse failed" in lowered or "json object" in lowered:
-        return "исправь формат helper policy (JSON) и перезапусти helper"
-    return "проверь путь/доступ к helper policy"
+        return "исправь формат политики helper (JSON) и перезапусти helper"
+    return "проверь путь и доступ к политике helper"
 
 
 async def run_runtime_smokecheck() -> dict[str, object]:
@@ -373,37 +373,37 @@ async def run_runtime_smokecheck() -> dict[str, object]:
     if missing_env:
         checks.append(
             {
-                "name": "Runtime config",
+                "name": "Конфигурация",
                 "state": "failed",
-                "detail": f"missing {', '.join(missing_env)}",
-                "hint": "дополни .env selfhost и перезапусти сервис",
+                "detail": f"не хватает: {', '.join(missing_env)}",
+                "hint": "дополни .env и перезапусти сервис",
             }
         )
     else:
-        checks.append({"name": "Runtime config", "state": "ok", "detail": "ok", "hint": ""})
+        checks.append({"name": "Конфигурация", "state": "ok", "detail": "готово", "hint": ""})
 
     db_info = await db_health_info()
     if db_info.get("is_healthy"):
-        checks.append({"name": "DB", "state": "ok", "detail": "ok", "hint": ""})
+        checks.append({"name": "База данных", "state": "ok", "detail": "готово", "hint": ""})
     else:
         checks.append(
             {
-                "name": "DB",
+                "name": "База данных",
                 "state": "failed",
-                "detail": "schema/db is not ready",
+                "detail": "схема БД не готова",
                 "hint": "проверь БД вручную: init/migrations/права",
             }
         )
 
     try:
         await check_awg_container()
-        checks.append({"name": "AWG target", "state": "ok", "detail": "reachable", "hint": ""})
+        checks.append({"name": "Подключение к AWG", "state": "ok", "detail": "доступно", "hint": ""})
     except Exception as e:
         checks.append(
             {
-                "name": "AWG target",
+                "name": "Подключение к AWG",
                 "state": "failed",
-                "detail": f"failed ({str(e)[:120]})",
+                "detail": f"ошибка ({str(e)[:120]})",
                 "hint": _hint_for_awg_target_error(str(e)),
             }
         )
@@ -413,10 +413,10 @@ async def run_runtime_smokecheck() -> dict[str, object]:
         if policy_error:
             detail = policy_error
             if "parse failed:" in policy_error:
-                detail = "helper policy parse failed (invalid JSON)"
+                detail = "ошибка чтения политики helper (неверный JSON)"
             checks.append(
                 {
-                    "name": "Helper policy",
+                    "name": "Политика helper",
                     "state": "failed",
                     "detail": detail,
                     "hint": _hint_for_helper_policy_error(policy_error),
@@ -425,14 +425,14 @@ async def run_runtime_smokecheck() -> dict[str, object]:
         elif policy_container != DOCKER_CONTAINER or policy_interface != WG_INTERFACE:
             checks.append(
                 {
-                    "name": "Helper policy",
+                    "name": "Политика helper",
                     "state": "warning",
-                    "detail": f"mismatch env={DOCKER_CONTAINER}/{WG_INTERFACE} policy={policy_container}/{policy_interface}",
-                    "hint": "синхронизируй helper policy с .env",
+                    "detail": f"расхождение: env={DOCKER_CONTAINER}/{WG_INTERFACE}, policy={policy_container}/{policy_interface}",
+                    "hint": "синхронизируй политику helper с .env",
                 }
             )
         else:
-            checks.append({"name": "Helper policy", "state": "ok", "detail": "ok", "hint": ""})
+            checks.append({"name": "Политика helper", "state": "ok", "detail": "готово", "hint": ""})
 
     failed = [c for c in checks if c["state"] == "failed"]
     warnings = [c for c in checks if c["state"] == "warning"]
@@ -457,7 +457,7 @@ async def build_runtime_smokecheck_text() -> str:
     overall = str(report["overall"])
     overall_label = {"ok": "ГОТОВО", "warning": "ЧАСТИЧНО", "failed": "ОШИБКА"}.get(overall, "НЕИЗВЕСТНО")
     lines = [
-        "🧪 <b>Проверка selfhost</b>",
+        "🧪 <b>Проверка готовности</b>",
         "",
         f"Итог: <b>{overall_label}</b>",
     ]
@@ -483,29 +483,29 @@ async def build_health_text() -> str:
     qos_strict = int(await get_setting("QOS_STRICT", int) or 0)
     return (
         "🩺 <b>Отчёт о состоянии</b>\n\n"
-        f"jobs.received=<b>{stats['received']}</b>\n"
-        f"jobs.provisioning=<b>{stats['provisioning']}</b>\n"
-        f"jobs.needs_repair=<b>{stats['needs_repair']}</b>\n"
-        f"jobs.stuck_manual=<b>{stats['stuck_manual']}</b>\n"
-        f"recovery_lag_sec=<b>{lag}</b>\n"
-        f"awg_helper_failures=<b>{helper_failures}</b>\n"
-        f"qos_enabled=<b>{qos_enabled}</b> strict=<b>{qos_strict}</b>\n"
-        f"qos_errors=<b>{policy_stats['qos_errors']}</b>\n"
-        f"qos_last_sync_ok=<b>{policy_stats['qos_last_sync_ok']}</b>\n"
-        f"denylist_enabled=<b>{denylist_enabled}</b> mode=<b>{denylist_mode}</b>\n"
-        f"denylist_errors=<b>{policy_stats['denylist_errors']}</b>\n"
-        f"denylist_last_sync_ok=<b>{policy_stats['denylist_last_sync_ok']}</b>\n"
-        f"denylist_last_sync_ts=<b>{policy_stats['denylist_last_sync_ts']}</b>\n"
-        f"denylist_entries=<b>{policy_stats['denylist_entries']}</b>\n"
-        f"rate_limit_dropped_total=<b>{rate_drop_total}</b>\n"
-        f"rate_limit_dropped_message=<b>{rate_drop_message}</b>\n"
-        f"rate_limit_dropped_callback=<b>{rate_drop_callback}</b>\n"
-        f"rate_limit_active_buckets=<b>{rate_buckets}</b>"
+        f"Получено задач: <b>{stats['received']}</b>\n"
+        f"Задач в выпуске: <b>{stats['provisioning']}</b>\n"
+        f"Требуют проверки: <b>{stats['needs_repair']}</b>\n"
+        f"Застряли на ручной обработке: <b>{stats['stuck_manual']}</b>\n"
+        f"Задержка восстановления: <b>{lag}</b>\n"
+        f"Ошибки helper-сервиса: <b>{helper_failures}</b>\n"
+        f"QoS: <b>{qos_enabled}</b> · строгий режим: <b>{qos_strict}</b>\n"
+        f"Ошибки QoS: <b>{policy_stats['qos_errors']}</b>\n"
+        f"Последняя синхронизация QoS: <b>{policy_stats['qos_last_sync_ok']}</b>\n"
+        f"denylist: <b>{denylist_enabled}</b> · режим: <b>{denylist_mode}</b>\n"
+        f"Ошибки denylist: <b>{policy_stats['denylist_errors']}</b>\n"
+        f"Последняя синхронизация denylist: <b>{policy_stats['denylist_last_sync_ok']}</b>\n"
+        f"Время последней синхронизации denylist: <b>{policy_stats['denylist_last_sync_ts']}</b>\n"
+        f"Записей в denylist: <b>{policy_stats['denylist_entries']}</b>\n"
+        f"Ограничение запросов: отклонено всего: <b>{rate_drop_total}</b>\n"
+        f"Ограничение запросов: отклонено сообщений: <b>{rate_drop_message}</b>\n"
+        f"Ограничение запросов: отклонено кнопок: <b>{rate_drop_callback}</b>\n"
+        f"Ограничение запросов: активные корзины: <b>{rate_buckets}</b>"
     )
 
 
 def _bool_on_off(value: int | bool) -> str:
-    return "ON" if int(value) == 1 else "OFF"
+    return "включено" if int(value) == 1 else "выключено"
 
 
 async def _render_network_policy_text() -> str:
@@ -524,12 +524,12 @@ async def _render_network_policy_text() -> str:
         f"Denylist: <b>{_bool_on_off(deny_enabled)}</b>\n"
         f"Режим denylist: <b>{escape_html(deny_mode)}</b>\n"
         f"Интервал обновления denylist: <b>{deny_refresh} мин</b>\n\n"
-        f"qos_last_sync_ok: <b>{policy_stats['qos_last_sync_ok']}</b>\n"
-        f"qos_errors: <b>{policy_stats['qos_errors']}</b>\n"
-        f"denylist_last_sync_ok: <b>{policy_stats['denylist_last_sync_ok']}</b>\n"
-        f"denylist_last_sync_ts: <b>{policy_stats['denylist_last_sync_ts']}</b>\n"
-        f"denylist_entries: <b>{policy_stats['denylist_entries']}</b>\n"
-        f"denylist_errors: <b>{policy_stats['denylist_errors']}</b>"
+        f"Последняя синхронизация QoS: <b>{policy_stats['qos_last_sync_ok']}</b>\n"
+        f"Ошибки QoS: <b>{policy_stats['qos_errors']}</b>\n"
+        f"Последняя синхронизация denylist: <b>{policy_stats['denylist_last_sync_ok']}</b>\n"
+        f"Время последней синхронизации denylist: <b>{policy_stats['denylist_last_sync_ts']}</b>\n"
+        f"Записей в denylist: <b>{policy_stats['denylist_entries']}</b>\n"
+        f"Ошибки denylist: <b>{policy_stats['denylist_errors']}</b>"
     )
 
 
@@ -684,7 +684,7 @@ def _operator_next_step(payment_status: str | None, activation_status: str | Non
     if payment_status in {"stuck_manual", "failed"} or activation_status in {"stuck_manual", "failed", "needs_repair"}:
         return "проверить: аудит + при необходимости выдать вручную"
     if payment_status in {"needs_repair", "provisioning", "received"} or activation_status in {"payment_received", "provisioning", "ready_config_pending"}:
-        return "синхронизация/ожидание: дождаться recovery, затем обновить карточку"
+        return "синхронизация/ожидание: дождаться восстановления, затем обновить карточку"
     if payment_status == "applied" and not has_keys:
         return "ручная выдача: подписка активна, но ключа нет"
     return "ожидание/синхронизация: обновить карточку после /sync_awg"
@@ -796,12 +796,12 @@ def _render_payment_lookup_text(payment_summary: dict) -> str:
     return (
         "💳 <b>Платёж</b>\n\n"
         f"🆔 user_id: <code>{int(payment_summary.get('user_id') or 0)}</code>\n"
-        f"🧾 telegram_payment_charge_id: <code>{escape_html(str(payment_summary.get('payment_id') or '—'))}</code>\n"
-        f"📌 status: <b>{escape_html(str(payment_summary.get('status') or '—'))}</b>\n"
-        f"💰 amount: <b>{payment_summary.get('amount')} {escape_html(str(payment_summary.get('currency') or '—'))}</b>\n"
-        f"📦 payload: <code>{escape_html(str(payment_summary.get('payload') or '—'))}</code>\n"
-        f"🕒 created_at: <code>{escape_html(str(payment_summary.get('created_at') or '—'))}</code>\n"
-        f"🚦 last_provision_status: <b>{escape_html(str(payment_summary.get('last_provision_status') or '—'))}</b>"
+        f"🧾 Charge ID: <code>{escape_html(str(payment_summary.get('payment_id') or '—'))}</code>\n"
+        f"📌 Статус: <b>{escape_html(str(payment_summary.get('status') or '—'))}</b>\n"
+        f"💰 Сумма: <b>{payment_summary.get('amount')} {escape_html(str(payment_summary.get('currency') or '—'))}</b>\n"
+        f"📦 Данные платежа: <code>{escape_html(str(payment_summary.get('payload') or '—'))}</code>\n"
+        f"🕒 Создан: <code>{escape_html(str(payment_summary.get('created_at') or '—'))}</code>\n"
+        f"🚦 Статус активации: <b>{escape_html(str(payment_summary.get('last_provision_status') or '—'))}</b>"
     )
 
 
@@ -844,6 +844,9 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
     retry_hint = "\n🧰 Повтор активации: <b>доступен</b> для ручного запуска" if show_retry_activation else ""
     activity_lines = await _build_admin_device_activity_lines(uid)
     traffic_lines = await _build_admin_device_traffic_lines(uid)
+    activity_text = "\n".join(activity_lines)
+    traffic_text = "\n".join(traffic_lines)
+    speed_text = "\n".join(speed_lines)
     await target_message.answer(
         (
             "🛠 <b>Управление пользователем</b>\n\n"
@@ -857,15 +860,15 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
             f"🚦 Активация: <b>{activation_line}</b>\n"
             f"🧾 Charge ID: <code>{escape_html(charge_id)}</code>\n"
             "↩️ Возврат: обрабатывается оператором вручную по user_id и telegram_payment_charge_id.\n"
-            "Автоматический refund flow в selfhost MVP пока не реализован.\n"
+            "Автоматический сценарий возврата в selfhost MVP пока не реализован.\n"
             f"➡️ Шаг оператора: <b>{operator_step}</b>\n"
             f"🎁 Рефералы: приглашено {referral['invited_count']} · с бонусом {referral['rewarded_count']}\n\n"
             "📶 Активность устройств:\n"
-            f"{'\n'.join(activity_lines)}\n\n"
+            f"{activity_text}\n\n"
             "📊 Трафик:\n"
-            f"{'\n'.join(traffic_lines)}"
+            f"{traffic_text}"
             "\n\n📶 Ограничение скорости:\n"
-            f"{'\n'.join(speed_lines)}"
+            f"{speed_text}"
             f"{retry_hint}"
         ),
         parse_mode="HTML",
@@ -942,7 +945,7 @@ async def admin_payments_find_charge_start(cb: types.CallbackQuery):
         return
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY, {"action": PAYMENT_CHARGE_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите telegram_payment_charge_id")
+    await cb.message.answer("Введите Charge ID платежа")
     await cb.answer()
 
 
@@ -1100,7 +1103,7 @@ async def admin_network_policy_screen(cb: types.CallbackQuery):
 async def admin_network_policy_qos_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await cb.message.answer("📶 <b>QoS настройки</b>", parse_mode="HTML", reply_markup=get_admin_qos_kb())
+    await cb.message.answer("📶 <b>Настройки QoS</b>", parse_mode="HTML", reply_markup=get_admin_qos_kb())
     await cb.answer()
 
 
@@ -1108,7 +1111,7 @@ async def admin_network_policy_qos_screen(cb: types.CallbackQuery):
 async def admin_network_policy_denylist_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await cb.message.answer("🛡 <b>Denylist настройки</b>", parse_mode="HTML", reply_markup=get_admin_denylist_kb())
+    await cb.message.answer("🛡 <b>Настройки denylist</b>", parse_mode="HTML", reply_markup=get_admin_denylist_kb())
     await cb.answer()
 
 
@@ -1119,7 +1122,7 @@ async def admin_network_policy_sync_now(cb: types.CallbackQuery):
     await sync_qos_state()
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_network_policy_sync", "manual_sync=1")
-    await cb.message.answer("✅ QoS и denylist синхронизированы.")
+    await cb.message.answer("✅ Синхронизация QoS и denylist выполнена.")
     await cb.answer("Готово")
 
 
@@ -1132,7 +1135,7 @@ async def admin_qos_toggle(cb: types.CallbackQuery):
     await set_app_setting("QOS_ENABLED", new_value, updated_by=ADMIN_ID)
     await sync_qos_state()
     await write_audit_log(ADMIN_ID, "admin_qos_enabled_set", f"value={new_value}")
-    await cb.message.answer(f"✅ QoS: {_bool_on_off(int(new_value))}")
+    await cb.message.answer(f"✅ QoS: {_bool_on_off(int(new_value))}.")
     await cb.answer()
 
 
@@ -1144,7 +1147,7 @@ async def admin_qos_strict_toggle(cb: types.CallbackQuery):
     new_value = "0" if strict == 1 else "1"
     await set_app_setting("QOS_STRICT", new_value, updated_by=ADMIN_ID)
     await write_audit_log(ADMIN_ID, "admin_qos_strict_set", f"value={new_value}")
-    await cb.message.answer(f"✅ Строгий режим QoS: {_bool_on_off(int(new_value))}")
+    await cb.message.answer(f"✅ Строгий режим QoS: {_bool_on_off(int(new_value))}.")
     await cb.answer()
 
 
@@ -1154,7 +1157,7 @@ async def admin_qos_default_rate_start(cb: types.CallbackQuery):
         return
     current = int(await get_setting("DEFAULT_KEY_RATE_MBIT", int) or 150)
     await set_pending_admin_action(ADMIN_ID, QOS_DEFAULT_RATE_INPUT_ACTION_KEY, {"action": QOS_DEFAULT_RATE_INPUT_ACTION_KEY})
-    await cb.message.answer(f"Введите default скорость в Mbit/s (целое > 0). Текущее: {current}")
+    await cb.message.answer(f"Введите скорость по умолчанию в Mbit/s (целое > 0). Текущее: {current}")
     await cb.answer()
 
 
@@ -1164,7 +1167,7 @@ async def admin_qos_sync_now(cb: types.CallbackQuery):
         return
     await sync_qos_state()
     await write_audit_log(ADMIN_ID, "admin_qos_sync", "manual_sync=1")
-    await cb.message.answer("✅ QoS sync выполнен.")
+    await cb.message.answer("✅ Синхронизация QoS выполнена.")
     await cb.answer("Готово")
 
 
@@ -1178,7 +1181,7 @@ async def admin_denylist_toggle(cb: types.CallbackQuery):
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_denylist_enabled_set", f"value={new_value}")
     await cb.message.answer(
-        "✅ Denylist обновлён. Это selfhost hygiene для снижения abuse-risk и минимизации risky destinations."
+        f"✅ denylist: {_bool_on_off(int(new_value))}. Синхронизация выполнена."
     )
     await cb.answer()
 
@@ -1191,7 +1194,7 @@ async def admin_denylist_mode_set(cb: types.CallbackQuery):
     await set_app_setting("EGRESS_DENYLIST_MODE", mode, updated_by=ADMIN_ID)
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_denylist_mode_set", f"value={mode}")
-    await cb.message.answer(f"✅ Режим Denylist: {mode}")
+    await cb.message.answer(f"✅ Режим denylist: {mode}.")
     await cb.answer()
 
 
@@ -1222,7 +1225,7 @@ async def admin_denylist_replace_domains_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await set_pending_admin_action(ADMIN_ID, DENYLIST_DOMAINS_INPUT_ACTION_KEY, {"action": DENYLIST_DOMAINS_INPUT_ACTION_KEY})
-    await cb.message.answer("Отправьте domains списком: один домен на строку.")
+    await cb.message.answer("Отправьте список доменов: один домен на строку.")
     await cb.answer()
 
 
@@ -1241,7 +1244,7 @@ async def admin_denylist_sync_now(cb: types.CallbackQuery):
         return
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_denylist_sync", "manual_sync=1")
-    await cb.message.answer("✅ Denylist sync выполнен.")
+    await cb.message.answer("✅ Синхронизация denylist выполнена.")
     await cb.answer("Готово")
 
 @router.callback_query(F.data == CB_ADMIN_LIST)
@@ -1367,14 +1370,14 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
         uid = int(uid_raw)
         page = int(page_raw)
         if admin_command_limited(f"admin_retry_activation_{uid}", cb.from_user.id):
-            await cb.answer("Слишком часто: подождите перед новым retry.", show_alert=True)
+            await cb.answer("Слишком часто: подождите перед повтором активации.", show_alert=True)
             return
 
         payment_summary = await get_latest_user_payment_summary(uid)
         if not payment_summary:
             await write_audit_log(ADMIN_ID, "manual_retry_noop", f"target={uid}; reason=no_payment")
             await cb.message.answer(
-                "ℹ️ Нет платежей для retry. Нечего повторно активировать.",
+                "ℹ️ Нет платежей для повтора активации. Нечего запускать повторно.",
                 reply_markup=_user_manage_kb(uid, page),
             )
             await cb.answer("Нечего повторять")
@@ -1399,10 +1402,10 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
             (
                 f"{outcome}\n\n"
                 f"🆔 <code>{uid}</code>\n"
-                f"💳 payment_id: <code>{payment_id}</code>\n"
+                f"💳 Charge ID: <code>{payment_id}</code>\n"
                 f"🧩 Результат: <b>{escape_html(result_code)}</b>\n"
                 f"📝 Детали: {escape_html(result_message)}\n\n"
-                "Следующий шаг: обновите карточку; если статус не меняется — проверьте audit и выдайте доступ вручную."
+                "Следующий шаг: обновите карточку; если статус не меняется — проверьте журнал и выдайте доступ вручную."
             ),
             parse_mode="HTML",
             reply_markup=_user_manage_kb(uid, page),
@@ -1413,7 +1416,7 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
     except Exception as e:
         logger.exception("Ошибка admin_retry_activation_btn: %s", e)
         await write_audit_log(ADMIN_ID, "manual_retry_failed", f"error={str(e)[:300]}")
-        await cb.answer("❌ Не удалось выполнить retry", show_alert=True)
+        await cb.answer("❌ Не удалось повторить активацию", show_alert=True)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_DEVICE_DELETE_PREFIX))
@@ -1474,8 +1477,8 @@ async def confirm_device_delete(cb: types.CallbackQuery):
                 (
                     "ℹ️ <b>Устройство уже отсутствует</b>\n\n"
                     f"🆔 <code>{uid}</code>\n"
-                    f"📱 Device: <b>{device_num}</b>\n\n"
-                    "Обновите карточку пользователя и проверьте activity/runtime."
+                    f"📱 Устройство: <b>{device_num}</b>\n\n"
+                    "Обновите карточку пользователя и проверьте активность/состояние."
                 ),
                 parse_mode="HTML",
                 reply_markup=_user_manage_kb(uid, page),
@@ -1486,8 +1489,8 @@ async def confirm_device_delete(cb: types.CallbackQuery):
             (
                 "✅ <b>Устройство удалено</b>\n\n"
                 f"🆔 <code>{uid}</code>\n"
-                f"📱 Device: <b>{device_num}</b>\n\n"
-                "Дальше: обновите карточку; если не помогло — проверьте activity/runtime."
+                f"📱 Устройство: <b>{device_num}</b>\n\n"
+                "Дальше: обновите карточку; если не помогло — проверьте активность/состояние."
             ),
             parse_mode="HTML",
             reply_markup=_user_manage_kb(uid, page),
@@ -1562,7 +1565,7 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
                 (
                     "ℹ️ <b>Перевыпуск не требуется</b>\n\n"
                     f"🆔 <code>{uid}</code>\n"
-                    f"📱 Device: <b>{device_num}</b>\n\n"
+                    f"📱 Устройство: <b>{device_num}</b>\n\n"
                     "Устройство уже отсутствует. Обновите карточку пользователя."
                 ),
                 parse_mode="HTML",
@@ -1574,9 +1577,9 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
             (
                 "♻️ <b>Конфиг устройства перевыпущен</b>\n\n"
                 f"🆔 <code>{uid}</code>\n"
-                f"📱 Device: <b>{device_num}</b>\n\n"
-                "Дальше: отправьте пользователю новый конфиг через existing flow «Подключение». "
-                "Если не помогло — проверьте activity/runtime."
+                f"📱 Устройство: <b>{device_num}</b>\n\n"
+                "Дальше: отправьте пользователю новый конфиг через стандартный сценарий «Подключение». "
+                "Если не помогло — проверьте активность/состояние."
             ),
             parse_mode="HTML",
             reply_markup=_user_manage_kb(uid, page),
@@ -2070,7 +2073,7 @@ async def admin_payment_lookup_capture_input(message: types.Message):
 
     if charge_pending:
         if not raw:
-            await message.answer("Charge ID пустой.")
+            await message.answer("Charge ID не указан.")
             return
         await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
         payment_summary = await get_payment_summary_by_charge_id(raw)
@@ -2649,7 +2652,7 @@ async def qos_status_cmd(message: types.Message):
             f"Включено: {_bool_on_off(qos_enabled)}\n"
             f"Скорость по умолчанию: {default_rate} Mbit/s\n"
             f"Строгий режим: {_bool_on_off(qos_strict)}\n"
-            f"Последний sync OK: {metrics['qos_last_sync_ok']}\n"
+            f"Последняя синхронизация QoS: {metrics['qos_last_sync_ok']}\n"
             f"Ошибки: {metrics['qos_errors']}"
         ),
         parse_mode="HTML",
@@ -2670,8 +2673,8 @@ async def denylist_status_cmd(message: types.Message):
             f"Включено: {_bool_on_off(enabled)}\n"
             f"Режим: {escape_html(mode)}\n"
             f"Обновление: {refresh_minutes} мин\n"
-            f"Последний sync OK: {metrics['denylist_last_sync_ok']}\n"
-            f"Последний sync TS: {metrics['denylist_last_sync_ts']}\n"
+            f"Последняя синхронизация denylist: {metrics['denylist_last_sync_ok']}\n"
+            f"Время последней синхронизации denylist: {metrics['denylist_last_sync_ts']}\n"
             f"Записей: {metrics['denylist_entries']}\n"
             f"Ошибки: {metrics['denylist_errors']}"
         ),
@@ -2685,7 +2688,7 @@ async def denylist_sync_cmd(message: types.Message):
     await _clear_service_settings_pending()
     await denylist_sync(run_docker)
     await write_audit_log(message.from_user.id, "admin_denylist_sync", "manual_sync=1")
-    await message.answer("✅ denylist sync выполнен.")
+    await message.answer("✅ Синхронизация denylist выполнена.")
 
 
 @router.message(Command("ref_stats"), IsAdmin())
