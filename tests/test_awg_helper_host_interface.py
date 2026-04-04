@@ -71,3 +71,5 @@ def test_installer_policy_writer_includes_host_interface_field():
 
     assert '"host_interface": "${host_interface}"' in script
     assert 'host_interface="$(get_env_value WG_HOST_INTERFACE)"' in script
+    assert "detect_host_qos_interface" in script
+    assert "WG_HOST_INTERFACE (хост для tc/QoS)" in script

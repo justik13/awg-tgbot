@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "bot"))
 
 import handlers_admin
 import network_policy
-from keyboards import get_admin_inline_kb
+from keyboards import get_admin_denylist_kb, get_admin_inline_kb, get_admin_qos_kb
 
 
 def _cb(data: str):
@@ -40,6 +40,21 @@ def test_admin_keyboard_has_button_first_sections():
     assert "🌐 Сеть" in texts
     assert "⚙️ Настройки сервиса" in texts
     assert "📝 Тексты" in texts
+
+
+def test_network_policy_keyboards_have_explicit_labels():
+    qos_kb = get_admin_qos_kb(qos_enabled=1, qos_strict=0, default_rate_mbit=150)
+    qos_texts = [button.text for row in qos_kb.inline_keyboard for button in row]
+    assert "QoS: ВКЛ" in qos_texts
+    assert "Strict: ВЫКЛ" in qos_texts
+    assert "Скорость: 150 Mbit/s" in qos_texts
+    assert "🔄 Синхронизировать QoS" in qos_texts
+
+    deny_kb = get_admin_denylist_kb(denylist_enabled=0, denylist_mode="soft")
+    deny_texts = [button.text for row in deny_kb.inline_keyboard for button in row]
+    assert "Denylist: ВЫКЛ" in deny_texts
+    assert "Режим denylist: soft" in deny_texts
+    assert "🔄 Синхронизировать denylist" in deny_texts
 
 
 def test_payment_lookup_by_charge_uses_trim_and_shows_jump(monkeypatch):
@@ -99,12 +114,17 @@ def test_network_policy_screen_renders_state(monkeypatch):
         "denylist_last_sync_ts": 123,
         "denylist_entries": 5,
     }))
+    monkeypatch.setattr(handlers_admin, "DOCKER_CONTAINER", "amnezia-awg2")
+    monkeypatch.setattr(handlers_admin, "WG_INTERFACE", "awg0")
+    monkeypatch.setattr(handlers_admin, "WG_HOST_INTERFACE", "amn0")
     monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[1, 150, 0, 1, "soft", 30]))
     text = asyncio.run(handlers_admin._render_network_policy_text())
     assert "QoS: <b>включено</b>" in text
     assert "Скорость по умолчанию: <b>150 Mbit/s</b>" in text
     assert "Режим denylist: <b>soft</b>" in text
     assert "Последняя синхронизация QoS: <b>1</b>" in text
+    assert "AWG: <b>amnezia-awg2 / awg0</b>" in text
+    assert "QoS host-интерфейс: <b>amn0</b>" in text
 
 
 def test_service_settings_support_and_download_update(monkeypatch):
@@ -242,14 +262,39 @@ def test_qos_status_command_clears_both_pending_and_uses_polished_wording(monkey
     monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
     monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
     monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[1, 150, 0]))
-    monkeypatch.setattr(handlers_admin, "policy_metrics", AsyncMock(return_value={"qos_last_sync_ok": 1, "qos_errors": 0}))
+    monkeypatch.setattr(handlers_admin, "policy_metrics", AsyncMock(return_value={"qos_last_sync_ok": 0, "qos_errors": 0}))
     asyncio.run(handlers_admin.qos_status_cmd(message))
     handlers_admin._clear_service_settings_pending.assert_awaited_once()
     handlers_admin._clear_network_policy_pending.assert_awaited_once()
     rendered = message.answer.await_args.args[0]
     assert "Скорость по умолчанию: 150 Mbit/s" in rendered
     assert "Включено: включено" in rendered
-    assert "Последняя синхронизация QoS: 1" in rendered
+    assert "Последняя синхронизация QoS: не было" in rendered
+
+
+def test_network_policy_screen_shows_warning_and_ne_bilo(monkeypatch):
+    monkeypatch.setattr(
+        handlers_admin,
+        "policy_metrics",
+        AsyncMock(
+            return_value={
+                "qos_errors": 2,
+                "denylist_errors": 0,
+                "qos_last_sync_ok": 0,
+                "denylist_last_sync_ok": 0,
+                "denylist_last_sync_ts": 0,
+                "denylist_entries": 0,
+            }
+        ),
+    )
+    monkeypatch.setattr(handlers_admin, "DOCKER_CONTAINER", "amnezia-awg2")
+    monkeypatch.setattr(handlers_admin, "WG_INTERFACE", "awg0")
+    monkeypatch.setattr(handlers_admin, "WG_HOST_INTERFACE", "amn0")
+    monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[1, 150, 0, 0, "soft", 30]))
+    text = asyncio.run(handlers_admin._render_network_policy_text())
+    assert "⚠️ QoS сейчас не применяется" in text
+    assert "Denylist выключен — синхронизация не выполняется" in text
+    assert "Последняя синхронизация denylist: <b>не было</b>" in text
 
 
 def test_health_text_uses_readable_russian_labels(monkeypatch):
