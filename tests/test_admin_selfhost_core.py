@@ -34,7 +34,7 @@ def test_admin_keyboard_has_button_first_sections():
     kb = get_admin_inline_kb()
     texts = [button.text for row in kb.inline_keyboard for button in row]
     assert "💳 Платежи" in texts
-    assert "🟠 Maintenance" in texts
+    assert "🟠 Техработы" in texts
     assert "🩺 Состояние" in texts
     assert "🎟 Промокоды" in texts
     assert "🌐 Сеть" in texts
@@ -80,6 +80,7 @@ def test_maintenance_toggle_buttons(monkeypatch):
 def test_findpay_slash_fallback(monkeypatch):
     message = _msg("/findpay tg-2")
     monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
     monkeypatch.setattr(
         handlers_admin,
         "get_payment_summary_by_charge_id",
@@ -235,15 +236,17 @@ def test_top_level_slash_commands_clear_service_pending(monkeypatch):
     handlers_admin._clear_service_settings_pending.assert_awaited()
 
 
-def test_qos_status_command_clears_service_pending_and_uses_polished_wording(monkeypatch):
+def test_qos_status_command_clears_both_pending_and_uses_polished_wording(monkeypatch):
     message = _msg("/qos_status")
     monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
     monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[1, 150, 0]))
     monkeypatch.setattr(handlers_admin, "policy_metrics", AsyncMock(return_value={"qos_last_sync_ok": 1, "qos_errors": 0}))
     asyncio.run(handlers_admin.qos_status_cmd(message))
     handlers_admin._clear_service_settings_pending.assert_awaited_once()
+    handlers_admin._clear_network_policy_pending.assert_awaited_once()
     rendered = message.answer.await_args.args[0]
-    assert "по_умолчанию=150 Mbit/s" in rendered
+    assert "Скорость по умолчанию: 150 Mbit/s" in rendered
 
 
 def test_denylist_domains_and_cidrs_input(monkeypatch):
@@ -328,3 +331,50 @@ def test_support_username_validation():
     assert handlers_admin._normalize_support_username("goodname") == "@goodname"
     assert handlers_admin._normalize_support_username("bad name") == ""
     assert handlers_admin._normalize_support_username("@bad-name") == ""
+
+
+def test_required_admin_slash_commands_clear_network_policy_pending(monkeypatch):
+    handlers = [
+        (handlers_admin.list_users_cmd, (_msg("/users"),)),
+        (handlers_admin.find_user_cmd, (_msg("/finduser"), CommandObject(prefix="/", command="finduser", mention=None, args=""))),
+        (handlers_admin.payinfo_cmd, (_msg("/payinfo"), CommandObject(prefix="/", command="payinfo", mention=None, args=""))),
+        (handlers_admin.findpay_cmd, (_msg("/findpay"), CommandObject(prefix="/", command="findpay", mention=None, args=""))),
+        (handlers_admin.audit_cmd, (_msg("/audit"), CommandObject(prefix="/", command="audit", mention=None, args=""))),
+        (handlers_admin.maintenance_status_cmd, (_msg("/maintenance_status"),)),
+        (handlers_admin.maintenance_on_cmd, (_msg("/maintenance_on"),)),
+        (handlers_admin.maintenance_off_cmd, (_msg("/maintenance_off"),)),
+        (handlers_admin.qos_status_cmd, (_msg("/qos_status"),)),
+        (handlers_admin.denylist_status_cmd, (_msg("/denylist_status"),)),
+        (handlers_admin.denylist_sync_cmd, (_msg("/denylist_sync"),)),
+    ]
+
+    for fn, args in handlers:
+        monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+        monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+        monkeypatch.setattr(handlers_admin, "fetchall", AsyncMock(return_value=[]))
+        monkeypatch.setattr(handlers_admin, "get_recent_audit", AsyncMock(return_value=[]))
+        monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(return_value=0))
+        monkeypatch.setattr(handlers_admin, "policy_metrics", AsyncMock(return_value={
+            "qos_last_sync_ok": 1, "qos_errors": 0, "denylist_last_sync_ok": 1,
+            "denylist_last_sync_ts": 0, "denylist_entries": 0, "denylist_errors": 0,
+        }))
+        monkeypatch.setattr(handlers_admin, "denylist_sync", AsyncMock())
+        monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
+        monkeypatch.setattr(handlers_admin, "set_app_setting", AsyncMock())
+        asyncio.run(fn(*args))
+        handlers_admin._clear_network_policy_pending.assert_awaited_once()
+        handlers_admin._clear_service_settings_pending.assert_awaited_once()
+
+
+def test_callback_answers_and_maintenance_messages_are_polished(monkeypatch):
+    cb_sync = _cb(handlers_admin.CB_ADMIN_QOS_SYNC)
+    monkeypatch.setattr(handlers_admin, "sync_qos_state", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
+    asyncio.run(handlers_admin.admin_qos_sync_now(cb_sync))
+    cb_sync.answer.assert_awaited_once_with("Готово")
+
+    cb_on = _cb(handlers_admin.CB_ADMIN_MAINTENANCE_ON)
+    monkeypatch.setattr(handlers_admin, "set_app_setting", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
+    asyncio.run(handlers_admin.admin_maintenance_on_cb(cb_on))
+    assert "Техработы включены" in cb_on.message.answer.await_args.args[0]

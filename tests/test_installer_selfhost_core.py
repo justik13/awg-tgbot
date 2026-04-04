@@ -116,3 +116,17 @@ def test_readme_contains_owner_operator_sections():
 def test_remove_confirmation_mentions_backups():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "оставив БД, .env и локальные backup-архивы?" in script
+
+
+def test_remove_menu_line_mentions_local_backup_archives():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "Обычное удаление (сохранить БД, .env и локальные backup-архивы)" in script
+
+
+def test_ci_workflow_exists_and_runs_pytest_on_push_and_pr():
+    workflow = Path(".github/workflows/ci.yml")
+    assert workflow.exists()
+    body = workflow.read_text(encoding="utf-8")
+    assert "push:" in body
+    assert "pull_request:" in body
+    assert "pytest" in body

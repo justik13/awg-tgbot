@@ -124,7 +124,10 @@ TEXT_DEFAULTS: dict[str, str] = {
 }
 
 TEXT_REQUIRED_PLACEHOLDERS: dict[str, set[str]] = {
+    "start": set(),
     "support_contact": {"support_username"},
+    "buy_menu": {"configs_per_user", "price_lines"},
+    "renew_menu": {"remaining", "price_lines"},
 }
 
 SETTING_DEFAULTS: dict[str, Any] = {
