@@ -61,6 +61,16 @@ def test_deploy_rollback_preserves_scripts_and_packaging():
     assert '[[ -d "$backup_dir/packaging" ]] && mv "$backup_dir/packaging" "$INSTALL_DIR/packaging"' in script
 
 
+def test_deploy_optional_copy_and_chmod_use_grouped_conditions_not_invalid_test_syntax():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert '{ [[ ! -d "$src_dir/scripts" ]] || cp -a "$src_dir/scripts" "$INSTALL_DIR/scripts"; }' in script
+    assert '{ [[ ! -d "$src_dir/packaging" ]] || cp -a "$src_dir/packaging" "$INSTALL_DIR/packaging"; }' in script
+    assert '{ [[ ! -f "$AUTO_BACKUP_SCRIPT" ]] || chmod +x "$AUTO_BACKUP_SCRIPT"; }' in script
+    assert '[[ ! -d "$src_dir/scripts" || cp -a "$src_dir/scripts" "$INSTALL_DIR/scripts" ]]' not in script
+    assert '[[ ! -d "$src_dir/packaging" || cp -a "$src_dir/packaging" "$INSTALL_DIR/packaging" ]]' not in script
+    assert '[[ ! -f "$AUTO_BACKUP_SCRIPT" || chmod +x "$AUTO_BACKUP_SCRIPT" ]]' not in script
+
+
 def test_installer_does_not_have_unused_autobackup_schedule_setting():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "AUTO_BACKUP_TIMER_ONCALENDAR" not in script
