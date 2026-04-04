@@ -78,6 +78,21 @@ def test_normal_remove_preserves_local_backups_and_full_remove_still_deletes_eve
     assert 'remove_everything' in script
 
 
+def test_normal_remove_snapshots_backups_before_destructive_remove():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    snapshot_pos = script.find('if ! mv "$BACKUP_ROOT" "$backup_stash"; then')
+    remove_pos = script.find("  remove_everything", snapshot_pos)
+    assert snapshot_pos != -1
+    assert remove_pos != -1
+    assert snapshot_pos < remove_pos
+
+
+def test_success_message_for_backup_preservation_is_guarded_by_restore_flags():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'if [[ "$REMOVE_BACKUPS_WERE_PRESENT" == "1" && "$REMOVE_BACKUPS_RESTORED" == "1" ]]; then' in script
+    assert 'ok "Удалено приложение и сервис. Сохранены: БД, .env и локальные backup-архивы."' in script
+
+
 def test_readme_contains_owner_operator_sections():
     readme = Path("README.md").read_text(encoding="utf-8")
     assert "## Что это" in readme
