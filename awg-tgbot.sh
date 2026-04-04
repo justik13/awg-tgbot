@@ -38,9 +38,6 @@ AWG_HELPER_SUDOERS="/etc/sudoers.d/awg-bot-helper"
 AWG_HELPER_POLICY="/etc/awg-bot-helper.json"
 TTY_DEVICE="/dev/tty"
 SELF_SYMLINK="/usr/local/bin/awg-tgbot"
-SELFHOST_QOS_ENABLED_DEFAULT="1"
-SELFHOST_DEFAULT_KEY_RATE_MBIT_DEFAULT="150"
-SELFHOST_QOS_STRICT_DEFAULT="0"
 SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT="1"
 SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT="soft"
 SELFHOST_EGRESS_DENYLIST_REFRESH_MINUTES_DEFAULT="30"
@@ -56,7 +53,6 @@ BACKUP_ROOT="${INSTALL_DIR}/backups"
 
 DETECTED_CONTAINER=""
 DETECTED_INTERFACE=""
-DETECTED_HOST_INTERFACE=""
 DETECTED_CONFIG_PATH=""
 DETECTED_PUBLIC_KEY=""
 DETECTED_LISTEN_PORT=""
@@ -307,16 +303,14 @@ validate_awg_target_values() {
 }
 
 write_awg_helper_policy() {
-  local container="$1" interface="$2" host_interface="${3:-$2}"
+  local container="$1" interface="$2"
   validate_awg_target_values "$container" "$interface"
-  validate_awg_target_values "$container" "$host_interface"
   local tmp
   tmp="$(mktemp)"
   cat > "$tmp" <<POLICY
 {
   "container": "${container}",
   "interface": "${interface}",
-  "host_interface": "${host_interface}"
 }
 POLICY
   install -o root -g "$BOT_USER" -m 640 "$tmp" "$AWG_HELPER_POLICY"
@@ -325,14 +319,13 @@ POLICY
 }
 
 sync_awg_helper_policy_from_env() {
-  local container interface host_interface
+  local container interface
   container="$(get_env_value DOCKER_CONTAINER)"
   interface="$(get_env_value WG_INTERFACE)"
-  host_interface="$(get_env_value WG_HOST_INTERFACE)"
   [[ -n "$container" ]] || die "DOCKER_CONTAINER не задан в ${ENV_FILE}. Синхронизация policy невозможна."
   [[ -n "$interface" ]] || die "WG_INTERFACE не задан в ${ENV_FILE}. Синхронизация policy невозможна."
-  write_awg_helper_policy "$container" "$interface" "${host_interface:-$interface}"
-  ok "Helper policy синхронизирована: ${AWG_HELPER_POLICY} (${container}/${interface}; host=${host_interface:-$interface})"
+  write_awg_helper_policy "$container" "$interface"
+  ok "Helper policy синхронизирована: ${AWG_HELPER_POLICY} (${container}/${interface})"
   return 0
 }
 
@@ -632,35 +625,10 @@ get_public_host() {
   printf '%s' ""
 }
 
-detect_host_qos_interface() {
-  local interface_hint="${1:-}"
-  local names name best="" best_score=-1 score
-  names="$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d'@' -f1 || true)"
-  [[ -n "$names" ]] || return 0
-  while IFS= read -r name; do
-    [[ -n "$name" ]] || continue
-    if [[ "$name" == "lo" || "$name" == "docker0" || "$name" == veth* || "$name" == br-* || "$name" == virbr* ]]; then
-      continue
-    fi
-    score=10
-    [[ "$name" == "$interface_hint" ]] && score=$((score + 5))
-    [[ "$name" =~ ^amn ]] && score=$((score + 80))
-    [[ "$name" =~ ^wg ]] && score=$((score + 70))
-    [[ "$name" == *awg* || "$name" == *wireguard* ]] && score=$((score + 50))
-    [[ "$name" =~ ^(eth|ens|enp|wlan) ]] && score=$((score - 3))
-    if (( score > best_score )); then
-      best="$name"
-      best_score="$score"
-    fi
-  done <<< "$names"
-  printf '%s' "$best"
-}
-
 detect_awg_environment() {
   DETECTED_CONTAINER=""
   DETECTED_INTERFACE=""
-  DETECTED_HOST_INTERFACE=""
-  DETECTED_CONFIG_PATH=""
+    DETECTED_CONFIG_PATH=""
   DETECTED_PUBLIC_KEY=""
   DETECTED_LISTEN_PORT=""
   DETECTED_SERVER_IP=""
@@ -733,7 +701,6 @@ detect_awg_environment() {
   else
     DETECTED_SERVER_IP="$(get_env_value SERVER_IP)"
   fi
-  DETECTED_HOST_INTERFACE="$(pick_existing_or_default "$(get_env_value WG_HOST_INTERFACE)" "$(detect_host_qos_interface "$DETECTED_INTERFACE")")"
 }
 
 print_detected_awg_summary() {
@@ -741,7 +708,6 @@ print_detected_awg_summary() {
   echo "Автоподбор AWG:"
   echo "Контейнер: ${DETECTED_CONTAINER:-не найден}"
   echo "Интерфейс: ${DETECTED_INTERFACE:-не найден}"
-  echo "Хост-интерфейс QoS: ${DETECTED_HOST_INTERFACE:-${DETECTED_INTERFACE:-не найден}}"
   echo "Конфиг: ${DETECTED_CONFIG_PATH:-не найден}"
   echo "Public key: ${DETECTED_PUBLIC_KEY:-не найден}"
   echo "Endpoint: ${DETECTED_SERVER_IP:-не найден}"
@@ -1004,7 +970,7 @@ print_update_status_line() {
 
 
 print_detailed_startup_summary() {
-  local ab_stats ab_latest ab_count env_container env_interface env_host_interface policy_container policy_interface policy_host_interface
+  local ab_stats ab_latest ab_count env_container env_interface policy_container policy_interface
   print_line
   echo "Предварительная проверка:"
   echo "AWG: $(status_found_text "$STATE_AWG_FOUND")"
@@ -1026,17 +992,11 @@ print_detailed_startup_summary() {
   echo ".env: $(status_found_text "$STATE_BOT_ENV_FOUND")"
   env_container="$(get_env_value DOCKER_CONTAINER)"
   env_interface="$(get_env_value WG_INTERFACE)"
-  env_host_interface="$(get_env_value WG_HOST_INTERFACE)"
-  [[ -n "$env_host_interface" ]] || env_host_interface="$env_interface"
   echo "AWG target (.env): ${env_container:-не задан}/${env_interface:-не задан}"
-  echo "QoS host-интерфейс (.env): ${env_host_interface:-не задан}"
   if [[ -f "$AWG_HELPER_POLICY" ]]; then
     policy_container="$(helper_policy_field container)"
     policy_interface="$(helper_policy_field interface)"
-    policy_host_interface="$(helper_policy_field host_interface)"
-    [[ -n "$policy_host_interface" ]] || policy_host_interface="$policy_interface"
     echo "AWG target (helper policy): ${policy_container:-не задан}/${policy_interface:-не задан}"
-    echo "QoS host-интерфейс (helper policy): ${policy_host_interface:-не задан}"
   fi
   echo "Служебное состояние установки: $(status_found_text "$STATE_BOT_STATE_FOUND")"
   ab_stats="$(autobackup_archive_stats)"
@@ -1262,12 +1222,6 @@ write_common_env() {
 
 ensure_selfhost_network_defaults() {
   local current=""
-  current="$(get_env_value QOS_ENABLED)"
-  [[ -n "$current" ]] || set_env_value QOS_ENABLED "$SELFHOST_QOS_ENABLED_DEFAULT"
-  current="$(get_env_value DEFAULT_KEY_RATE_MBIT)"
-  [[ -n "$current" ]] || set_env_value DEFAULT_KEY_RATE_MBIT "$SELFHOST_DEFAULT_KEY_RATE_MBIT_DEFAULT"
-  current="$(get_env_value QOS_STRICT)"
-  [[ -n "$current" ]] || set_env_value QOS_STRICT "$SELFHOST_QOS_STRICT_DEFAULT"
   current="$(get_env_value EGRESS_DENYLIST_ENABLED)"
   [[ -n "$current" ]] || set_env_value EGRESS_DENYLIST_ENABLED "$SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT"
   current="$(get_env_value EGRESS_DENYLIST_MODE)"
@@ -1300,7 +1254,6 @@ autobackup_keep_count() {
 write_detected_awg_env() {
   [[ -n "$DETECTED_CONTAINER" ]] && set_env_value DOCKER_CONTAINER "$DETECTED_CONTAINER"
   [[ -n "$DETECTED_INTERFACE" ]] && set_env_value WG_INTERFACE "$DETECTED_INTERFACE"
-  [[ -n "$DETECTED_HOST_INTERFACE" ]] && set_env_value WG_HOST_INTERFACE "$DETECTED_HOST_INTERFACE"
   [[ -n "$DETECTED_PUBLIC_KEY" ]] && set_env_value SERVER_PUBLIC_KEY "$DETECTED_PUBLIC_KEY"
   [[ -n "$DETECTED_SERVER_IP" ]] && set_env_value SERVER_IP "$DETECTED_SERVER_IP"
   [[ -n "$DETECTED_PUBLIC_HOST" ]] && set_env_value PUBLIC_HOST "$DETECTED_PUBLIC_HOST"
@@ -1331,10 +1284,7 @@ configure_manual_awg_only() {
   default="$(pick_existing_or_default "$(get_env_value WG_INTERFACE)" "$DETECTED_INTERFACE")"
   prompt_with_default 'WG_INTERFACE' "$default" value
   set_env_value WG_INTERFACE "$value"
-  default="$(pick_existing_or_default "$(get_env_value WG_HOST_INTERFACE)" "$DETECTED_HOST_INTERFACE")"
   default="$(pick_existing_or_default "$default" "$(get_env_value WG_INTERFACE)")"
-  prompt_with_default 'WG_HOST_INTERFACE (хост для tc/QoS)' "$default" value
-  set_env_value WG_HOST_INTERFACE "$value"
   default="$(pick_existing_or_default "$(get_env_value SERVER_PUBLIC_KEY)" "$DETECTED_PUBLIC_KEY")"
   prompt_with_default 'SERVER_PUBLIC_KEY' "$default" value
   set_env_value SERVER_PUBLIC_KEY "$value"
@@ -1507,7 +1457,7 @@ stop_service_if_exists() {
 }
 
 show_status() {
-  local active_state enabled_state local_sha branch_info env_state env_container env_interface env_host_interface policy_container policy_interface policy_host_interface policy_host_effective docker_membership
+  local active_state enabled_state local_sha branch_info env_state env_container env_interface policy_container policy_interface docker_membership
   local ab_stats ab_latest ab_count
   local remote_sha
   detect_install_state
@@ -1527,12 +1477,8 @@ show_status() {
   [[ -f "$ENV_FILE" ]] && env_state="есть"
   env_container="$(get_env_value DOCKER_CONTAINER)"
   env_interface="$(get_env_value WG_INTERFACE)"
-  env_host_interface="$(get_env_value WG_HOST_INTERFACE)"
-  [[ -n "$env_host_interface" ]] || env_host_interface="$env_interface"
   policy_container="$(helper_policy_field container)"
   policy_interface="$(helper_policy_field interface)"
-  policy_host_interface="$(helper_policy_field host_interface)"
-  policy_host_effective="${policy_host_interface:-$policy_interface}"
   ab_stats="$(autobackup_archive_stats)"
   ab_latest="${ab_stats%%|*}"
   ab_count="${ab_stats##*|}"
@@ -1562,14 +1508,10 @@ show_status() {
   fi
   echo "${BOT_USER}: ${docker_membership}"
   echo "AWG target (.env): ${env_container:-не задан}/${env_interface:-не задан}"
-  echo "QoS host-интерфейс (.env): ${env_host_interface:-не задан}"
   if [[ -f "$AWG_HELPER_POLICY" ]]; then
     echo "AWG target (helper policy): ${policy_container:-не задан}/${policy_interface:-не задан}"
-    echo "QoS host-интерфейс (helper policy): ${policy_host_effective:-не задан}"
-    if [[ -n "$env_container" && -n "$env_interface" ]] && [[ "$env_container" != "$policy_container" || "$env_interface" != "$policy_interface" || "$env_host_interface" != "$policy_host_effective" ]]; then
+    if [[ -n "$env_container" && -n "$env_interface" ]] && [[ "$env_container" != "$policy_container" || "$env_interface" != "$policy_interface" ]]; then
       warn "Обнаружен рассинхрон .env и helper policy. Выполни: sudo awg-tgbot sync-helper-policy"
-    else
-      ok "AWG target и QoS host-интерфейс синхронизированы."
     fi
   else
     warn "Helper policy не найдена: ${AWG_HELPER_POLICY}"
@@ -1706,15 +1648,6 @@ install_or_reinstall_flow() {
     default="$(get_env_value SUPPORT_USERNAME)"
     prompt_with_default 'Username поддержки (можно @username)' "${default:-@support}" value
     set_env_value SUPPORT_USERNAME "$value"
-    default="$(pick_existing_or_default "$(get_env_value QOS_ENABLED)" "$SELFHOST_QOS_ENABLED_DEFAULT")"
-    prompt_with_default 'Включить QoS (1=ON,0=OFF)' "$default" value
-    set_env_value QOS_ENABLED "$value"
-    default="$(pick_existing_or_default "$(get_env_value DEFAULT_KEY_RATE_MBIT)" "$SELFHOST_DEFAULT_KEY_RATE_MBIT_DEFAULT")"
-    prompt_with_default 'Default скорость на ключ (Mbit/s)' "$default" value
-    set_env_value DEFAULT_KEY_RATE_MBIT "$value"
-    default="$(pick_existing_or_default "$(get_env_value QOS_STRICT)" "$SELFHOST_QOS_STRICT_DEFAULT")"
-    prompt_with_default 'QOS_STRICT (1=strict,0=soft)' "$default" value
-    set_env_value QOS_STRICT "$value"
     default="$(pick_existing_or_default "$(get_env_value EGRESS_DENYLIST_ENABLED)" "$SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT")"
     prompt_with_default 'Включить egress denylist (1=ON,0=OFF)' "$default" value
     set_env_value EGRESS_DENYLIST_ENABLED "$value"

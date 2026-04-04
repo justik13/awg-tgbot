@@ -4,23 +4,22 @@ from pathlib import Path
 import re
 
 
-def read_helper_policy(path: Path) -> tuple[str, str, str, str]:
+def read_helper_policy(path: Path) -> tuple[str, str, str]:
     if not path.exists():
-        return '', '', '', f'helper policy not found: {path}'
+        return '', '', f'helper policy not found: {path}'
     if path.is_symlink():
-        return '', '', '', f'helper policy must not be symlink: {path}'
+        return '', '', f'helper policy must not be symlink: {path}'
     try:
         raw = json.loads(path.read_text(encoding='utf-8'))
     except PermissionError as e:
-        return '', '', '', f'helper policy unreadable by runtime user: {e}'
+        return '', '', f'helper policy unreadable by runtime user: {e}'
     except Exception as e:
-        return '', '', '', f'helper policy parse failed: {e}'
+        return '', '', f'helper policy parse failed: {e}'
     if not isinstance(raw, dict):
-        return '', '', '', 'helper policy must be a JSON object'
+        return '', '', 'helper policy must be a JSON object'
     container = str(raw.get('container', '')).strip()
     interface = str(raw.get('interface', '')).strip()
-    host_interface = str(raw.get('host_interface', '')).strip() or interface
-    return container, interface, host_interface, ''
+    return container, interface, ''
 
 
 def validate_required_env(
@@ -54,8 +53,8 @@ def validate_required_env(
         )
 
 
-def validate_helper_policy(*, policy_path: str, docker_container: str, wg_interface: str, wg_host_interface: str, logger) -> None:
-    policy_container, policy_interface, policy_host_interface, policy_error = read_helper_policy(Path(policy_path))
+def validate_helper_policy(*, policy_path: str, docker_container: str, wg_interface: str, logger) -> None:
+    policy_container, policy_interface, policy_error = read_helper_policy(Path(policy_path))
     if policy_error:
         if policy_error.startswith('helper policy unreadable by runtime user:'):
             logger.error('AWG helper policy status: %s', policy_error)
@@ -64,11 +63,11 @@ def validate_helper_policy(*, policy_path: str, docker_container: str, wg_interf
             )
         else:
             logger.warning('AWG helper policy status: %s', policy_error)
-    elif policy_container != docker_container or policy_interface != wg_interface or policy_host_interface != wg_host_interface:
+    elif policy_container != docker_container or policy_interface != wg_interface:
         raise RuntimeError(
             'AWG helper policy mismatch: '
-            f'env={docker_container}/{wg_interface}/{wg_host_interface} '
-            f'policy={policy_container}/{policy_interface}/{policy_host_interface}. '
+            f'env={docker_container}/{wg_interface} '
+            f'policy={policy_container}/{policy_interface}. '
             'Выполни sync-helper-policy в installer.'
         )
 

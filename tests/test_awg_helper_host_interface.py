@@ -7,15 +7,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bot"))
 import awg_helper  # noqa: E402
 
 
-def _has_match_clause(cmd: list[str], direction: str, ip: str) -> bool:
-    needle = ["match", "ip", direction, f"{ip}/32"]
-    return any(cmd[i:i + len(needle)] == needle for i in range(len(cmd) - len(needle) + 1))
-
-
-def _is_tc_for_dev(cmd: list[str], dev: str) -> bool:
-    return len(cmd) > 0 and cmd[0] == "tc" and "dev" in cmd and cmd[cmd.index("dev") + 1] == dev
-
-
 def _patch_root_owned_regular_lstat(monkeypatch, policy: Path):
     original_lstat = awg_helper.Path.lstat
 
@@ -23,246 +14,29 @@ def _patch_root_owned_regular_lstat(monkeypatch, policy: Path):
         st = original_lstat(self)
         if self == policy:
             values = list(st)
-            values[0] = stat.S_IFREG | 0o640  # st_mode: regular file with safe perms
-            values[4] = 0  # st_uid: root
+            values[0] = stat.S_IFREG | 0o640
+            values[4] = 0
             return os.stat_result(values)
         return st
 
     monkeypatch.setattr(awg_helper.Path, "lstat", fake_lstat)
 
 
-def test_load_policy_uses_host_interface_when_present(tmp_path: Path, monkeypatch):
-    policy = tmp_path / "policy.json"
-    policy.write_text('{"container":"awg","interface":"awg0","host_interface":"amn0"}', encoding="utf-8")
-    policy.chmod(0o640)
-    _patch_root_owned_regular_lstat(monkeypatch, policy)
-
-    container, interface, host_interface = awg_helper._load_policy(policy)
-
-    assert container == "awg"
-    assert interface == "awg0"
-    assert host_interface == "amn0"
-
-
-def test_load_policy_falls_back_to_interface_when_host_missing(tmp_path: Path, monkeypatch):
+def test_load_policy_reads_container_interface(tmp_path: Path, monkeypatch):
     policy = tmp_path / "policy.json"
     policy.write_text('{"container":"awg","interface":"awg0"}', encoding="utf-8")
     policy.chmod(0o640)
     _patch_root_owned_regular_lstat(monkeypatch, policy)
 
-    _, interface, host_interface = awg_helper._load_policy(policy)
+    container, interface = awg_helper._load_policy(policy)
 
+    assert container == "awg"
     assert interface == "awg0"
-    assert host_interface == "awg0"
 
 
-def test_qos_set_uses_host_interface(monkeypatch, capsys):
-    host_calls = []
-    docker_calls = []
-
-    monkeypatch.setattr(awg_helper, "_load_policy", lambda path=None: ("awg", "awg0", "amn0"))
-    monkeypatch.setattr(awg_helper, "_run", lambda args, stdin_text=None: host_calls.append(args) or "")
-    monkeypatch.setattr(awg_helper, "_docker_exec", lambda container, cmd, stdin_text=None: docker_calls.append((container, cmd)) or "")
-
-    monkeypatch.setattr(sys, "argv", ["awg_helper.py", "qos-set", "--ip", "10.8.1.11", "--rate-mbit", "50"])
-
-    rc = awg_helper.main()
-
-    assert rc == 0
-    host_tc_calls = [cmd for cmd in host_calls if _is_tc_for_dev(cmd, "amn0")]
-    assert host_tc_calls
-    assert all(container == "awg" for container, _ in docker_calls)
-    docker_tc_calls = [cmd for _, cmd in docker_calls if _is_tc_for_dev(cmd, "awg0")]
-    assert docker_tc_calls
-    assert any(cmd[:4] == ["ip", "link", "add", "ifbamn0"] for cmd in host_calls)
-    assert any(cmd[:4] == ["ip", "link", "add", "ifbawg0"] for _, cmd in docker_calls)
-    assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for cmd in host_calls)
-    assert any(_has_match_clause(cmd, "src", "10.8.1.11") for cmd in host_calls)
-    assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for _, cmd in docker_calls)
-    assert any(_has_match_clause(cmd, "src", "10.8.1.11") for _, cmd in docker_calls)
-    assert any(["filter", "replace", "dev", "amn0", "parent", "ffff:"] == cmd[1:7] for cmd in host_calls if cmd and cmd[0] == "tc")
-    assert any(["filter", "replace", "dev", "ifbamn0", "protocol", "ip"] == cmd[1:7] for cmd in host_calls if cmd and cmd[0] == "tc")
-    assert "qos set 10.8.1.11 50mbit" in capsys.readouterr().out
-
-
-def test_qos_set_falls_back_to_delete_add_when_replace_not_supported(monkeypatch):
-    calls = []
-
-    def fake_run(args, stdin_text=None):
-        calls.append(args)
-        if args[:3] == ["tc", "qdisc", "replace"]:
-            raise RuntimeError("Error: Change operation not supported by specified qdisc.")
-        if args[:3] == ["tc", "qdisc", "del"]:
-            raise RuntimeError("RTNETLINK answers: No such file or directory")
-        return ""
-
-    monkeypatch.setattr(awg_helper, "_run", fake_run)
-
-    awg_helper._ensure_qos_root_qdisc("amn0")
-
-    assert calls == [
-        ["tc", "qdisc", "replace", "dev", "amn0", "root", "handle", "1:", "htb", "default", "9999"],
-        ["tc", "qdisc", "del", "dev", "amn0", "root"],
-        ["tc", "qdisc", "add", "dev", "amn0", "root", "handle", "1:", "htb", "default", "9999"],
-    ]
-
-
-def test_ingress_qdisc_falls_back_on_exclusivity_error(monkeypatch):
-    calls = []
-
-    def fake_tc_run(dev, container, args):
-        calls.append(args)
-        if args[:2] == ["qdisc", "replace"] and args[-1] == "ingress":
-            raise RuntimeError("Error: Exclusivity flag on, cannot modify.")
-        return ""
-
-    monkeypatch.setattr(awg_helper, "_tc_run", fake_tc_run)
-
-    awg_helper._ensure_qos_ingress_qdisc("amn0", None)
-
-    assert calls == [
-        ["qdisc", "replace", "dev", "amn0", "handle", "ffff:", "ingress"],
-        ["qdisc", "del", "dev", "amn0", "ingress"],
-        ["qdisc", "add", "dev", "amn0", "handle", "ffff:", "ingress"],
-    ]
-
-
-def test_ifb_root_qdisc_falls_back_when_replace_unsupported(monkeypatch):
-    calls = []
-    qdisc_state = "fq"
-
-    def fake_tc_run(dev, container, args):
-        nonlocal qdisc_state
-        calls.append(args)
-        if args[:2] == ["qdisc", "show"]:
-            handle = "2:" if qdisc_state == "htb" else "0:"
-            return f"qdisc {qdisc_state} {handle} root refcnt 2"
-        if args[:2] == ["qdisc", "replace"] and args[3] == "ifbamn0":
-            raise RuntimeError("Error: Change operation not supported by specified qdisc.")
-        if args[:2] == ["qdisc", "add"] and args[3] == "ifbamn0":
-            qdisc_state = "htb"
-        return ""
-
-    monkeypatch.setattr(awg_helper, "_tc_run", fake_tc_run)
-
-    awg_helper._ensure_qos_ifb_root_qdisc("ifbamn0", None)
-
-    assert calls == [
-        ["qdisc", "replace", "dev", "ifbamn0", "root", "handle", "2:", "htb", "default", "9999"],
-        ["qdisc", "del", "dev", "ifbamn0", "root"],
-        ["qdisc", "add", "dev", "ifbamn0", "root", "handle", "2:", "htb", "default", "9999"],
-        ["qdisc", "show", "dev", "ifbamn0"],
-    ]
-
-
-def test_ifb_root_qdisc_retries_add_when_default_root_persists(monkeypatch):
-    calls = []
-    qdisc_state = "fq"
-    add_calls = 0
-
-    def fake_tc_run(dev, container, args):
-        nonlocal qdisc_state, add_calls
-        calls.append(args)
-        if args[:2] == ["qdisc", "show"]:
-            handle = "2:" if qdisc_state == "htb" else "0:"
-            return f"qdisc {qdisc_state} {handle} root refcnt 2"
-        if args[:2] == ["qdisc", "replace"] and args[3] == "ifbawg0":
-            raise RuntimeError("Error: Change operation not supported by specified qdisc.")
-        if args[:2] == ["qdisc", "add"] and args[3] == "ifbawg0":
-            add_calls += 1
-            if add_calls == 1:
-                raise RuntimeError("Error: Exclusivity flag on, cannot modify.")
-            qdisc_state = "htb"
-        return ""
-
-    monkeypatch.setattr(awg_helper, "_tc_run", fake_tc_run)
-
-    awg_helper._ensure_qos_ifb_root_qdisc("ifbawg0", "awg")
-
-    assert add_calls == 2
-    assert calls[-1] == ["qdisc", "show", "dev", "ifbawg0"]
-
-
-def test_qos_sync_uses_host_interface(monkeypatch, capsys):
-    host_calls = []
-    docker_calls = []
-
-    monkeypatch.setattr(awg_helper, "_load_policy", lambda path=None: ("awg", "awg0", "amn0"))
-    monkeypatch.setattr(awg_helper, "_run", lambda args, stdin_text=None: host_calls.append(args) or "")
-    monkeypatch.setattr(awg_helper, "_docker_exec", lambda container, cmd, stdin_text=None: docker_calls.append((container, cmd)) or "")
-    monkeypatch.setattr(sys, "argv", ["awg_helper.py", "qos-sync"])
-    monkeypatch.setattr(sys, "stdin", type("FakeStdin", (), {"read": lambda self: "10.8.1.11,50\n"})())
-
-    rc = awg_helper.main()
-
-    assert rc == 0
-    host_tc_calls = [cmd for cmd in host_calls if _is_tc_for_dev(cmd, "amn0")]
-    assert host_tc_calls
-    assert all(container == "awg" for container, _ in docker_calls)
-    docker_tc_calls = [cmd for _, cmd in docker_calls if _is_tc_for_dev(cmd, "awg0")]
-    assert docker_tc_calls
-    assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for cmd in host_calls)
-    assert any(_has_match_clause(cmd, "src", "10.8.1.11") for cmd in host_calls)
-    assert any(_has_match_clause(cmd, "dst", "10.8.1.11") for _, cmd in docker_calls)
-    assert any(_has_match_clause(cmd, "src", "10.8.1.11") for _, cmd in docker_calls)
-    assert any(cmd[:4] == ["ip", "link", "add", "ifbamn0"] for cmd in host_calls)
-    assert any(cmd[:4] == ["ip", "link", "add", "ifbawg0"] for _, cmd in docker_calls)
-    assert "qos synced 1" in capsys.readouterr().out
-
-
-def test_qos_clear_ignores_missing_ifb_device(monkeypatch, capsys):
-    calls = []
-
-    monkeypatch.setattr(awg_helper, "_load_policy", lambda path=None: ("awg", "awg0", "amn0"))
-
-    def fake_run(args, stdin_text=None):
-        calls.append(("host", args))
-        if args[0] == "tc" and "ifbamn0" in args and "delete" in args:
-            raise RuntimeError("Cannot find device \"ifbamn0\"")
-        return ""
-
-    def fake_exec(container, cmd, stdin_text=None):
-        calls.append((container, cmd))
-        if cmd[0] == "tc" and "ifbawg0" in cmd and "delete" in cmd:
-            raise RuntimeError("Error: Device \"ifbawg0\" does not exist.")
-        return ""
-
-    monkeypatch.setattr(awg_helper, "_run", fake_run)
-    monkeypatch.setattr(awg_helper, "_docker_exec", fake_exec)
-    monkeypatch.setattr(sys, "argv", ["awg_helper.py", "qos-clear", "--ip", "10.8.1.11"])
-
-    rc = awg_helper.main()
-
-    assert rc == 0
-    assert any(op[0] == "host" and _is_tc_for_dev(op[1], "amn0") and op[1][1:3] == ["filter", "delete"] for op in calls)
-    assert any(op[0] == "host" and _is_tc_for_dev(op[1], "amn0") and op[1][1:3] == ["class", "delete"] for op in calls)
-    assert any(op[0] == "awg" and _is_tc_for_dev(op[1], "awg0") and op[1][1:3] == ["filter", "delete"] for op in calls)
-    assert any(op[0] == "awg" and _is_tc_for_dev(op[1], "awg0") and op[1][1:3] == ["class", "delete"] for op in calls)
-    assert "qos clear 10.8.1.11" in capsys.readouterr().out
-
-
-def test_show_uses_awg_interface(monkeypatch, capsys):
-    monkeypatch.setattr(awg_helper, "_load_policy", lambda path=None: ("awg", "awg0", "amn0"))
-    docker_calls = []
-
-    def fake_exec(container, cmd, stdin_text=None):
-        docker_calls.append((container, cmd))
-        return "ok"
-
-    monkeypatch.setattr(awg_helper, "_docker_exec", fake_exec)
-    monkeypatch.setattr(sys, "argv", ["awg_helper.py", "show"])
-
-    rc = awg_helper.main()
-
-    assert rc == 0
-    assert docker_calls == [("awg", ["awg", "show", "awg0"])]
-    assert "ok" in capsys.readouterr().out
-
-
-def test_installer_policy_writer_includes_host_interface_field():
-    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
-
-    assert '"host_interface": "${host_interface}"' in script
-    assert 'host_interface="$(get_env_value WG_HOST_INTERFACE)"' in script
-    assert "detect_host_qos_interface" in script
-    assert "WG_HOST_INTERFACE (хост для tc/QoS)" in script
+def test_parser_has_no_qos_commands():
+    parser = awg_helper.build_parser()
+    choices = set(parser._subparsers._group_actions[0].choices.keys())
+    assert "qos-set" not in choices
+    assert "qos-clear" not in choices
+    assert "qos-sync" not in choices

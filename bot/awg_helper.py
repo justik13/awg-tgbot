@@ -62,182 +62,6 @@ def _run_nft_script(script: str) -> str:
     return _run(["nft", "-f", "-"], stdin_text=script)
 
 
-def _ensure_qos_root_qdisc(host_interface: str) -> None:
-    qdisc_replace_cmd = ["tc", "qdisc", "replace", "dev", host_interface, "root", "handle", "1:", "htb", "default", "9999"]
-    try:
-        _run(qdisc_replace_cmd)
-        return
-    except RuntimeError as e:
-        err = str(e).lower()
-        if "change operation not supported" not in err and "specified qdisc" not in err:
-            raise
-    try:
-        _run(["tc", "qdisc", "del", "dev", host_interface, "root"])
-    except RuntimeError as e:
-        err = str(e).lower()
-        if "no such file" not in err and "no such qdisc" not in err:
-            raise
-    _run(["tc", "qdisc", "add", "dev", host_interface, "root", "handle", "1:", "htb", "default", "9999"])
-
-
-def _ensure_qos_root_qdisc_container(container: str, interface: str) -> None:
-    qdisc_replace_cmd = ["tc", "qdisc", "replace", "dev", interface, "root", "handle", "1:", "htb", "default", "9999"]
-    try:
-        _docker_exec(container, qdisc_replace_cmd)
-        return
-    except RuntimeError as e:
-        err = str(e).lower()
-        if "change operation not supported" not in err and "specified qdisc" not in err:
-            raise
-    try:
-        _docker_exec(container, ["tc", "qdisc", "del", "dev", interface, "root"])
-    except RuntimeError as e:
-        err = str(e).lower()
-        if "no such file" not in err and "no such qdisc" not in err:
-            raise
-    _docker_exec(container, ["tc", "qdisc", "add", "dev", interface, "root", "handle", "1:", "htb", "default", "9999"])
-
-
-def _ensure_qos_ingress_qdisc(dev: str, container: str | None) -> None:
-    qdisc_replace_cmd = ["qdisc", "replace", "dev", dev, "handle", "ffff:", "ingress"]
-    try:
-        _tc_run(dev, container, qdisc_replace_cmd)
-        return
-    except RuntimeError as e:
-        err = str(e).lower()
-        if (
-            "change operation not supported" not in err
-            and "specified qdisc" not in err
-            and "exclusivity flag on" not in err
-            and "cannot modify" not in err
-        ):
-            raise
-    try:
-        _tc_run(dev, container, ["qdisc", "del", "dev", dev, "ingress"])
-    except RuntimeError as e:
-        err = str(e).lower()
-        if "no such file" not in err and "no such qdisc" not in err and "cannot find qdisc" not in err:
-            raise
-    _tc_run(dev, container, ["qdisc", "add", "dev", dev, "handle", "ffff:", "ingress"])
-
-
-def _ensure_qos_ifb_root_qdisc(ifb_dev: str, container: str | None) -> None:
-    qdisc_replace_cmd = ["qdisc", "replace", "dev", ifb_dev, "root", "handle", "2:", "htb", "default", "9999"]
-    qdisc_add_cmd = ["qdisc", "add", "dev", ifb_dev, "root", "handle", "2:", "htb", "default", "9999"]
-
-    def _has_htb_root() -> bool:
-        out = _tc_run(ifb_dev, container, ["qdisc", "show", "dev", ifb_dev]).lower()
-        if not out.strip():
-            return True
-        return "qdisc htb 2:" in out and " root " in f" {out} "
-
-    def _delete_root() -> None:
-        try:
-            _tc_run(ifb_dev, container, ["qdisc", "del", "dev", ifb_dev, "root"])
-        except RuntimeError as e:
-            err = str(e).lower()
-            if (
-                "no such file" not in err
-                and "no such qdisc" not in err
-                and "cannot find qdisc" not in err
-                and "cannot delete qdisc with handle of zero" not in err
-            ):
-                raise
-
-    try:
-        _tc_run(ifb_dev, container, qdisc_replace_cmd)
-        if _has_htb_root():
-            return
-    except RuntimeError as e:
-        err = str(e).lower()
-        if (
-            "change operation not supported" not in err
-            and "specified qdisc" not in err
-            and "exclusivity flag on" not in err
-            and "cannot modify" not in err
-        ):
-            raise
-    _delete_root()
-    try:
-        _tc_run(ifb_dev, container, qdisc_add_cmd)
-    except RuntimeError as e:
-        err = str(e).lower()
-        if (
-            "change operation not supported" not in err
-            and "specified qdisc" not in err
-            and "exclusivity flag on" not in err
-            and "cannot modify" not in err
-        ):
-            raise
-        _delete_root()
-        _tc_run(ifb_dev, container, qdisc_add_cmd)
-    if not _has_htb_root():
-        raise RuntimeError(f"failed to configure ifb root qdisc on {ifb_dev}")
-
-
-def _qos_targets(container: str, interface: str, host_interface: str) -> list[tuple[str, str | None]]:
-    targets: list[tuple[str, str | None]] = [(host_interface, None)]
-    if interface != host_interface:
-        targets.append((interface, container))
-    return targets
-
-
-def _tc_run(dev: str, container: str | None, args: list[str]) -> str:
-    if container:
-        return _docker_exec(container, ["tc", *args])
-    return _run(["tc", *args])
-
-
-def _ip_run(container: str | None, args: list[str]) -> str:
-    if container:
-        return _docker_exec(container, ["ip", *args])
-    return _run(["ip", *args])
-
-
-def _ifb_name_for_dev(dev: str) -> str:
-    normalized = "".join(ch for ch in dev if ch.isalnum())
-    suffix = normalized[-11:] if normalized else "qos"
-    return f"ifb{suffix}"
-
-
-def _ensure_qos_ingress_redirect(dev: str, container: str | None) -> str:
-    ifb_dev = _ifb_name_for_dev(dev)
-    try:
-        _ip_run(container, ["link", "add", ifb_dev, "type", "ifb"])
-    except RuntimeError as e:
-        err = str(e).lower()
-        if "file exists" not in err:
-            raise
-    _ip_run(container, ["link", "set", "dev", ifb_dev, "up"])
-    _ensure_qos_ifb_root_qdisc(ifb_dev, container)
-    _ensure_qos_ingress_qdisc(dev, container)
-    _tc_run(
-        dev,
-        container,
-        [
-            "filter", "replace", "dev", dev, "parent", "ffff:", "protocol", "ip", "prio", "1", "u32",
-            "match", "u32", "0", "0", "action", "mirred", "egress", "redirect", "dev", ifb_dev,
-        ],
-    )
-    return ifb_dev
-
-
-def _is_missing_netdev_error(error: RuntimeError) -> bool:
-    err = str(error).lower()
-    return (
-        "cannot find device" in err
-        or "no such file" in err
-        or "does not exist" in err
-        or "not exist" in err
-    )
-
-
-def _ensure_qos_roots(container: str, interface: str, host_interface: str) -> None:
-    _ensure_qos_root_qdisc(host_interface)
-    if interface != host_interface:
-        _ensure_qos_root_qdisc_container(container, interface)
-
-
 def _nft_exists(kind: str, family: str, table: str, name: str | None = None) -> bool:
     args = ["nft", "list", kind, family, table]
     if name is not None:
@@ -255,7 +79,7 @@ def _ensure_denylist_primitives() -> None:
         _run_nft_script('add set inet filter awg_denylist { type ipv4_addr; flags interval; }\n')
 
 
-def _load_policy(path: Path | None = None) -> tuple[str, str, str]:
+def _load_policy(path: Path | None = None) -> tuple[str, str]:
     policy_path = path or POLICY_PATH
     try:
         st = policy_path.lstat()
@@ -279,16 +103,14 @@ def _load_policy(path: Path | None = None) -> tuple[str, str, str]:
         raise RuntimeError("invalid helper policy: expected object")
     container = _safe_name(str(data.get("container", "")).strip(), "policy container")
     interface = _safe_name(str(data.get("interface", "")).strip(), "policy interface")
-    host_interface_raw = str(data.get("host_interface", "")).strip()
-    host_interface = _safe_name(host_interface_raw, "policy host_interface") if host_interface_raw else interface
-    return container, interface, host_interface
+    return container, interface
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Restricted AWG helper")
     sub = parser.add_subparsers(dest="op", required=True)
 
-    for op_name in ("check-awg", "show", "genkey", "pubkey", "genpsk", "qos-check", "qos-sync", "denylist-check"):
+    for op_name in ("check-awg", "show", "genkey", "pubkey", "genpsk", "denylist-check"):
         sub.add_parser(op_name)
 
     p_add = sub.add_parser("add-peer")
@@ -298,11 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_del = sub.add_parser("remove-peer")
     p_del.add_argument("--public-key", required=True)
-    p_qos_set = sub.add_parser("qos-set")
-    p_qos_set.add_argument("--ip", required=True)
-    p_qos_set.add_argument("--rate-mbit", required=True)
-    p_qos_clear = sub.add_parser("qos-clear")
-    p_qos_clear.add_argument("--ip", required=True)
+
     p_denylist_sync = sub.add_parser("denylist-sync")
     p_denylist_sync.add_argument("--vpn-subnet", required=True)
     p_denylist_clear = sub.add_parser("denylist-clear")
@@ -313,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     try:
-        container, interface, host_interface = _load_policy()
+        container, interface = _load_policy()
 
         if args.op == "check-awg":
             out = _docker_exec(container, ["awg", "show", interface])
@@ -343,72 +161,11 @@ def main() -> int:
             psk = psk_raw.strip()
             if not psk:
                 raise RuntimeError("empty psk")
-            print(
-                _docker_exec(
-                    container,
-                    ["awg", "set", interface, "peer", public_key, "preshared-key", "/dev/stdin", "allowed-ips", f"{ip}/32"],
-                    stdin_text=psk,
-                )
-            )
+            print(_docker_exec(container, ["awg", "set", interface, "peer", public_key, "preshared-key", "/dev/stdin", "allowed-ips", f"{ip}/32"], stdin_text=psk))
             return 0
         if args.op == "remove-peer":
             public_key = _safe_public_key(args.public_key.strip())
             print(_docker_exec(container, ["awg", "set", interface, "peer", public_key, "remove"]))
-            return 0
-        if args.op == "qos-check":
-            print(_run(["tc", "qdisc", "show", "dev", host_interface]))
-            return 0
-        if args.op == "qos-set":
-            ip = _safe_ipv4(args.ip.strip())
-            rate_mbit = int(str(args.rate_mbit).strip())
-            if rate_mbit <= 0 or rate_mbit > 10000:
-                raise RuntimeError("invalid rate-mbit")
-            classid_suffix = ip.split(".")[-1]
-            _ensure_qos_roots(container, interface, host_interface)
-            for dev, tc_container in _qos_targets(container, interface, host_interface):
-                ifb_dev = _ensure_qos_ingress_redirect(dev, tc_container)
-                _tc_run(dev, tc_container, ["class", "replace", "dev", dev, "parent", "1:", "classid", f"1:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
-                _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
-                _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
-                _tc_run(ifb_dev, tc_container, ["class", "replace", "dev", ifb_dev, "parent", "2:", "classid", f"2:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
-                _tc_run(ifb_dev, tc_container, ["filter", "replace", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"2:{classid_suffix}"])
-                _tc_run(ifb_dev, tc_container, ["filter", "replace", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32", "flowid", f"2:{classid_suffix}"])
-            print(f"qos set {ip} {rate_mbit}mbit")
-            return 0
-        if args.op == "qos-clear":
-            ip = _safe_ipv4(args.ip.strip())
-            classid_suffix = ip.split(".")[-1]
-            for dev, tc_container in _qos_targets(container, interface, host_interface):
-                ifb_dev = _ifb_name_for_dev(dev)
-                _tc_run(dev, tc_container, ["filter", "delete", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32"])
-                _tc_run(dev, tc_container, ["filter", "delete", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32"])
-                _tc_run(dev, tc_container, ["class", "delete", "dev", dev, "classid", f"1:{classid_suffix}"])
-                try:
-                    _tc_run(ifb_dev, tc_container, ["filter", "delete", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32"])
-                    _tc_run(ifb_dev, tc_container, ["filter", "delete", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32"])
-                    _tc_run(ifb_dev, tc_container, ["class", "delete", "dev", ifb_dev, "classid", f"2:{classid_suffix}"])
-                except RuntimeError as e:
-                    if not _is_missing_netdev_error(e):
-                        raise
-            print(f"qos clear {ip}")
-            return 0
-        if args.op == "qos-sync":
-            payload = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
-            _ensure_qos_roots(container, interface, host_interface)
-            for line in payload:
-                ip_raw, rate_raw = line.split(",", 1)
-                ip = _safe_ipv4(ip_raw.strip())
-                rate_mbit = int(rate_raw.strip())
-                classid_suffix = ip.split(".")[-1]
-                for dev, tc_container in _qos_targets(container, interface, host_interface):
-                    ifb_dev = _ensure_qos_ingress_redirect(dev, tc_container)
-                    _tc_run(dev, tc_container, ["class", "replace", "dev", dev, "parent", "1:", "classid", f"1:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
-                    _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
-                    _tc_run(dev, tc_container, ["filter", "replace", "dev", dev, "protocol", "ip", "parent", "1:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32", "flowid", f"1:{classid_suffix}"])
-                    _tc_run(ifb_dev, tc_container, ["class", "replace", "dev", ifb_dev, "parent", "2:", "classid", f"2:{classid_suffix}", "htb", "rate", f"{rate_mbit}mbit", "ceil", f"{rate_mbit}mbit"])
-                    _tc_run(ifb_dev, tc_container, ["filter", "replace", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "1", "u32", "match", "ip", "dst", f"{ip}/32", "flowid", f"2:{classid_suffix}"])
-                    _tc_run(ifb_dev, tc_container, ["filter", "replace", "dev", ifb_dev, "protocol", "ip", "parent", "2:0", "prio", "2", "u32", "match", "ip", "src", f"{ip}/32", "flowid", f"2:{classid_suffix}"])
-            print(f"qos synced {len(payload)}")
             return 0
         if args.op == "denylist-check":
             print(_run(["nft", "list", "table", "inet", "filter"]))
@@ -429,9 +186,7 @@ def main() -> int:
             _run(["nft", "flush", "set", "inet", "filter", "awg_denylist"])
             if validated:
                 _run_nft_script(f"add element inet filter awg_denylist {{ {', '.join(validated)} }}\n")
-            _run_nft_script(
-                f'add rule inet filter awg_forward ip saddr {subnet} ip daddr @awg_denylist drop comment "awg_denylist"\n'
-            )
+            _run_nft_script(f'add rule inet filter awg_forward ip saddr {subnet} ip daddr @awg_denylist drop comment "awg_denylist"\n')
             print(f"denylist synced {len(cidrs)}")
             return 0
     except Exception as e:

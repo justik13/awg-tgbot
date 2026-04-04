@@ -22,7 +22,7 @@ from database import (
     get_valid_db_public_keys, increment_metric, open_db, sync_traffic_counters_from_runtime_peers, write_audit_log,
 )
 from helpers import is_valid_awg_public_key, parse_server_host_port, utc_now_naive
-from network_policy import denylist_sync, qos_clear, qos_rate_for_key, qos_set, qos_sync
+from network_policy import denylist_sync
 from security_utils import decrypt_text, encrypt_text
 
 subscription_lock = asyncio.Lock()
@@ -235,25 +235,6 @@ async def add_peer_to_awg(public_key: str, ip: str, psk_key: str) -> None:
         "--ip", ip,
     ], input_data=psk_key)
     _invalidate_peers_cache()
-
-
-async def sync_qos_state() -> None:
-    db = await open_db()
-    try:
-        async with db.execute(
-            """
-            SELECT ip, rate_limit_mbit
-            FROM keys
-            WHERE state='active' AND ip IS NOT NULL AND TRIM(ip) != ''
-            """
-        ) as cursor:
-            rows = await cursor.fetchall()
-    finally:
-        await db.close()
-    active = []
-    for ip, override in rows:
-        active.append((ip, await qos_rate_for_key(override)))
-    await qos_sync(run_docker, active)
 
 
 async def remove_peer_from_awg(public_key: str) -> None:
@@ -793,7 +774,6 @@ async def issue_subscription(user_id: int, days: int, silent: bool = False, oper
                 private_key, public_key = await generate_keypair()
                 psk_key = await generate_psk()
                 await add_peer_to_awg(public_key, ip, psk_key)
-                await qos_set(run_docker, ip, await qos_rate_for_key(rate_limit_override), user_id)
                 created_peers.append(public_key)
                 generated_rows.append((placeholder_key, public_key, encrypt_text(private_key), encrypt_text(psk_key), ip))
 
@@ -893,8 +873,6 @@ async def delete_user_device(user_id: int, device_num: int) -> dict[str, Any]:
     removed_runtime = False
     try:
         await remove_peer_from_awg(public_key)
-        if ip:
-            await qos_clear(run_docker, ip, user_id)
         removed_runtime = True
     except Exception:
         current_keys = {(peer.get("public_key") or "").strip() for peer in await get_awg_peers()}
@@ -1079,8 +1057,6 @@ async def revoke_user_access(user_id: int, only_if_expired: bool = False) -> int
     for public_key, ip in public_keys:
         try:
             await remove_peer_from_awg(public_key)
-            if ip:
-                await qos_clear(run_docker, ip, user_id)
             removed_keys.append(public_key)
         except Exception as e:
             current_keys = {(peer.get("public_key") or "").strip() for peer in await get_awg_peers()}
@@ -1154,8 +1130,6 @@ async def delete_user_everywhere(user_id: int) -> tuple[int, int]:
     for public_key, ip in public_keys:
         try:
             await remove_peer_from_awg(public_key)
-            if ip:
-                await qos_clear(run_docker, ip, user_id)
             removed_keys.append(public_key)
         except Exception as e:
             current_keys = {(peer.get("public_key") or "").strip() for peer in await get_awg_peers()}
@@ -1348,7 +1322,6 @@ async def reconcile_pending_awg_state() -> dict[str, int]:
         await db.commit()
     finally:
         await db.close()
-    await sync_qos_state()
     await denylist_sync(run_docker)
     return stats
 
@@ -1358,7 +1331,7 @@ async def reconcile_active_awg_state() -> dict[str, int]:
     try:
         async with db.execute(
             """
-            SELECT public_key, ip, psk_key, user_id, rate_limit_mbit
+            SELECT public_key, ip, psk_key, user_id
             FROM keys
             WHERE state='active'
               AND public_key NOT LIKE 'pending:%'
@@ -1376,7 +1349,7 @@ async def reconcile_active_awg_state() -> dict[str, int]:
     awg_keys = {(peer.get("public_key") or "").strip() for peer in peers if (peer.get("public_key") or "").strip()}
     stats = {"restored": 0, "skipped_invalid_secret": 0, "already_present": 0, "failed": 0}
 
-    for public_key, ip, psk_key_enc, user_id, rate_limit_override in rows:
+    for public_key, ip, psk_key_enc, user_id in rows:
         public_key = str(public_key).strip()
         ip = str(ip).strip()
         if not public_key or not ip:
@@ -1391,7 +1364,6 @@ async def reconcile_active_awg_state() -> dict[str, int]:
                 logger.error("Active reconcile skipped: empty psk for key=%s", public_key)
                 continue
             await add_peer_to_awg(public_key, ip, psk_key)
-            await qos_set(run_docker, ip, await qos_rate_for_key(rate_limit_override), int(user_id))
             stats["restored"] += 1
         except Exception as error:
             stats["failed"] += 1
