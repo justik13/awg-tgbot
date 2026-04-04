@@ -23,6 +23,7 @@ from config import (
 )
 from database import (
     clear_pending_admin_action, clear_pending_broadcast, create_broadcast_job, create_promo_code, db_health_info, disable_promo_code, fetchall, fetchone, fetchval,
+    get_payment_summary_by_charge_id,
     get_latest_user_payment_summary,
     get_user_device_traffic_summary,
     get_user_total_traffic_bytes,
@@ -35,12 +36,14 @@ from helpers import escape_html, format_tg_username, get_status_text, utc_now_na
 from device_activity import render_device_activity_line
 from traffic import format_bytes_compact, render_device_traffic_line
 from keyboards import (
-    get_admin_confirm_kb, get_admin_inline_kb, get_admin_price_confirm_kb, get_admin_prices_kb, get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb,
+    get_admin_confirm_kb, get_admin_inline_kb, get_admin_maintenance_kb, get_admin_payments_kb, get_admin_price_confirm_kb, get_admin_prices_kb, get_admin_promocodes_kb,
+    get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb, get_open_user_card_kb,
 )
 from ui_constants import (
     BTN_ADMIN, CB_ADMIN_BACK_MAIN, CB_ADMIN_BROADCAST,
-    CB_ADMIN_COMMANDS, CB_ADMIN_HEALTH, CB_ADMIN_LIST, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30, CB_ADMIN_PRICE_EDIT_7,
-    CB_ADMIN_PRICE_EDIT_90, CB_ADMIN_PRICE_SAVE, CB_ADMIN_PRICES, CB_ADMIN_REFERRALS,
+    CB_ADMIN_COMMANDS, CB_ADMIN_FIND_CHARGE, CB_ADMIN_HEALTH, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_LIST, CB_ADMIN_MAINTENANCE, CB_ADMIN_MAINTENANCE_OFF, CB_ADMIN_MAINTENANCE_ON,
+    CB_ADMIN_MAINTENANCE_REFRESH, CB_ADMIN_OPEN_USER_CARD_PREFIX, CB_ADMIN_PAYMENTS, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30, CB_ADMIN_PRICE_EDIT_7,
+    CB_ADMIN_PRICE_EDIT_90, CB_ADMIN_PRICE_SAVE, CB_ADMIN_PRICES, CB_ADMIN_PROMOCODES, CB_ADMIN_PROMO_CREATE, CB_ADMIN_PROMO_DISABLE, CB_ADMIN_PROMO_LIST, CB_ADMIN_REFERRALS,
     CB_ADMIN_REFRESH_HEALTH, CB_ADMIN_REFRESH_REFERRALS, CB_ADMIN_STATS, CB_ADMIN_SYNC,
     CB_BROADCAST_CANCEL, CB_BROADCAST_CONFIRM,
     CB_ADMIN_USERS_PAGE_PREFIX, CB_ADMIN_MANAGE_USER_PREFIX, CB_ADMIN_ADD_DAYS_PREFIX,
@@ -68,6 +71,7 @@ ADMIN_MANUAL_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/send TEXT", "рассылка (осторожно)"),
     ("/finduser QUERY", "поиск пользователя по id или username"),
     ("/payinfo USER_ID", "краткая сводка по последнему платежу"),
+    ("/findpay CHARGE_ID", "поиск платежа по telegram_payment_charge_id"),
     ("/give USER_ID DAYS", "выдать/продлить доступ вручную"),
     ("/promo_create CODE DAYS [MAX]", "создать промокод"),
     ("/promo_list", "краткий список промокодов"),
@@ -80,6 +84,10 @@ ADMIN_MANUAL_COMMANDS: tuple[tuple[str, str], ...] = (
 BROADCAST_INPUT_ACTION_KEY = "broadcast_input"
 PRICE_INPUT_ACTION_KEY = "price_input"
 PRICE_CONFIRM_ACTION_KEY = "price_confirm"
+PAYMENT_CHARGE_INPUT_ACTION_KEY = "payment_charge_lookup_input"
+PAYMENT_USER_INPUT_ACTION_KEY = "payment_user_lookup_input"
+PROMO_CREATE_INPUT_ACTION_KEY = "promo_create_input"
+PROMO_DISABLE_INPUT_ACTION_KEY = "promo_disable_input"
 PRICE_TARGETS = {
     CB_ADMIN_PRICE_EDIT_7: ("STARS_PRICE_7_DAYS", "7 дней"),
     CB_ADMIN_PRICE_EDIT_30: ("STARS_PRICE_30_DAYS", "30 дней"),
@@ -153,6 +161,20 @@ class HasPendingPriceInput(BaseFilter):
     async def __call__(self, message: types.Message) -> bool:
         pending_action = await get_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY)
         return bool(pending_action)
+
+
+class HasPendingPaymentLookupInput(BaseFilter):
+    async def __call__(self, message: types.Message) -> bool:
+        pending_charge = await get_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
+        pending_user = await get_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
+        return bool(pending_charge or pending_user)
+
+
+class HasPendingPromoInput(BaseFilter):
+    async def __call__(self, message: types.Message) -> bool:
+        pending_create = await get_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
+        pending_disable = await get_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
+        return bool(pending_create or pending_disable)
 
 
 async def notify_user_subscription_granted(bot: Bot, user_id: int, days: int, new_until) -> bool:
@@ -583,6 +605,19 @@ def _payment_admin_details(payment_summary: dict | None) -> tuple[str, str, str]
     return payment_line, activation_line, charge_id
 
 
+def _render_payment_lookup_text(payment_summary: dict) -> str:
+    return (
+        "💳 <b>Платёж</b>\n\n"
+        f"🆔 user_id: <code>{int(payment_summary.get('user_id') or 0)}</code>\n"
+        f"🧾 telegram_payment_charge_id: <code>{escape_html(str(payment_summary.get('payment_id') or '—'))}</code>\n"
+        f"📌 status: <b>{escape_html(str(payment_summary.get('status') or '—'))}</b>\n"
+        f"💰 amount: <b>{payment_summary.get('amount')} {escape_html(str(payment_summary.get('currency') or '—'))}</b>\n"
+        f"📦 payload: <code>{escape_html(str(payment_summary.get('payload') or '—'))}</code>\n"
+        f"🕒 created_at: <code>{escape_html(str(payment_summary.get('created_at') or '—'))}</code>\n"
+        f"🚦 last_provision_status: <b>{escape_html(str(payment_summary.get('last_provision_status') or '—'))}</b>"
+    )
+
+
 async def _send_user_manage_card(target_message: types.Message, uid: int, page: int) -> None:
     row = await fetchone("SELECT sub_until FROM users WHERE user_id = ?", (uid,))
     if not row:
@@ -682,6 +717,36 @@ async def admin_manual_commands(cb: types.CallbackQuery):
         reply_markup=get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN),
     )
     await cb.answer("Готово")
+
+
+@router.callback_query(F.data == CB_ADMIN_PAYMENTS)
+async def admin_payments_screen(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
+    await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
+    await cb.message.answer("💳 <b>Платежи</b>", parse_mode="HTML", reply_markup=get_admin_payments_kb())
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_FIND_CHARGE)
+async def admin_payments_find_charge_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
+    await set_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY, {"action": PAYMENT_CHARGE_INPUT_ACTION_KEY})
+    await cb.message.answer("Введите telegram_payment_charge_id")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_LAST_PAYMENT)
+async def admin_payments_latest_by_user_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
+    await set_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY, {"action": PAYMENT_USER_INPUT_ACTION_KEY})
+    await cb.message.answer("Введите user_id")
+    await cb.answer()
 
 
 @router.callback_query(F.data == CB_ADMIN_PRICES)
@@ -1342,6 +1407,179 @@ async def admin_health_summary(cb: types.CallbackQuery):
     await cb.answer("Готово")
 
 
+@router.callback_query(F.data == CB_ADMIN_MAINTENANCE)
+@router.callback_query(F.data == CB_ADMIN_MAINTENANCE_REFRESH)
+async def admin_maintenance_screen(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
+    status_line = "🟠 maintenance: ON" if enabled else "🟢 maintenance: OFF"
+    await cb.message.answer(status_line, reply_markup=get_admin_maintenance_kb(enabled))
+    await cb.answer("Готово")
+
+
+@router.callback_query(F.data == CB_ADMIN_MAINTENANCE_ON)
+async def admin_maintenance_on_cb(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await set_app_setting("MAINTENANCE_MODE", "1", updated_by=cb.from_user.id)
+    await write_audit_log(cb.from_user.id, "maintenance_enabled", "purchase_flow=frozen")
+    await cb.message.answer("🟠 Maintenance включен.", reply_markup=get_admin_maintenance_kb(True))
+    await cb.answer("Включено")
+
+
+@router.callback_query(F.data == CB_ADMIN_MAINTENANCE_OFF)
+async def admin_maintenance_off_cb(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await set_app_setting("MAINTENANCE_MODE", "0", updated_by=cb.from_user.id)
+    await write_audit_log(cb.from_user.id, "maintenance_disabled", "purchase_flow=active")
+    await cb.message.answer("🟢 Maintenance выключен.", reply_markup=get_admin_maintenance_kb(False))
+    await cb.answer("Выключено")
+
+
+@router.callback_query(F.data == CB_ADMIN_PROMOCODES)
+async def admin_promocodes_screen(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
+    await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
+    await cb.message.answer("🎟 <b>Промокоды</b>", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_PROMO_LIST)
+async def admin_promocodes_list(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    rows = await list_promo_codes(limit=20)
+    if not rows:
+        await cb.message.answer("Промокодов пока нет.", reply_markup=get_admin_promocodes_kb())
+        await cb.answer()
+        return
+    lines = [f"🎟 <b>Промокоды ({len(rows)})</b>\n"]
+    for code, days, max_activations, used_count, is_active, _created_at in rows:
+        max_text = str(max_activations) if max_activations is not None else "∞"
+        status = "on" if int(is_active) == 1 else "off"
+        lines.append(f"• <code>{code}</code> | +{int(days)}д | {int(used_count)}/{max_text} | {status}")
+    await cb.message.answer("\n".join(lines), parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
+    await cb.answer("Готово")
+
+
+@router.callback_query(F.data == CB_ADMIN_PROMO_CREATE)
+async def admin_promocodes_create_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
+    await set_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY, {"action": PROMO_CREATE_INPUT_ACTION_KEY})
+    await cb.message.answer("Формат: CODE DAYS [MAX]")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_PROMO_DISABLE)
+async def admin_promocodes_disable_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
+    await set_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY, {"action": PROMO_DISABLE_INPUT_ACTION_KEY})
+    await cb.message.answer("Введите CODE для отключения")
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith(CB_ADMIN_OPEN_USER_CARD_PREFIX))
+async def admin_open_user_card_from_payment(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    raw = cb.data.removeprefix(CB_ADMIN_OPEN_USER_CARD_PREFIX)
+    try:
+        uid_raw, page_raw = raw.split("_", 1)
+        await _send_user_manage_card(cb.message, int(uid_raw), int(page_raw))
+        await cb.answer("Открыто")
+    except Exception:
+        await cb.answer("Некорректные параметры", show_alert=True)
+
+
+@router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingPaymentLookupInput())
+async def admin_payment_lookup_capture_input(message: types.Message):
+    raw = (message.text or "").strip()
+    charge_pending = await get_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
+    user_pending = await get_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
+
+    if charge_pending:
+        if not raw:
+            await message.answer("Charge ID пустой.")
+            return
+        await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
+        payment_summary = await get_payment_summary_by_charge_id(raw)
+        if not payment_summary:
+            await message.answer("Платёж не найден.", reply_markup=get_admin_payments_kb())
+            return
+        await message.answer(
+            _render_payment_lookup_text(payment_summary),
+            parse_mode="HTML",
+            reply_markup=get_open_user_card_kb(int(payment_summary["user_id"])),
+        )
+        return
+
+    if user_pending:
+        await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
+        if not raw.isdigit():
+            await message.answer("Нужен числовой user_id.")
+            return
+        uid = int(raw)
+        payment_summary = await get_latest_user_payment_summary(uid)
+        if not payment_summary:
+            await message.answer("Платежей не найдено.", reply_markup=get_admin_payments_kb())
+            return
+        await message.answer(
+            _render_payment_lookup_text(payment_summary),
+            parse_mode="HTML",
+            reply_markup=get_open_user_card_kb(uid),
+        )
+
+
+@router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingPromoInput())
+async def admin_promo_capture_input(message: types.Message):
+    raw = (message.text or "").strip()
+    create_pending = await get_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
+    disable_pending = await get_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
+
+    if create_pending:
+        parts = raw.split()
+        if len(parts) < 2:
+            await message.answer("Формат: CODE DAYS [MAX]")
+            return
+        try:
+            code = normalize_promo_code(parts[0])
+            days = int(parts[1])
+            max_activations = int(parts[2]) if len(parts) > 2 else None
+            if days <= 0 or (max_activations is not None and max_activations <= 0):
+                raise ValueError
+            created = await create_promo_code(code, days, max_activations, created_by=message.from_user.id)
+            await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
+            if not created:
+                await message.answer("⚠️ Такой промокод уже существует.", reply_markup=get_admin_promocodes_kb())
+                return
+            await write_audit_log(message.from_user.id, "promo_created", f"code={code}; days={days}; max={max_activations or 0}")
+            await message.answer(f"✅ Промокод <code>{code}</code> создан.", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
+        except ValueError:
+            await message.answer("Ошибка формата. Формат: CODE DAYS [MAX]")
+        return
+
+    if disable_pending:
+        code = normalize_promo_code(raw)
+        if not code:
+            await message.answer("Введите корректный CODE.")
+            return
+        disabled = await disable_promo_code(code)
+        await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
+        if not disabled:
+            await message.answer("⚠️ Промокод не найден или уже выключен.", reply_markup=get_admin_promocodes_kb())
+            return
+        await write_audit_log(message.from_user.id, "promo_disabled", f"code={code}")
+        await message.answer(f"✅ Промокод <code>{code}</code> отключён.", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
+
+
 @router.message(Command("give"), IsAdmin())
 async def give_manual(message: types.Message, command: CommandObject):
     if admin_command_limited("give", message.from_user.id):
@@ -1543,17 +1781,23 @@ async def payinfo_cmd(message: types.Message, command: CommandObject):
     if not payment_summary:
         await message.answer("Платежей не найдено.")
         return
+    await message.answer(_render_payment_lookup_text(payment_summary), parse_mode="HTML", reply_markup=get_open_user_card_kb(uid))
+
+
+@router.message(Command("findpay"), IsAdmin())
+async def findpay_cmd(message: types.Message, command: CommandObject):
+    charge_id = (command.args or "").strip()
+    if not charge_id:
+        await message.answer("Формат: <code>/findpay CHARGE_ID</code>", parse_mode="HTML")
+        return
+    payment_summary = await get_payment_summary_by_charge_id(charge_id)
+    if not payment_summary:
+        await message.answer("Платёж не найден.")
+        return
     await message.answer(
-        (
-            "💳 <b>Последний платёж пользователя</b>\n\n"
-            f"🆔 user_id: <code>{uid}</code>\n"
-            f"📌 status: <b>{escape_html(str(payment_summary.get('status') or '—'))}</b>\n"
-            f"💰 amount: <b>{payment_summary.get('amount')} {escape_html(str(payment_summary.get('currency') or '—'))}</b>\n"
-            f"🧾 telegram_payment_charge_id: <code>{escape_html(str(payment_summary.get('payment_id') or '—'))}</code>\n"
-            "↩️ Подготовка к возврату: используйте user_id и telegram_payment_charge_id.\n"
-            "TODO: автоматический refund flow пока не реализован в selfhost MVP."
-        ),
+        _render_payment_lookup_text(payment_summary),
         parse_mode="HTML",
+        reply_markup=get_open_user_card_kb(int(payment_summary["user_id"])),
     )
 
 
