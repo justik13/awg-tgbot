@@ -22,7 +22,6 @@ from database import (
     get_valid_db_public_keys, increment_metric, open_db, sync_traffic_counters_from_runtime_peers, write_audit_log,
 )
 from helpers import is_valid_awg_public_key, parse_server_host_port, utc_now_naive
-from network_policy import denylist_sync
 from security_utils import decrypt_text, encrypt_text
 
 subscription_lock = asyncio.Lock()
@@ -1322,7 +1321,6 @@ async def reconcile_pending_awg_state() -> dict[str, int]:
         await db.commit()
     finally:
         await db.close()
-    await denylist_sync(run_docker)
     return stats
 
 

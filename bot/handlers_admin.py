@@ -11,7 +11,8 @@ from aiogram.filters import BaseFilter, Command, CommandObject
 
 from awg_backend import (
     check_awg_container, count_free_ip_slots, delete_user_everywhere,
-    delete_user_device, get_awg_peers, get_orphan_awg_peers, issue_subscription, reissue_user_device, revoke_user_access, run_docker,
+    delete_user_device, get_awg_peers, get_orphan_awg_peers, issue_subscription, reconcile_active_awg_state,
+    reconcile_pending_awg_state, reissue_user_device, revoke_user_access, run_docker, sync_traffic_counters,
 )
 from config import (
     ADMIN_COMMAND_COOLDOWN_SECONDS,
@@ -274,21 +275,112 @@ async def notify_user_subscription_granted(bot: Bot, user_id: int, days: int, ne
 
 
 async def build_awg_sync_text() -> str:
-    db_info = await db_health_info()
-    orphans = await get_orphan_awg_peers()
-    details = []
-    for peer in orphans[:20]:
-        details.append(f"• <code>{peer['public_key']}</code> — {peer.get('ip') or 'IP не указан'}")
-    extra = "\n".join(details) if details else "Потерянных peer не найдено."
-    return (
-        "🔄 <b>Проверка синхронизации AWG ↔ БД</b>\n\n"
-        f"🗄 БД существует: <b>{'да' if db_info['exists'] else 'нет'}</b>\n"
-        f"📋 Таблица keys: <b>{'да' if db_info['keys_table_exists'] else 'нет'}</b>\n"
-        f"🧱 Нужные колонки: <b>{'да' if db_info['has_required_columns'] else 'нет'}</b>\n"
-        f"✅ Валидных ключей в БД: <b>{db_info['valid_keys_count']}</b>\n"
-        f"👻 Потерянных peer в AWG: <b>{len(orphans)}</b>\n\n"
-        f"{extra}"
-    )
+    report = await run_awg_sync_report()
+    return _render_awg_sync_report_text(report)
+
+
+def _format_awg_sync_step(name: str, result: dict[str, object], *, keys: tuple[str, ...], label_map: dict[str, str] | None = None) -> str:
+    label_map = label_map or {}
+    status = str(result.get("status") or "ok")
+    if status != "ok":
+        error_text = str(result.get("error") or "неизвестно")
+        return f"• <b>{name}:</b> ошибка — <code>{escape_html(error_text)}</code>"
+    stats = result.get("stats")
+    if isinstance(stats, dict):
+        parts = []
+        for key in keys:
+            if key in stats:
+                parts.append(f"{label_map.get(key, key)}={stats[key]}")
+        detail = ", ".join(parts) if parts else "ok"
+        return f"• <b>{name}:</b> {escape_html(detail)}"
+    value = result.get("value")
+    return f"• <b>{name}:</b> {escape_html(str(value))}"
+
+
+def _format_awg_sync_error(error: Exception) -> str:
+    return str(error).strip().replace("\n", " ")[:180] or error.__class__.__name__
+
+
+async def run_awg_sync_report() -> dict[str, object]:
+    report: dict[str, object] = {
+        "pending": {"status": "ok", "stats": {}},
+        "active": {"status": "ok", "stats": {}},
+        "traffic": {"status": "ok", "value": 0},
+        "db_health": {"status": "ok", "value": {}},
+        "orphans": {"status": "ok", "value": []},
+    }
+    try:
+        report["pending"] = {"status": "ok", "stats": await reconcile_pending_awg_state()}
+    except Exception as error:
+        logger.exception("AWG sync: pending reconcile failed: %s", error)
+        report["pending"] = {"status": "error", "error": _format_awg_sync_error(error)}
+    try:
+        report["active"] = {"status": "ok", "stats": await reconcile_active_awg_state()}
+    except Exception as error:
+        logger.exception("AWG sync: active reconcile failed: %s", error)
+        report["active"] = {"status": "error", "error": _format_awg_sync_error(error)}
+    try:
+        report["traffic"] = {"status": "ok", "value": await sync_traffic_counters()}
+    except Exception as error:
+        logger.exception("AWG sync: traffic sync failed: %s", error)
+        report["traffic"] = {"status": "error", "error": _format_awg_sync_error(error)}
+    try:
+        report["db_health"] = {"status": "ok", "value": await db_health_info()}
+    except Exception as error:
+        logger.exception("AWG sync: db health failed: %s", error)
+        report["db_health"] = {"status": "error", "error": _format_awg_sync_error(error)}
+    try:
+        report["orphans"] = {"status": "ok", "value": await get_orphan_awg_peers()}
+    except Exception as error:
+        logger.exception("AWG sync: orphan peers check failed: %s", error)
+        report["orphans"] = {"status": "error", "error": _format_awg_sync_error(error)}
+    return report
+
+
+def _render_awg_sync_report_text(report: dict[str, object]) -> str:
+    pending = report.get("pending") if isinstance(report.get("pending"), dict) else {"status": "error", "error": "bad pending"}
+    active = report.get("active") if isinstance(report.get("active"), dict) else {"status": "error", "error": "bad active"}
+    traffic = report.get("traffic") if isinstance(report.get("traffic"), dict) else {"status": "error", "error": "bad traffic"}
+    db_block = report.get("db_health") if isinstance(report.get("db_health"), dict) else {"status": "error", "error": "bad db_health"}
+    orphan_block = report.get("orphans") if isinstance(report.get("orphans"), dict) else {"status": "error", "error": "bad orphans"}
+    lines = [
+        "🔄 <b>Проверка и синхронизация AWG</b>",
+        "",
+        _format_awg_sync_step(
+            "Pending reconcile",
+            pending,
+            keys=("activated", "deleted", "marked_manual", "awg_removed"),
+            label_map={"activated": "activated", "deleted": "deleted", "marked_manual": "marked_manual", "awg_removed": "awg_removed"},
+        ),
+        _format_awg_sync_step(
+            "Active reconcile",
+            active,
+            keys=("restored", "already_present", "failed", "skipped_invalid_secret"),
+            label_map={"restored": "restored", "already_present": "already_present", "failed": "failed", "skipped_invalid_secret": "skipped_invalid_secret"},
+        ),
+    ]
+    if traffic.get("status") == "ok":
+        lines.append(f"• <b>Traffic sync:</b> touched={traffic.get('value', 0)}")
+    else:
+        lines.append(f"• <b>Traffic sync:</b> ошибка — <code>{escape_html(str(traffic.get('error') or 'неизвестно'))}</code>")
+    if db_block.get("status") == "ok":
+        db_info = db_block.get("value") if isinstance(db_block.get("value"), dict) else {}
+        lines.append(
+            "• <b>DB health:</b> "
+            f"exists={'да' if db_info.get('exists') else 'нет'}, "
+            f"keys_table={'да' if db_info.get('keys_table_exists') else 'нет'}, "
+            f"required_columns={'да' if db_info.get('has_required_columns') else 'нет'}, "
+            f"valid_keys={db_info.get('valid_keys_count', 0)}"
+        )
+    else:
+        lines.append(f"• <b>DB health:</b> ошибка — <code>{escape_html(str(db_block.get('error') or 'неизвестно'))}</code>")
+    if orphan_block.get("status") == "ok":
+        orphans = orphan_block.get("value")
+        orphan_count = len(orphans) if isinstance(orphans, list) else 0
+        lines.append(f"• <b>Orphan peers:</b> count={orphan_count}")
+    else:
+        lines.append(f"• <b>Orphan peers:</b> ошибка — <code>{escape_html(str(orphan_block.get('error') or 'неизвестно'))}</code>")
+    return "\n".join(lines)
 
 
 async def build_stats_text() -> str:
@@ -1121,9 +1213,8 @@ async def admin_sync_awg(cb: types.CallbackQuery):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     try:
-        await denylist_sync(run_docker)
         await cb.message.answer(await build_awg_sync_text(), parse_mode="HTML")
-        await cb.answer("Синхронизация проверена")
+        await cb.answer("Синхронизация AWG выполнена")
     except Exception as e:
         logger.exception("Ошибка admin_sync_awg: %s", e)
         await cb.answer("❌ Ошибка проверки", show_alert=True)
@@ -2462,7 +2553,6 @@ async def sync_awg_cmd(message: types.Message):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     try:
-        await denylist_sync(run_docker)
         await message.answer(await build_awg_sync_text(), parse_mode="HTML")
     except Exception as e:
         logger.exception("Ошибка /sync_awg: %s", e)
