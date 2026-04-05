@@ -1641,13 +1641,16 @@ install_or_reinstall_flow() {
   print_detected_awg_summary
 
   if [[ "$mode" == "reinstall" ]]; then
-    pre_reinstall_runtime_snapshot="$(create_runtime_snapshot_before_reinstall pre-reinstall)"
     pre_reinstall_repo_snapshot="$(create_repo_snapshot_before_reinstall)"
-    ok "Создан snapshot перед переустановкой: ${pre_reinstall_runtime_snapshot}"
+    ok "Создан snapshot файлов приложения перед переустановкой: ${pre_reinstall_repo_snapshot}"
   fi
 
   tmp_dir="$(download_repo)" || die "Не удалось скачать код проекта из GitHub."
   stop_service_if_exists
+  if [[ "$mode" == "reinstall" ]]; then
+    pre_reinstall_runtime_snapshot="$(create_runtime_snapshot_before_reinstall pre-reinstall)"
+    ok "Создан snapshot runtime (DB/.env/state) после остановки сервиса: ${pre_reinstall_runtime_snapshot}"
+  fi
   deploy_repo "$tmp_dir" || { rm -rf "$tmp_dir"; die "Не удалось развернуть файлы проекта."; }
   rm -rf "$tmp_dir"
   ensure_env_file

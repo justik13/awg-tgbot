@@ -72,3 +72,11 @@ def test_reinstall_rollback_messages_report_full_or_partial_outcome():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "Переустановка не удалась; rollback выполнен полностью" in script
     assert "Переустановка не удалась; rollback выполнен частично" in script
+
+
+def test_reinstall_stops_service_before_runtime_snapshot():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    stop_pos = script.find("stop_service_if_exists")
+    runtime_snapshot_pos = script.find("create_runtime_snapshot_before_reinstall pre-reinstall")
+    assert stop_pos != -1 and runtime_snapshot_pos != -1
+    assert stop_pos < runtime_snapshot_pos
