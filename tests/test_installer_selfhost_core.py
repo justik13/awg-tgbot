@@ -45,6 +45,22 @@ def test_reinstall_includes_runtime_snapshot_smokecheck_and_rollback_hooks():
     assert '"$awg_check_rc" -ne 0' in script
     assert "runtime_not_ready:" in script
     assert "schema_not_ready" in script
+    assert "install_dir = os.path.dirname(bot_dir)" in script
+    assert "os.chdir(install_dir)" in script
+    assert "prepare_bot_log_for_reinstall" in script
+    assert "finalize_bot_log_reinstall_archive" in script
+    assert "restore_bot_log_after_failed_reinstall" in script
+    assert 'pending_archive="${APP_LOG_FILE}.pending-pre-reinstall-${ts}"' in script
+    assert 'final_archive="${APP_LOG_FILE}.pre-reinstall-${ts}"' in script
+    assert 'chmod 640 "$APP_LOG_FILE"' in script
+    assert 'chown "${BOT_USER}:${BOT_USER}" "$APP_LOG_FILE"' in script
+    assert 'IFS=$\'\\t\' read -r pre_reinstall_log_pending pre_reinstall_log_final < <(prepare_bot_log_for_reinstall)' in script
+    assert 'if ! start_service; then\n      restore_bot_log_after_failed_reinstall "$pre_reinstall_log_pending"\n      die "Не удалось запустить сервис."\n    fi' in script
+    assert 'start_service || die "Не удалось запустить сервис."' in script
+    assert 'pre_reinstall_log_archive="$(finalize_bot_log_reinstall_archive "$pre_reinstall_log_pending" "$pre_reinstall_log_final")"' in script
+    assert 'rollback_failed_reinstall "$pre_reinstall_repo_snapshot" "$pre_reinstall_runtime_snapshot" "$pre_reinstall_log_pending"' in script
+    assert 'restore_bot_log_after_failed_reinstall "$pre_reinstall_log_pending"\n      rollback_failed_reinstall "$pre_reinstall_repo_snapshot" "$pre_reinstall_runtime_snapshot"' not in script
+    assert "bot.log очищен для новой версии; предыдущий лог сохранён в" in script
 
 
 def test_restore_includes_post_restore_smokecheck_and_rollback_message():
@@ -80,3 +96,20 @@ def test_reinstall_stops_service_before_runtime_snapshot():
     runtime_snapshot_pos = script.find("create_runtime_snapshot_before_reinstall pre-reinstall")
     assert stop_pos != -1 and runtime_snapshot_pos != -1
     assert stop_pos < runtime_snapshot_pos
+
+
+def test_rollback_stops_service_before_restoring_repo_and_runtime():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'systemctl stop "$SERVICE_NAME" 2>/dev/null || true' in script
+    assert 'local repo_snapshot_dir="$1" runtime_snapshot_dir="$2" pending_log_archive="$3"' in script
+    assert "Rollback: останавливаю текущий неудачный сервис перед восстановлением runtime." in script
+    rollback_pos = script.find("rollback_failed_reinstall()")
+    stop_pos = script.find('systemctl stop "$SERVICE_NAME" 2>/dev/null || true', rollback_pos)
+    restore_log_pos = script.find('restore_bot_log_after_failed_reinstall "$pending_log_archive"', rollback_pos)
+    restore_repo_pos = script.find('restore_repo_snapshot_after_failed_reinstall "$repo_snapshot_dir"', rollback_pos)
+    restore_db_pos = script.find('install -m 600 "$runtime_snapshot_dir/db.before" "$db_file"', rollback_pos)
+    assert stop_pos != -1 and restore_log_pos != -1 and restore_repo_pos != -1 and restore_db_pos != -1
+    assert stop_pos < restore_log_pos
+    assert restore_log_pos < restore_repo_pos
+    assert stop_pos < restore_repo_pos
+    assert stop_pos < restore_db_pos
