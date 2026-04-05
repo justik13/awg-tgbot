@@ -1843,8 +1843,14 @@ async def db_health_info() -> dict[str, Any]:
         "exists": False,
         "keys_table_exists": False,
         "has_required_columns": False,
+        "schema_ready": False,
+        "runtime_ready": False,
         "total_keys_count": 0,
         "valid_keys_count": 0,
+        "users_count": 0,
+        "payments_count": 0,
+        "audit_log_count": 0,
+        "instance_integrity": {"state": "unknown", "issues": []},
         "is_healthy": False,
     }
     db_file = Path(DB_PATH)
@@ -1861,6 +1867,7 @@ async def db_health_info() -> dict[str, Any]:
         col_names = {c[1] for c in cols}
         required = {"user_id", "public_key", "ip"}
         info["has_required_columns"] = required.issubset(col_names)
+        info["schema_ready"] = bool(info["keys_table_exists"] and info["has_required_columns"])
         if info["has_required_columns"]:
             async with db.execute("SELECT COUNT(*) FROM keys") as cursor:
                 info["total_keys_count"] = (await cursor.fetchone())[0]
@@ -1876,7 +1883,54 @@ async def db_health_info() -> dict[str, Any]:
                 """
             ) as cursor:
                 info["valid_keys_count"] = (await cursor.fetchone())[0]
-        info["is_healthy"] = bool(info["keys_table_exists"] and info["has_required_columns"])
+
+            async with db.execute("SELECT COUNT(*) FROM users") as cursor:
+                info["users_count"] = (await cursor.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM payments") as cursor:
+                info["payments_count"] = (await cursor.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM audit_log") as cursor:
+                info["audit_log_count"] = (await cursor.fetchone())[0]
+
+            integrity_issues: list[str] = []
+            historical_signals = int(info["payments_count"]) + int(info["audit_log_count"])
+            if historical_signals > 0 and int(info["users_count"]) == 0 and int(info["total_keys_count"]) == 0:
+                integrity_issues.append(
+                    "Похоже на используемый инстанс, но users/keys пусты (возможна потеря данных после restore/reinstall)."
+                )
+
+            async with db.execute(
+                """
+                SELECT id, client_private_key, psk_key
+                FROM keys
+                WHERE
+                    (client_private_key IS NOT NULL AND TRIM(client_private_key) != '' AND client_private_key LIKE 'enc:%')
+                    OR
+                    (psk_key IS NOT NULL AND TRIM(psk_key) != '' AND psk_key LIKE 'enc:%')
+                ORDER BY id DESC
+                LIMIT 3
+                """
+            ) as cursor:
+                encrypted_rows = await cursor.fetchall()
+            for key_id, client_private_key, psk_key in encrypted_rows:
+                try:
+                    if client_private_key:
+                        decrypt_text(client_private_key)
+                    if psk_key:
+                        decrypt_text(psk_key)
+                except Exception:
+                    integrity_issues.append(
+                        "Обнаружены зашифрованные ключи, которые не расшифровываются текущим ENCRYPTION_SECRET/ENCRYPTION_OLD_SECRETS."
+                    )
+                    logger.error("DB integrity: failed to decrypt encrypted key sample key_id=%s", key_id)
+                    break
+
+            if integrity_issues:
+                info["instance_integrity"] = {"state": "critical", "issues": integrity_issues}
+            else:
+                info["instance_integrity"] = {"state": "ok", "issues": []}
+
+        info["runtime_ready"] = bool(info["schema_ready"] and info["instance_integrity"].get("state") != "critical")
+        info["is_healthy"] = bool(info["runtime_ready"])
         return info
     finally:
         await db.close()

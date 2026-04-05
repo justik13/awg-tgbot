@@ -373,3 +373,57 @@ def test_build_runtime_smokecheck_text_escapes_parser_error_html(monkeypatch):
 
     assert "bad &lt;tag&gt;&amp; value" in text
     assert "bad <tag>& value" not in text
+
+
+def test_smokecheck_marks_instance_integrity_critical_as_failed(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "DOCKER_CONTAINER", "amnezia-awg")
+    monkeypatch.setattr(handlers_admin, "WG_INTERFACE", "awg0")
+    monkeypatch.setattr(handlers_admin, "AWG_HELPER_POLICY_PATH", "/etc/awg-bot-helper.json")
+    monkeypatch.setattr(handlers_admin, "check_awg_container", AsyncMock(return_value=None))
+    monkeypatch.setattr(handlers_admin, "read_helper_policy", lambda _path: ("amnezia-awg", "awg0", ""))
+    monkeypatch.setattr(
+        handlers_admin,
+        "db_health_info",
+        AsyncMock(return_value={
+            "schema_ready": True,
+            "instance_integrity": {
+                "state": "critical",
+                "issues": ["Похоже на используемый инстанс, но users/keys пусты"],
+            },
+            "runtime_ready": False,
+            "is_healthy": False,
+        }),
+    )
+
+    report = asyncio.run(handlers_admin.run_runtime_smokecheck())
+    checks = {item["name"]: item for item in report["checks"]}
+
+    assert report["overall"] == "failed"
+    assert checks["Целостность инстанса"]["state"] == "failed"
+    assert "users/keys пусты" in checks["Целостность инстанса"]["detail"]
+
+
+def test_smokecheck_surfaces_encryption_secret_integrity_failure(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "DOCKER_CONTAINER", "amnezia-awg")
+    monkeypatch.setattr(handlers_admin, "WG_INTERFACE", "awg0")
+    monkeypatch.setattr(handlers_admin, "AWG_HELPER_POLICY_PATH", "/etc/awg-bot-helper.json")
+    monkeypatch.setattr(handlers_admin, "check_awg_container", AsyncMock(return_value=None))
+    monkeypatch.setattr(handlers_admin, "read_helper_policy", lambda _path: ("amnezia-awg", "awg0", ""))
+    monkeypatch.setattr(
+        handlers_admin,
+        "db_health_info",
+        AsyncMock(return_value={
+            "schema_ready": True,
+            "instance_integrity": {
+                "state": "critical",
+                "issues": ["Обнаружены зашифрованные ключи, которые не расшифровываются текущим ENCRYPTION_SECRET/ENCRYPTION_OLD_SECRETS."],
+            },
+            "runtime_ready": False,
+            "is_healthy": False,
+        }),
+    )
+
+    text = asyncio.run(handlers_admin.build_runtime_smokecheck_text())
+
+    assert "ENCRYPTION_SECRET/ENCRYPTION_OLD_SECRETS" in text
+    assert "Итог: <b>ОШИБКА</b>" in text

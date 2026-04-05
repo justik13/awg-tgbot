@@ -50,6 +50,7 @@ AUTO_BACKUP_TIMER_NAME="awg-tgbot-backup.timer"
 AUTO_BACKUP_SERVICE_FILE="/etc/systemd/system/${AUTO_BACKUP_SERVICE_NAME}"
 AUTO_BACKUP_TIMER_FILE="/etc/systemd/system/${AUTO_BACKUP_TIMER_NAME}"
 BACKUP_ROOT="${INSTALL_DIR}/backups"
+SAFETY_SNAPSHOT_PREFIX="${INSTALL_DIR}/.safety-snapshot"
 
 DETECTED_CONTAINER=""
 DETECTED_INTERFACE=""
@@ -487,7 +488,7 @@ ensure_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt_get_safe update -y
   apt_get_safe install -y --no-install-recommends \
-    ca-certificates curl tar gzip openssl sudo python3 python3-venv python3-pip iproute2 psmisc
+    ca-certificates curl tar gzip openssl sudo python3 python3-venv python3-pip iproute2 psmisc nftables
   if ! require_command docker; then
     warn "Docker не найден. Устанавливаю docker.io..."
     apt_get_safe install -y --no-install-recommends docker.io
@@ -1591,6 +1592,7 @@ check_updates() {
 
 install_or_reinstall_flow() {
   local mode="$1" tmp_dir choice api_token admin_id server_name secret value default
+  local pre_reinstall_runtime_snapshot="" pre_reinstall_repo_snapshot=""
   detect_install_state
   if [[ "$STATE_KERNEL_SUPPORTED" != "1" ]]; then
     die "Ядро Linux слишком старое для AWG (нужно >= 5.6)."
@@ -1638,8 +1640,17 @@ install_or_reinstall_flow() {
   detect_awg_environment
   print_detected_awg_summary
 
+  if [[ "$mode" == "reinstall" ]]; then
+    pre_reinstall_repo_snapshot="$(create_repo_snapshot_before_reinstall)"
+    ok "Создан snapshot файлов приложения перед переустановкой: ${pre_reinstall_repo_snapshot}"
+  fi
+
   tmp_dir="$(download_repo)" || die "Не удалось скачать код проекта из GitHub."
   stop_service_if_exists
+  if [[ "$mode" == "reinstall" ]]; then
+    pre_reinstall_runtime_snapshot="$(create_runtime_snapshot_before_reinstall pre-reinstall)"
+    ok "Создан snapshot runtime (DB/.env/state) после остановки сервиса: ${pre_reinstall_runtime_snapshot}"
+  fi
   deploy_repo "$tmp_dir" || { rm -rf "$tmp_dir"; die "Не удалось развернуть файлы проекта."; }
   rm -rf "$tmp_dir"
   ensure_env_file
@@ -1708,6 +1719,14 @@ install_or_reinstall_flow() {
   persist_repo_branch
   persist_remote_sha
   start_service || die "Не удалось запустить сервис."
+  if [[ "$mode" == "reinstall" ]]; then
+    if run_post_restart_smokecheck; then
+      ok "Smokecheck после переустановки пройден."
+    else
+      rollback_failed_reinstall "$pre_reinstall_repo_snapshot" "$pre_reinstall_runtime_snapshot"
+      die "Переустановка не прошла smokecheck. Выполнен rollback к предыдущему рабочему состоянию."
+    fi
+  fi
   ok "Готово. Бот установлен/переустановлен."
   show_status
   echo "Быстрый запуск меню потом: sudo bash ${INSTALL_DIR}/awg-tgbot.sh"
@@ -1733,6 +1752,205 @@ repair_runtime_file_access() {
   [[ -f "$target_path" ]] || return 0
   chown "$BOT_USER:$BOT_USER" "$target_path" 2>/dev/null || true
   chmod "$mode" "$target_path" 2>/dev/null || true
+}
+
+create_runtime_snapshot_before_reinstall() {
+  local snapshot_label="$1"
+  local db_file snapshot_dir
+  db_file="$(get_bot_db_file)"
+  snapshot_dir="$(mktemp -d "${SAFETY_SNAPSHOT_PREFIX}-${snapshot_label}-$(date -u +%Y%m%d_%H%M%S)-XXXXXX")"
+  chmod 700 "$snapshot_dir" || true
+  if [[ -f "$db_file" ]]; then
+    cp -a "$db_file" "$snapshot_dir/db.before"
+  fi
+  if [[ -f "$ENV_FILE" ]]; then
+    cp -a "$ENV_FILE" "$snapshot_dir/.env.before"
+  fi
+  if [[ -f "$VERSION_FILE" ]]; then
+    cp -a "$VERSION_FILE" "$snapshot_dir/version_file.before"
+  fi
+  if [[ -f "$REPO_BRANCH_FILE" ]]; then
+    cp -a "$REPO_BRANCH_FILE" "$snapshot_dir/repo_branch.before"
+  fi
+  printf '%s' "$snapshot_dir"
+}
+
+create_repo_snapshot_before_reinstall() {
+  local snapshot_dir
+  snapshot_dir="$(mktemp -d "${SAFETY_SNAPSHOT_PREFIX}-repo-$(date -u +%Y%m%d_%H%M%S)-XXXXXX")"
+  chmod 700 "$snapshot_dir" || true
+  [[ -d "$BOT_DIR" ]] && cp -a "$BOT_DIR" "$snapshot_dir/bot"
+  [[ -f "$INSTALL_DIR/awg-tgbot.sh" ]] && cp -a "$INSTALL_DIR/awg-tgbot.sh" "$snapshot_dir/awg-tgbot.sh"
+  [[ -d "$INSTALL_DIR/scripts" ]] && cp -a "$INSTALL_DIR/scripts" "$snapshot_dir/scripts"
+  [[ -d "$INSTALL_DIR/packaging" ]] && cp -a "$INSTALL_DIR/packaging" "$snapshot_dir/packaging"
+  printf '%s' "$snapshot_dir"
+}
+
+restore_repo_snapshot_after_failed_reinstall() {
+  local repo_snapshot_dir="$1"
+  [[ -d "$repo_snapshot_dir" ]] || return 1
+  rm -rf "$BOT_DIR" "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging"
+  rm -f "$INSTALL_DIR/awg-tgbot.sh"
+  [[ -d "$repo_snapshot_dir/bot" ]] && cp -a "$repo_snapshot_dir/bot" "$BOT_DIR"
+  [[ -f "$repo_snapshot_dir/awg-tgbot.sh" ]] && cp -a "$repo_snapshot_dir/awg-tgbot.sh" "$INSTALL_DIR/awg-tgbot.sh"
+  [[ -d "$repo_snapshot_dir/scripts" ]] && cp -a "$repo_snapshot_dir/scripts" "$INSTALL_DIR/scripts"
+  [[ -d "$repo_snapshot_dir/packaging" ]] && cp -a "$repo_snapshot_dir/packaging" "$INSTALL_DIR/packaging"
+  [[ -f "$INSTALL_DIR/awg-tgbot.sh" ]] && chmod +x "$INSTALL_DIR/awg-tgbot.sh" || true
+  [[ -f "$AUTO_BACKUP_SCRIPT" ]] && chmod +x "$AUTO_BACKUP_SCRIPT" || true
+  ln -sfn "$INSTALL_DIR/awg-tgbot.sh" "$SELF_SYMLINK" || true
+  return 0
+}
+
+run_post_restart_smokecheck() {
+  local failed=0 env_container env_interface policy_container policy_interface policy_error db_result runtime_python awg_check_output awg_check_rc=0
+
+  if ! service_exists || [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" != "active" ]]; then
+    warn "Smokecheck: сервис ${SERVICE_NAME} не в состоянии active."
+    failed=1
+  fi
+
+  env_container="$(get_env_value DOCKER_CONTAINER)"
+  env_interface="$(get_env_value WG_INTERFACE)"
+  IFS=$'\t' read -r policy_container policy_interface policy_error < <(read_helper_policy_state)
+  if [[ -n "$policy_error" ]]; then
+    warn "Smokecheck: helper policy недоступна/невалидна: ${policy_error}"
+    failed=1
+  fi
+  if [[ -z "$env_container" || -z "$env_interface" ]]; then
+    warn "Smokecheck: DOCKER_CONTAINER/WG_INTERFACE не заданы в .env."
+    failed=1
+  fi
+  if [[ -n "$env_container" && -n "$env_interface" && -z "$policy_error" ]] && [[ "$policy_container" != "$env_container" || "$policy_interface" != "$env_interface" ]]; then
+    warn "Smokecheck: helper policy не совпадает с .env (${policy_container}/${policy_interface} != ${env_container}/${env_interface})."
+    failed=1
+  fi
+
+  if [[ ! -x "$AWG_HELPER_TARGET" ]]; then
+    warn "Проверка после перезапуска: helper ${AWG_HELPER_TARGET} не найден/не исполняемый."
+    failed=1
+  elif [[ -n "$policy_error" ]]; then
+    warn "Проверка после перезапуска: check-awg пропущен из-за ошибки helper policy."
+    failed=1
+  else
+    set +e
+    awg_check_output="$("$AWG_HELPER_TARGET" check-awg 2>&1)"
+    awg_check_rc=$?
+    set -e
+    if [[ "$awg_check_rc" -ne 0 ]]; then
+      warn "Проверка после перезапуска: AWG check-awg завершился ошибкой (rc=${awg_check_rc}, output=${awg_check_output:-no-output})."
+      failed=1
+    fi
+  fi
+
+  runtime_python="$PYTHON_BIN"
+  [[ -x "${VENV_DIR}/bin/python" ]] && runtime_python="${VENV_DIR}/bin/python"
+  db_result="$("$runtime_python" - "$BOT_DIR" "$ENV_FILE" <<'PY' 2>/dev/null || true
+import asyncio
+import os
+import sys
+
+bot_dir, env_file = sys.argv[1], sys.argv[2]
+if os.path.isfile(env_file):
+    for raw in open(env_file, "r", encoding="utf-8").read().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        os.environ.setdefault(key, value.strip())
+sys.path.insert(0, bot_dir)
+from database import db_health_info  # noqa: E402
+
+info = asyncio.run(db_health_info())
+if not info.get("schema_ready"):
+    print("schema_not_ready")
+    raise SystemExit(1)
+if not info.get("runtime_ready"):
+    integrity = info.get("instance_integrity") if isinstance(info.get("instance_integrity"), dict) else {}
+    issues = integrity.get("issues") if isinstance(integrity.get("issues"), list) else []
+    suffix = "; ".join(str(item) for item in issues if str(item).strip()) or "no_integrity_details"
+    print(f"runtime_not_ready:{suffix}")
+    raise SystemExit(1)
+print("runtime_ready")
+PY
+)"
+  if [[ "$db_result" == "schema_not_ready" ]]; then
+    warn "Проверка после перезапуска: проверка БД не пройдена (schema_ready=false)."
+    failed=1
+  elif [[ "$db_result" == runtime_not_ready:* ]]; then
+    warn "Проверка после перезапуска: проверка БД не пройдена (runtime_ready=false, ${db_result#runtime_not_ready:})."
+    failed=1
+  elif [[ "$db_result" != "runtime_ready" ]]; then
+    warn "Проверка после перезапуска: проверка БД не пройдена (${db_result:-unknown})."
+    failed=1
+  fi
+
+  [[ "$failed" == "0" ]]
+}
+
+rollback_failed_reinstall() {
+  local repo_snapshot_dir="$1" runtime_snapshot_dir="$2"
+  local db_file restore_repo_ok=0 restore_runtime_ok=0 restore_meta_ok=0 deps_ok=0 helper_sync_ok=0 post_rollback_smoke_ok=0
+  db_file="$(get_bot_db_file)"
+  warn "Переустановка завершилась с ошибкой smokecheck. Выполняю аварийный rollback."
+
+  if restore_repo_snapshot_after_failed_reinstall "$repo_snapshot_dir"; then
+    restore_repo_ok=1
+  else
+    warn "Rollback: не удалось восстановить файлы репозитория из ${repo_snapshot_dir}."
+  fi
+
+  if [[ -f "$runtime_snapshot_dir/db.before" ]]; then
+    install -m 600 "$runtime_snapshot_dir/db.before" "$db_file" || true
+    repair_runtime_file_access "$db_file" 600
+    restore_runtime_ok=1
+  fi
+  if [[ -f "$runtime_snapshot_dir/.env.before" ]]; then
+    install -m 600 "$runtime_snapshot_dir/.env.before" "$ENV_FILE" || true
+    repair_runtime_file_access "$ENV_FILE" 600
+    restore_runtime_ok=1
+  fi
+
+  if [[ -f "$runtime_snapshot_dir/version_file.before" ]]; then
+    if install -m 600 "$runtime_snapshot_dir/version_file.before" "$VERSION_FILE"; then
+      restore_meta_ok=1
+    fi
+  else
+    rm -f "$VERSION_FILE" || true
+    restore_meta_ok=1
+  fi
+  if [[ -f "$runtime_snapshot_dir/repo_branch.before" ]]; then
+    if install -m 600 "$runtime_snapshot_dir/repo_branch.before" "$REPO_BRANCH_FILE"; then
+      restore_meta_ok=1
+    fi
+  fi
+
+  if ensure_venv_and_requirements; then
+    deps_ok=1
+  else
+    warn "Rollback: не удалось переустановить зависимости для восстановленного requirements.txt."
+  fi
+
+  if sync_awg_helper_policy_from_env; then
+    helper_sync_ok=1
+  else
+    warn "Rollback: не удалось синхронизировать helper policy из восстановленного .env."
+  fi
+  start_service || true
+  if run_post_restart_smokecheck; then
+    post_rollback_smoke_ok=1
+    warn "Rollback выполнен: предыдущий runtime снова проходит проверку после перезапуска."
+  else
+    warn "Rollback выполнен частично: сервис после rollback всё ещё не проходит проверку после перезапуска."
+  fi
+
+  if [[ "$restore_repo_ok" == "1" && "$restore_runtime_ok" == "1" && "$restore_meta_ok" == "1" && "$deps_ok" == "1" && "$helper_sync_ok" == "1" && "$post_rollback_smoke_ok" == "1" ]]; then
+    warn "Переустановка не удалась; rollback выполнен полностью (код+DB+.env+state+deps), helper policy: ok, post-rollback проверка: ok."
+  else
+    warn "Переустановка не удалась; rollback выполнен частично (repo=${restore_repo_ok}, runtime=${restore_runtime_ok}, state=${restore_meta_ok}, deps=${deps_ok}, helper policy=${helper_sync_ok}, post-rollback проверка=${post_rollback_smoke_ok})."
+  fi
 }
 
 create_local_backup() {
@@ -1789,7 +2007,7 @@ restore_from_backup() {
   local backup_root="${BACKUP_ROOT}"
   local selected_index="" selected_archive="" confirm_restore=""
   local db_file db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before
-  local restore_ok=0 rollback_ok=0
+  local restore_ok=0 rollback_ok=0 smokecheck_ok=0 helper_sync_ok=0 rollback_helper_sync_ok=0 rollback_smoke_ok=0
   mapfile -t archives < <(find "$backup_root" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' | sort -r)
   if [[ ${#archives[@]} -eq 0 ]]; then
     warn "Локальные бэкапы не найдены: ${backup_root}"
@@ -1861,11 +2079,51 @@ restore_from_backup() {
     return 1
   fi
 
+  if ! sync_awg_helper_policy_from_env; then
+    warn "Восстановление: не удалось синхронизировать helper policy из восстановленного .env."
+    restore_ok=0
+  else
+    helper_sync_ok=1
+  fi
+
   if require_command systemctl && service_exists; then
     systemctl start "$SERVICE_NAME" 2>/dev/null || true
   fi
+
+  if [[ "$restore_ok" == "1" ]] && run_post_restart_smokecheck; then
+    smokecheck_ok=1
+  fi
+
+  if [[ "$restore_ok" != "1" || "$smokecheck_ok" != "1" ]]; then
+    warn "Восстановление не прошло post-restore smokecheck. Запускаю rollback."
+    if [[ -f "$snapshot_dir/${db_basename}.before" ]]; then install -m 600 "$snapshot_dir/${db_basename}.before" "$db_file" && rollback_ok=1; fi
+    if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
+    repair_runtime_file_access "$db_file" 600
+    repair_runtime_file_access "$ENV_FILE" 600
+    if sync_awg_helper_policy_from_env; then
+      rollback_helper_sync_ok=1
+    else
+      warn "Rollback restore: не удалось синхронизировать helper policy."
+    fi
+    if require_command systemctl && service_exists; then
+      systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+    fi
+    if run_post_restart_smokecheck; then
+      rollback_smoke_ok=1
+    fi
+    if [[ "$rollback_ok" == "1" && "$rollback_helper_sync_ok" == "1" && "$rollback_smoke_ok" == "1" ]]; then
+      warn "Восстановление не удалось; rollback выполнен полностью (runtime восстановлен, helper policy: ok, post-rollback проверка: ok)."
+    else
+      warn "Восстановление не удалось; rollback выполнен частично (runtime=${rollback_ok}, helper policy=${rollback_helper_sync_ok}, post-rollback проверка=${rollback_smoke_ok})."
+    fi
+    return 1
+  fi
+
   echo "Восстановление завершено."
   echo "Права файлов восстановлены для ${BOT_USER}: ${db_file}, ${ENV_FILE}"
+  if [[ "$helper_sync_ok" == "1" ]]; then
+    echo "Helper policy sync: успешно."
+  fi
   if require_command systemctl && service_exists; then
     echo "Сервис: $(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true) (enabled: ${service_enabled_before:-unknown})"
   fi
