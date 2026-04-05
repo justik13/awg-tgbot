@@ -347,39 +347,49 @@ def _render_awg_sync_report_text(report: dict[str, object]) -> str:
         "🔄 <b>Проверка и синхронизация AWG</b>",
         "",
         _format_awg_sync_step(
-            "Pending reconcile",
+            "Сверка pending",
             pending,
             keys=("activated", "deleted", "marked_manual", "awg_removed"),
-            label_map={"activated": "activated", "deleted": "deleted", "marked_manual": "marked_manual", "awg_removed": "awg_removed"},
+            label_map={
+                "activated": "активировано",
+                "deleted": "удалено",
+                "marked_manual": "помечено_вручную",
+                "awg_removed": "удалено_из_awg",
+            },
         ),
         _format_awg_sync_step(
-            "Active reconcile",
+            "Сверка active",
             active,
             keys=("restored", "already_present", "failed", "skipped_invalid_secret"),
-            label_map={"restored": "restored", "already_present": "already_present", "failed": "failed", "skipped_invalid_secret": "skipped_invalid_secret"},
+            label_map={
+                "restored": "восстановлено",
+                "already_present": "уже_есть",
+                "failed": "ошибок",
+                "skipped_invalid_secret": "пропущено_битых_секретов",
+            },
         ),
     ]
     if traffic.get("status") == "ok":
-        lines.append(f"• <b>Traffic sync:</b> touched={traffic.get('value', 0)}")
+        lines.append(f"• <b>Синхронизация трафика:</b> обновлено={traffic.get('value', 0)}")
     else:
-        lines.append(f"• <b>Traffic sync:</b> ошибка — <code>{escape_html(str(traffic.get('error') or 'неизвестно'))}</code>")
+        lines.append(f"• <b>Синхронизация трафика:</b> ошибка — <code>{escape_html(str(traffic.get('error') or 'неизвестно'))}</code>")
     if db_block.get("status") == "ok":
         db_info = db_block.get("value") if isinstance(db_block.get("value"), dict) else {}
         lines.append(
-            "• <b>DB health:</b> "
-            f"exists={'да' if db_info.get('exists') else 'нет'}, "
-            f"keys_table={'да' if db_info.get('keys_table_exists') else 'нет'}, "
-            f"required_columns={'да' if db_info.get('has_required_columns') else 'нет'}, "
-            f"valid_keys={db_info.get('valid_keys_count', 0)}"
+            "• <b>Состояние БД:</b> "
+            f"файл_бд={'да' if db_info.get('exists') else 'нет'}, "
+            f"таблица_keys={'да' if db_info.get('keys_table_exists') else 'нет'}, "
+            f"нужные_колонки={'да' if db_info.get('has_required_columns') else 'нет'}, "
+            f"валидных_ключей={db_info.get('valid_keys_count', 0)}"
         )
     else:
-        lines.append(f"• <b>DB health:</b> ошибка — <code>{escape_html(str(db_block.get('error') or 'неизвестно'))}</code>")
+        lines.append(f"• <b>Состояние БД:</b> ошибка — <code>{escape_html(str(db_block.get('error') or 'неизвестно'))}</code>")
     if orphan_block.get("status") == "ok":
         orphans = orphan_block.get("value")
         orphan_count = len(orphans) if isinstance(orphans, list) else 0
-        lines.append(f"• <b>Orphan peers:</b> count={orphan_count}")
+        lines.append(f"• <b>Потерянные peer:</b> количество={orphan_count}")
     else:
-        lines.append(f"• <b>Orphan peers:</b> ошибка — <code>{escape_html(str(orphan_block.get('error') or 'неизвестно'))}</code>")
+        lines.append(f"• <b>Потерянные peer:</b> ошибка — <code>{escape_html(str(orphan_block.get('error') or 'неизвестно'))}</code>")
     return "\n".join(lines)
 
 

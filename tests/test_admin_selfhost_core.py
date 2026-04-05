@@ -259,13 +259,13 @@ def test_build_awg_sync_text_includes_reconcile_and_diagnostics(monkeypatch):
     text = asyncio.run(handlers_admin.build_awg_sync_text())
 
     assert "Проверка и синхронизация AWG" in text
-    assert "Pending reconcile" in text
-    assert "activated=2" in text
-    assert "Active reconcile" in text
-    assert "restored=3" in text
-    assert "Traffic sync" in text and "touched=7" in text
-    assert "DB health" in text and "valid_keys=11" in text
-    assert "Orphan peers" in text and "count=1" in text
+    assert "Сверка pending" in text
+    assert "активировано=2" in text
+    assert "Сверка active" in text
+    assert "восстановлено=3" in text
+    assert "Синхронизация трафика" in text and "обновлено=7" in text
+    assert "Состояние БД" in text and "валидных_ключей=11" in text
+    assert "Потерянные peer" in text and "количество=1" in text
 
 
 def test_build_awg_sync_text_renders_partial_failure_without_traceback(monkeypatch):
@@ -277,8 +277,8 @@ def test_build_awg_sync_text_renders_partial_failure_without_traceback(monkeypat
 
     text = asyncio.run(handlers_admin.build_awg_sync_text())
 
-    assert "Pending reconcile" in text and "ошибка" in text
-    assert "Active reconcile" in text and "restored=1" in text
+    assert "Сверка pending" in text and "ошибка" in text
+    assert "Сверка active" in text and "восстановлено=1" in text
     assert "Traceback" not in text
     assert "File \"" not in text
 
