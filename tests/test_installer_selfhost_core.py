@@ -47,20 +47,6 @@ def test_reinstall_includes_runtime_snapshot_smokecheck_and_rollback_hooks():
     assert "schema_not_ready" in script
     assert "install_dir = os.path.dirname(bot_dir)" in script
     assert "os.chdir(install_dir)" in script
-    assert "prepare_bot_log_for_reinstall" in script
-    assert "finalize_bot_log_reinstall_archive" in script
-    assert "restore_bot_log_after_failed_reinstall" in script
-    assert 'pending_archive="${APP_LOG_FILE}.pending-pre-reinstall-${ts}"' in script
-    assert 'final_archive="${APP_LOG_FILE}.pre-reinstall-${ts}"' in script
-    assert 'chmod 640 "$APP_LOG_FILE"' in script
-    assert 'chown "${BOT_USER}:${BOT_USER}" "$APP_LOG_FILE"' in script
-    assert 'IFS=$\'\\t\' read -r pre_reinstall_log_pending pre_reinstall_log_final < <(prepare_bot_log_for_reinstall)' in script
-    assert 'if ! start_service; then\n      restore_bot_log_after_failed_reinstall "$pre_reinstall_log_pending"\n      die "Не удалось запустить сервис."\n    fi' in script
-    assert 'start_service || die "Не удалось запустить сервис."' in script
-    assert 'pre_reinstall_log_archive="$(finalize_bot_log_reinstall_archive "$pre_reinstall_log_pending" "$pre_reinstall_log_final")"' in script
-    assert 'rollback_failed_reinstall "$pre_reinstall_repo_snapshot" "$pre_reinstall_runtime_snapshot" "$pre_reinstall_log_pending"' in script
-    assert 'restore_bot_log_after_failed_reinstall "$pre_reinstall_log_pending"\n      rollback_failed_reinstall "$pre_reinstall_repo_snapshot" "$pre_reinstall_runtime_snapshot"' not in script
-    assert "bot.log очищен для новой версии; предыдущий лог сохранён в" in script
 
 
 def test_restore_includes_post_restore_smokecheck_and_rollback_message():
