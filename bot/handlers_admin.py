@@ -546,9 +546,12 @@ def _denylist_history_block(*, enabled: int, metrics: dict[str, int]) -> list[st
         if last_clear_ok == 1:
             current_state_line = "Текущее состояние: <b>denylist выключен, синхронизация сейчас не выполняется</b>"
             current_entries_line = "Текущих записей denylist: <b>0</b>"
-        else:
+        elif last_clear_ok == 0:
             current_state_line = "Текущее состояние: <b>denylist выключен, но последняя очистка завершилась ошибкой</b>"
             current_entries_line = "Текущие правила denylist: <b>нужно проверить вручную</b>"
+        else:
+            current_state_line = "Текущее состояние: <b>denylist выключен, состояние правил не подтверждено</b>"
+            current_entries_line = "Текущие правила denylist: <b>проверь вручную или выполни sync/clear</b>"
         return [
             current_state_line,
             current_entries_line,
@@ -557,8 +560,8 @@ def _denylist_history_block(*, enabled: int, metrics: dict[str, int]) -> list[st
         ]
     sync_status = "не было" if last_sync_ts <= 0 else _sync_status_text(last_sync_ok)
     return [
-        f"Последний sync denylist: <b>{sync_status}</b>",
-        f"Время последнего sync denylist: <b>{_sync_time_or_ne_bilo(last_sync_ts)}</b>",
+        f"Статус последней попытки sync denylist: <b>{sync_status}</b>",
+        f"Время последнего успешного sync denylist: <b>{_sync_time_or_ne_bilo(last_sync_ts)}</b>",
         f"Текущих записей denylist: <b>{entries}</b>",
         f"Ошибки denylist: <b>{errors}</b>",
     ]

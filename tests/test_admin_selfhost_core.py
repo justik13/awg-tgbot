@@ -44,10 +44,16 @@ def test_network_policy_keyboards_have_explicit_labels():
 
 
 def test_policy_metrics_keeps_denylist_fields(monkeypatch):
-    monkeypatch.setattr(network_policy, "get_metric", AsyncMock(side_effect=[4, 1, 2, 7, 1]))
+    monkeypatch.setattr(network_policy, "get_metric", AsyncMock(side_effect=[1, 1, 4, 1, 2, 7]))
     metrics = asyncio.run(network_policy.policy_metrics())
     assert metrics["denylist_last_sync_ts"] == 2
     assert metrics["denylist_last_clear_ok"] == 1
+
+
+def test_policy_metrics_returns_unknown_clear_state_when_not_initialized(monkeypatch):
+    monkeypatch.setattr(network_policy, "get_metric", AsyncMock(side_effect=[0, 0, 4, 1, 2, 7]))
+    metrics = asyncio.run(network_policy.policy_metrics())
+    assert metrics["denylist_last_clear_ok"] == -1
 
 
 def test_network_policy_screen_renders_state(monkeypatch):
@@ -106,6 +112,25 @@ def test_network_policy_screen_disabled_denylist_shows_unknown_state_after_faile
     assert "Текущих записей denylist: <b>0</b>" not in text
 
 
+def test_network_policy_screen_disabled_denylist_shows_unknown_state_when_not_confirmed(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "policy_metrics", AsyncMock(return_value={
+        "denylist_errors": 0,
+        "denylist_last_sync_ok": 0,
+        "denylist_last_sync_ts": 0,
+        "denylist_entries": 0,
+        "denylist_last_clear_ok": -1,
+    }))
+    monkeypatch.setattr(handlers_admin, "DOCKER_CONTAINER", "amnezia-awg2")
+    monkeypatch.setattr(handlers_admin, "WG_INTERFACE", "awg0")
+    monkeypatch.setattr(handlers_admin, "get_setting", AsyncMock(side_effect=[0, "soft", 30]))
+
+    text = asyncio.run(handlers_admin._render_network_policy_text())
+
+    assert "состояние правил не подтверждено" in text
+    assert "проверь вручную или выполни sync/clear" in text
+    assert "последняя очистка завершилась ошибкой" not in text
+
+
 def test_health_text_denylist_uses_human_labels(monkeypatch):
     monkeypatch.setattr(handlers_admin, "get_pending_jobs_stats", AsyncMock(return_value={
         "received": 1,
@@ -131,7 +156,7 @@ def test_health_text_denylist_uses_human_labels(monkeypatch):
     text = asyncio.run(handlers_admin.build_health_text())
 
     assert "Denylist: <b>включено</b> · режим: <b>soft</b>" in text
-    assert "Последний sync denylist: <b>не было</b>" in text
+    assert "Статус последней попытки sync denylist: <b>не было</b>" in text
     assert "Последняя синхронизация denylist: <b>1</b>" not in text
 
 
@@ -151,8 +176,8 @@ def test_denylist_status_cmd_no_raw_sync_values(monkeypatch):
     asyncio.run(handlers_admin.denylist_status_cmd(message))
     sent = message.answer.await_args.args[0]
 
-    assert "Последний sync denylist: <b>ошибка</b>" in sent
-    assert "Время последнего sync denylist: <b>09.03.2024 16:00</b>" in sent
+    assert "Статус последней попытки sync denylist: <b>ошибка</b>" in sent
+    assert "Время последнего успешного sync denylist: <b>09.03.2024 16:00</b>" in sent
     assert "Последняя синхронизация denylist: 0" not in sent
     assert "1710000000" not in sent
 
@@ -170,6 +195,7 @@ def test_denylist_sync_disabled_resets_entries_after_clear(monkeypatch):
     network_policy.set_metric.assert_has_awaits([
         call("denylist_entries", 0),
         call("denylist_last_clear_ok", 1),
+        call("denylist_last_clear_known", 1),
     ])
     network_policy.increment_metric.assert_not_called()
 
@@ -186,7 +212,10 @@ def test_denylist_sync_disabled_counts_errors_on_clear_failure(monkeypatch):
     asyncio.run(network_policy.denylist_sync(run_docker))
 
     network_policy.increment_metric.assert_awaited_once_with("denylist_errors")
-    network_policy.set_metric.assert_awaited_once_with("denylist_last_clear_ok", 0)
+    network_policy.set_metric.assert_has_awaits([
+        call("denylist_last_clear_ok", 0),
+        call("denylist_last_clear_known", 1),
+    ])
     logger_mock.warning.assert_called_once()
 
 
