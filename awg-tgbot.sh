@@ -310,7 +310,7 @@ write_awg_helper_policy() {
   cat > "$tmp" <<POLICY
 {
   "container": "${container}",
-  "interface": "${interface}",
+  "interface": "${interface}"
 }
 POLICY
   install -o root -g "$BOT_USER" -m 640 "$tmp" "$AWG_HELPER_POLICY"
@@ -339,6 +339,37 @@ with open(path, "r", encoding="utf-8") as f:
     data = json.load(f)
 value = data.get(key, "")
 print(value if isinstance(value, str) else "")
+PY
+}
+
+read_helper_policy_state() {
+  [[ -f "$AWG_HELPER_POLICY" ]] || {
+    printf '\t\t'
+    return 0
+  }
+  "$PYTHON_BIN" - "$AWG_HELPER_POLICY" <<'PY'
+import json, sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+container = ""
+interface = ""
+error = ""
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    error = f"helper policy parse failed: {exc}"
+else:
+    if not isinstance(data, dict):
+        error = "helper policy must be a JSON object"
+    else:
+        container = data.get("container", "")
+        interface = data.get("interface", "")
+        if not isinstance(container, str):
+            container = ""
+        if not isinstance(interface, str):
+            interface = ""
+print(f"{container}\t{interface}\t{error}")
 PY
 }
 
@@ -970,7 +1001,7 @@ print_update_status_line() {
 
 
 print_detailed_startup_summary() {
-  local ab_stats ab_latest ab_count env_container env_interface policy_container policy_interface
+  local ab_stats ab_latest ab_count env_container env_interface policy_container policy_interface policy_error
   print_line
   echo "Предварительная проверка:"
   echo "AWG: $(status_found_text "$STATE_AWG_FOUND")"
@@ -994,9 +1025,11 @@ print_detailed_startup_summary() {
   env_interface="$(get_env_value WG_INTERFACE)"
   echo "AWG target (.env): ${env_container:-не задан}/${env_interface:-не задан}"
   if [[ -f "$AWG_HELPER_POLICY" ]]; then
-    policy_container="$(helper_policy_field container)"
-    policy_interface="$(helper_policy_field interface)"
+    IFS=$'\t' read -r policy_container policy_interface policy_error < <(read_helper_policy_state)
     echo "AWG target (helper policy): ${policy_container:-не задан}/${policy_interface:-не задан}"
+    if [[ -n "$policy_error" ]]; then
+      warn "$policy_error (${AWG_HELPER_POLICY})"
+    fi
   fi
   echo "Служебное состояние установки: $(status_found_text "$STATE_BOT_STATE_FOUND")"
   ab_stats="$(autobackup_archive_stats)"
@@ -1457,7 +1490,7 @@ stop_service_if_exists() {
 }
 
 show_status() {
-  local active_state enabled_state local_sha branch_info env_state env_container env_interface policy_container policy_interface docker_membership
+  local active_state enabled_state local_sha branch_info env_state env_container env_interface policy_container policy_interface policy_error docker_membership
   local ab_stats ab_latest ab_count
   local remote_sha
   detect_install_state
@@ -1477,8 +1510,7 @@ show_status() {
   [[ -f "$ENV_FILE" ]] && env_state="есть"
   env_container="$(get_env_value DOCKER_CONTAINER)"
   env_interface="$(get_env_value WG_INTERFACE)"
-  policy_container="$(helper_policy_field container)"
-  policy_interface="$(helper_policy_field interface)"
+  IFS=$'\t' read -r policy_container policy_interface policy_error < <(read_helper_policy_state)
   ab_stats="$(autobackup_archive_stats)"
   ab_latest="${ab_stats%%|*}"
   ab_count="${ab_stats##*|}"
@@ -1510,7 +1542,9 @@ show_status() {
   echo "AWG target (.env): ${env_container:-не задан}/${env_interface:-не задан}"
   if [[ -f "$AWG_HELPER_POLICY" ]]; then
     echo "AWG target (helper policy): ${policy_container:-не задан}/${policy_interface:-не задан}"
-    if [[ -n "$env_container" && -n "$env_interface" ]] && [[ "$env_container" != "$policy_container" || "$env_interface" != "$policy_interface" ]]; then
+    if [[ -n "$policy_error" ]]; then
+      warn "$policy_error (${AWG_HELPER_POLICY})"
+    elif [[ -n "$env_container" && -n "$env_interface" ]] && [[ "$env_container" != "$policy_container" || "$env_interface" != "$policy_interface" ]]; then
       warn "Обнаружен рассинхрон .env и helper policy. Выполни: sudo awg-tgbot sync-helper-policy"
     fi
   else
@@ -2329,6 +2363,7 @@ watch_logs_live() {
 show_logs_doctor() {
   local active="unknown" enabled="unknown"
   local journal_hits="" bot_hits=""
+  local env_container="" env_interface="" policy_container="" policy_interface="" policy_error=""
   detect_install_state
   refresh_update_status_quiet
   clear_if_tty
@@ -2359,6 +2394,12 @@ show_logs_doctor() {
   if service_exists && [[ "$active" != "active" ]]; then
     screen_warn "Сервис не запущен или работает нестабильно."
   fi
+  env_container="$(get_env_value DOCKER_CONTAINER)"
+  env_interface="$(get_env_value WG_INTERFACE)"
+  IFS=$'\t' read -r policy_container policy_interface policy_error < <(read_helper_policy_state)
+  if [[ -n "$policy_error" ]]; then
+    screen_warn "$policy_error (${AWG_HELPER_POLICY})"
+  fi
 
   screen_line
   screen_echo "Последние важные сообщения сервиса:"
@@ -2386,10 +2427,17 @@ show_logs_doctor() {
   if [[ "$STATE_AWG_FOUND" != "1" ]]; then
     screen_echo "• Проверь контейнер AWG и имя интерфейса в .env (DOCKER_CONTAINER / WG_INTERFACE)."
   fi
+  if [[ -n "$policy_error" ]]; then
+    screen_echo "• КРИТИЧНО: исправь JSON в /etc/awg-bot-helper.json."
+    screen_echo "• Проверь container/interface в helper policy и .env."
+    screen_echo "• Затем перезапусти vpn-bot.service."
+  elif [[ -n "$env_container" && -n "$env_interface" ]] && [[ "$policy_container" != "$env_container" || "$policy_interface" != "$env_interface" ]]; then
+    screen_echo "• Проверь container/interface в /etc/awg-bot-helper.json и синхронизируй policy."
+  fi
   if service_exists && [[ "$active" != "active" ]]; then
     screen_echo "• Открой «Лог сервиса» и посмотри последние ошибки перед перезапуском."
   fi
-  if [[ "$STATE_DOCKER_DAEMON" == "1" && "$STATE_AWG_FOUND" == "1" ]] && { ! service_exists || [[ "$active" == "active" ]]; }; then
+  if [[ "$STATE_DOCKER_DAEMON" == "1" && "$STATE_AWG_FOUND" == "1" && -z "$policy_error" ]] && { ! service_exists || [[ "$active" == "active" ]]; }; then
     screen_echo "• Критичных проблем не найдено. Если есть жалобы, открой «Лог бота» и «Лог сервиса»."
   fi
 

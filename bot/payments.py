@@ -125,7 +125,7 @@ async def checkout_readiness() -> tuple[bool, str]:
     try:
         if not DOCKER_CONTAINER or not WG_INTERFACE:
             raise RuntimeError("missing_awg_target")
-        policy_container, policy_interface, _, policy_error = read_helper_policy(Path(AWG_HELPER_POLICY_PATH))
+        policy_container, policy_interface, policy_error = read_helper_policy(Path(AWG_HELPER_POLICY_PATH))
         if policy_error:
             raise RuntimeError(policy_error)
         if policy_container != DOCKER_CONTAINER or policy_interface != WG_INTERFACE:
