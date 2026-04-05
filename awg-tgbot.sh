@@ -360,12 +360,15 @@ try:
 except Exception as exc:
     error = f"helper policy parse failed: {exc}"
 else:
-    container = data.get("container", "")
-    interface = data.get("interface", "")
-    if not isinstance(container, str):
-        container = ""
-    if not isinstance(interface, str):
-        interface = ""
+    if not isinstance(data, dict):
+        error = "helper policy must be a JSON object"
+    else:
+        container = data.get("container", "")
+        interface = data.get("interface", "")
+        if not isinstance(container, str):
+            container = ""
+        if not isinstance(interface, str):
+            interface = ""
 print(f"{container}\t{interface}\t{error}")
 PY
 }

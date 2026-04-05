@@ -25,3 +25,9 @@ def test_logs_doctor_marks_helper_policy_parse_error_as_critical():
     assert "helper policy parse failed:" in script
     assert "КРИТИЧНО: исправь JSON в /etc/awg-bot-helper.json." in script
     assert '&& -z "$policy_error"' in script
+
+
+def test_helper_policy_non_object_json_is_handled_as_structured_error():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "if not isinstance(data, dict):" in script
+    assert 'error = "helper policy must be a JSON object"' in script
