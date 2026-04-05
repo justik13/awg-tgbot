@@ -1490,6 +1490,56 @@ stop_service_if_exists() {
   return 0
 }
 
+prepare_bot_log_for_reinstall() {
+  local pending_archive="" final_archive="" ts log_dir
+  log_dir="$(dirname "$APP_LOG_FILE")"
+  mkdir -p "$log_dir" 2>/dev/null || true
+
+  if [[ -s "$APP_LOG_FILE" ]]; then
+    ts="$(date +%Y%m%d_%H%M%S)"
+    pending_archive="${APP_LOG_FILE}.pending-pre-reinstall-${ts}"
+    final_archive="${APP_LOG_FILE}.pre-reinstall-${ts}"
+    if ! mv "$APP_LOG_FILE" "$pending_archive" 2>/dev/null; then
+      warn "Не удалось архивировать bot.log перед переустановкой (${APP_LOG_FILE})."
+      pending_archive=""
+      final_archive=""
+    fi
+  fi
+
+  if ! touch "$APP_LOG_FILE" 2>/dev/null; then
+    warn "Не удалось подготовить новый bot.log (${APP_LOG_FILE})."
+    printf '%s\t%s' "$pending_archive" "$final_archive"
+    return 0
+  fi
+  chown "${BOT_USER}:${BOT_USER}" "$APP_LOG_FILE" 2>/dev/null || warn "Не удалось выставить владельца ${BOT_USER}:${BOT_USER} для ${APP_LOG_FILE}."
+  chmod 640 "$APP_LOG_FILE" 2>/dev/null || warn "Не удалось выставить права 640 для ${APP_LOG_FILE}."
+  printf '%s\t%s' "$pending_archive" "$final_archive"
+}
+
+finalize_bot_log_reinstall_archive() {
+  local pending_archive="$1" final_archive="$2"
+  [[ -n "$pending_archive" && -n "$final_archive" ]] || return 0
+  [[ -f "$pending_archive" ]] || return 0
+  if mv "$pending_archive" "$final_archive" 2>/dev/null; then
+    printf '%s' "$final_archive"
+  else
+    warn "Не удалось завершить архивирование bot.log после переустановки (${pending_archive} -> ${final_archive})."
+  fi
+}
+
+restore_bot_log_after_failed_reinstall() {
+  local pending_archive="$1"
+  [[ -n "$pending_archive" ]] || return 0
+  [[ -f "$pending_archive" ]] || return 0
+  rm -f "$APP_LOG_FILE" 2>/dev/null || true
+  if ! mv "$pending_archive" "$APP_LOG_FILE" 2>/dev/null; then
+    warn "Не удалось восстановить предыдущий bot.log после неудачной переустановки (${pending_archive})."
+    return 0
+  fi
+  chown "${BOT_USER}:${BOT_USER}" "$APP_LOG_FILE" 2>/dev/null || true
+  chmod 640 "$APP_LOG_FILE" 2>/dev/null || true
+}
+
 show_status() {
   local active_state enabled_state local_sha branch_info env_state env_container env_interface policy_container policy_interface policy_error docker_membership
   local ab_stats ab_latest ab_count
@@ -1592,7 +1642,7 @@ check_updates() {
 
 install_or_reinstall_flow() {
   local mode="$1" tmp_dir choice api_token admin_id server_name secret value default
-  local pre_reinstall_runtime_snapshot="" pre_reinstall_repo_snapshot=""
+  local pre_reinstall_runtime_snapshot="" pre_reinstall_repo_snapshot="" pre_reinstall_log_pending="" pre_reinstall_log_final="" pre_reinstall_log_archive=""
   detect_install_state
   if [[ "$STATE_KERNEL_SUPPORTED" != "1" ]]; then
     die "Ядро Linux слишком старое для AWG (нужно >= 5.6)."
@@ -1718,12 +1768,24 @@ install_or_reinstall_flow() {
   configure_autobackup_timer || die "Не удалось настроить systemd timer autobackup."
   persist_repo_branch
   persist_remote_sha
-  start_service || die "Не удалось запустить сервис."
+  if [[ "$mode" == "reinstall" ]]; then
+    IFS=$'\t' read -r pre_reinstall_log_pending pre_reinstall_log_final < <(prepare_bot_log_for_reinstall)
+    if ! start_service; then
+      restore_bot_log_after_failed_reinstall "$pre_reinstall_log_pending"
+      die "Не удалось запустить сервис."
+    fi
+  else
+    start_service || die "Не удалось запустить сервис."
+  fi
   if [[ "$mode" == "reinstall" ]]; then
     if run_post_restart_smokecheck; then
+      pre_reinstall_log_archive="$(finalize_bot_log_reinstall_archive "$pre_reinstall_log_pending" "$pre_reinstall_log_final")"
       ok "Smokecheck после переустановки пройден."
+      if [[ -n "$pre_reinstall_log_archive" ]]; then
+        info "bot.log очищен для новой версии; предыдущий лог сохранён в ${pre_reinstall_log_archive}"
+      fi
     else
-      rollback_failed_reinstall "$pre_reinstall_repo_snapshot" "$pre_reinstall_runtime_snapshot"
+      rollback_failed_reinstall "$pre_reinstall_repo_snapshot" "$pre_reinstall_runtime_snapshot" "$pre_reinstall_log_pending"
       die "Переустановка не прошла smokecheck. Выполнен rollback к предыдущему рабочему состоянию."
     fi
   fi
@@ -1893,10 +1955,16 @@ PY
 }
 
 rollback_failed_reinstall() {
-  local repo_snapshot_dir="$1" runtime_snapshot_dir="$2"
+  local repo_snapshot_dir="$1" runtime_snapshot_dir="$2" pending_log_archive="$3"
   local db_file restore_repo_ok=0 restore_runtime_ok=0 restore_meta_ok=0 deps_ok=0 helper_sync_ok=0 post_rollback_smoke_ok=0
   db_file="$(get_bot_db_file)"
   warn "Переустановка завершилась с ошибкой smokecheck. Выполняю аварийный rollback."
+  warn "Rollback: останавливаю текущий неудачный сервис перед восстановлением runtime."
+  if service_exists; then
+    systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    sleep 1
+  fi
+  restore_bot_log_after_failed_reinstall "$pending_log_archive"
 
   if restore_repo_snapshot_after_failed_reinstall "$repo_snapshot_dir"; then
     restore_repo_ok=1

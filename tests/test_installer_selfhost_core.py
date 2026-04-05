@@ -82,3 +82,19 @@ def test_reinstall_stops_service_before_runtime_snapshot():
     runtime_snapshot_pos = script.find("create_runtime_snapshot_before_reinstall pre-reinstall")
     assert stop_pos != -1 and runtime_snapshot_pos != -1
     assert stop_pos < runtime_snapshot_pos
+
+
+def test_rollback_stops_service_before_restoring_repo_and_runtime():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'systemctl stop "$SERVICE_NAME" 2>/dev/null || true' in script
+    assert 'local repo_snapshot_dir="$1" runtime_snapshot_dir="$2" pending_log_archive="$3"' in script
+    assert "Rollback: останавливаю текущий неудачный сервис перед восстановлением runtime." in script
+    rollback_pos = script.find("rollback_failed_reinstall()")
+    stop_pos = script.find('systemctl stop "$SERVICE_NAME" 2>/dev/null || true', rollback_pos)
+    restore_log_pos = script.find('restore_bot_log_after_failed_reinstall "$pending_log_archive"', rollback_pos)
+    restore_repo_pos = script.find('restore_repo_snapshot_after_failed_reinstall "$repo_snapshot_dir"', rollback_pos)
+    restore_db_pos = script.find('install -m 600 "$runtime_snapshot_dir/db.before" "$db_file"', rollback_pos)
+    assert stop_pos != -1 and restore_log_pos != -1 and restore_repo_pos != -1 and restore_db_pos != -1
+    assert stop_pos < restore_log_pos
+    assert restore_log_pos < restore_repo_pos
+    assert stop_pos < restore_db_pos
