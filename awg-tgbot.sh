@@ -1915,25 +1915,36 @@ from dotenv import load_dotenv
 bot_dir, env_file = sys.argv[1], sys.argv[2]
 install_dir = os.path.dirname(bot_dir)
 os.chdir(install_dir)
-load_dotenv(env_file, override=False)
+load_dotenv(env_file, override=True)
 sys.path.insert(0, bot_dir)
+from config import DB_PATH  # noqa: E402
 from database import db_health_info  # noqa: E402
 
 info = asyncio.run(db_health_info())
 if not info.get("schema_ready"):
-    print("schema_not_ready")
+    print(f"schema_not_ready:path={DB_PATH}")
     raise SystemExit(1)
 if not info.get("runtime_ready"):
     integrity = info.get("instance_integrity") if isinstance(info.get("instance_integrity"), dict) else {}
     issues = integrity.get("issues") if isinstance(integrity.get("issues"), list) else []
     suffix = "; ".join(str(item) for item in issues if str(item).strip()) or "no_integrity_details"
-    print(f"runtime_not_ready:{suffix}")
+    print(f"runtime_not_ready:path={DB_PATH}:{suffix}")
     raise SystemExit(1)
 print("runtime_ready")
 PY
 )"
-  if [[ "$db_result" == "schema_not_ready" ]]; then
+  if [[ "$db_result" == schema_not_ready:path=* ]]; then
+    local schema_db_path="${db_result#schema_not_ready:path=}"
+    warn "Проверка после перезапуска: проверка БД не пройдена (schema_ready=false, path=${schema_db_path})."
+    failed=1
+  elif [[ "$db_result" == "schema_not_ready" ]]; then
     warn "Проверка после перезапуска: проверка БД не пройдена (schema_ready=false)."
+    failed=1
+  elif [[ "$db_result" == runtime_not_ready:path=*:* ]]; then
+    local runtime_payload="${db_result#runtime_not_ready:path=}"
+    local runtime_db_path="${runtime_payload%%:*}"
+    local runtime_suffix="${runtime_payload#*:}"
+    warn "Проверка после перезапуска: проверка БД не пройдена (runtime_ready=false, path=${runtime_db_path}, ${runtime_suffix})."
     failed=1
   elif [[ "$db_result" == runtime_not_ready:* ]]; then
     warn "Проверка после перезапуска: проверка БД не пройдена (runtime_ready=false, ${db_result#runtime_not_ready:})."
