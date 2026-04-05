@@ -338,6 +338,11 @@ def _smoke_status_line(name: str, state: str, detail: str) -> str:
 
 def _hint_for_awg_target_error(error: str) -> str:
     lowered = error.lower()
+    if "invalid helper policy json" in lowered or "helper policy parse failed" in lowered:
+        return (
+            "исправь JSON в /etc/awg-bot-helper.json, проверь container/interface "
+            "и перезапусти vpn-bot.service"
+        )
     if "not configured" in lowered or "missing" in lowered:
         return "проверь цель AWG в .env и перезапусти сервис"
     return "проверь контейнер, helper и сервис бота"
@@ -346,8 +351,19 @@ def _hint_for_awg_target_error(error: str) -> str:
 def _hint_for_helper_policy_error(error: str) -> str:
     lowered = error.lower()
     if "parse failed" in lowered or "json object" in lowered:
-        return "исправь формат политики helper (JSON) и перезапусти helper"
+        return (
+            "исправь JSON в /etc/awg-bot-helper.json "
+            "(ожидается {\"container\":\"<container>\",\"interface\":\"<interface>\"}), "
+            "проверь container/interface и перезапусти vpn-bot.service"
+        )
     return "проверь путь и доступ к политике helper"
+
+
+def _safe_policy_error_suffix(error: str, limit: int = 160) -> str:
+    compact = " ".join(str(error).split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[:limit - 1]}…"
 
 
 async def run_runtime_smokecheck() -> dict[str, object]:
@@ -403,7 +419,11 @@ async def run_runtime_smokecheck() -> dict[str, object]:
         if policy_error:
             detail = policy_error
             if "parse failed:" in policy_error:
-                detail = "ошибка чтения политики helper (неверный JSON)"
+                parser_error = policy_error.split("parse failed:", 1)[1].strip()
+                detail = (
+                    "ошибка чтения политики helper: /etc/awg-bot-helper.json содержит неверный JSON"
+                    + (f" ({_safe_policy_error_suffix(parser_error)})" if parser_error else "")
+                )
             checks.append(
                 {
                     "name": "Политика helper",
@@ -442,6 +462,8 @@ async def run_runtime_smokecheck() -> dict[str, object]:
         if item["state"] != "ok" and item.get("hint"):
             next_hint = item["hint"]
             break
+    if overall == "failed" and next_hint == "готово к работе":
+        next_hint = "обнаружены критичные проблемы — исправь ошибки выше и перезапусти vpn-bot.service"
 
     return {"overall": overall, "checks": checks, "hint": next_hint}
 
