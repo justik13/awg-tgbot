@@ -219,6 +219,31 @@ def test_denylist_sync_disabled_counts_errors_on_clear_failure(monkeypatch):
     logger_mock.warning.assert_called_once()
 
 
+def test_denylist_sync_passes_configured_mode_to_helper(monkeypatch):
+    run_docker = AsyncMock()
+
+    async def _get_setting(key, cast):
+        values = {
+            "EGRESS_DENYLIST_ENABLED": 1,
+            "EGRESS_DENYLIST_MODE": "strict",
+            "VPN_SUBNET_PREFIX": "10.8.1.",
+            "EGRESS_DENYLIST_DOMAINS": "",
+            "EGRESS_DENYLIST_CIDRS": "1.1.1.1/32",
+        }
+        return values.get(key)
+
+    monkeypatch.setattr(network_policy, "get_setting", _get_setting)
+    monkeypatch.setattr(network_policy, "set_metric", AsyncMock())
+    monkeypatch.setattr(network_policy, "increment_metric", AsyncMock())
+
+    asyncio.run(network_policy.denylist_sync(run_docker))
+
+    run_docker.assert_awaited_once_with(
+        ["denylist-sync", "--vpn-subnet", "10.8.1.0/24", "--mode", "strict"],
+        input_data="1.1.1.1/32",
+    )
+
+
 def test_sync_awg_cmd_uses_awg_reconcile_report_without_denylist_sync(monkeypatch):
     message = _msg("/sync_awg")
     monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())

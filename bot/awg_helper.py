@@ -79,6 +79,73 @@ def _ensure_denylist_primitives() -> None:
         _run_nft_script('add set inet filter awg_denylist { type ipv4_addr; flags interval; }\n')
 
 
+def _inspect_container_network(container: str) -> dict:
+    raw = _run(["docker", "inspect", container])
+    data = json.loads(raw)
+    if not isinstance(data, list) or not data:
+        raise RuntimeError("docker inspect returned empty result")
+    info = data[0]
+    if not isinstance(info, dict):
+        raise RuntimeError("docker inspect returned invalid object")
+    return info
+
+
+def _derive_denylist_sources(container: str, vpn_subnet: str) -> tuple[list[str], str]:
+    subnet = str(ipaddress.ip_network(vpn_subnet, strict=False))
+    try:
+        info = _inspect_container_network(container)
+    except Exception as e:
+        raise RuntimeError(f"cannot inspect container network: {e}") from e
+
+    host_config = info.get("HostConfig") if isinstance(info.get("HostConfig"), dict) else {}
+    network_mode = str(host_config.get("NetworkMode") or "").strip().lower()
+    if network_mode == "host":
+        return [subnet], f"VPN subnet {subnet}"
+
+    network_settings = info.get("NetworkSettings") if isinstance(info.get("NetworkSettings"), dict) else {}
+    networks = network_settings.get("Networks") if isinstance(network_settings.get("Networks"), dict) else {}
+    sources: list[str] = []
+    for details in networks.values():
+        if not isinstance(details, dict):
+            continue
+        ip_raw = str(details.get("IPAddress") or "").strip()
+        if not ip_raw:
+            continue
+        ip_obj = ipaddress.ip_address(ip_raw)
+        if ip_obj.version == 4:
+            ip32 = f"{ip_obj}/32"
+            if ip32 not in sources:
+                sources.append(ip32)
+    if sources:
+        sources = sorted(sources)
+        if len(sources) == 1:
+            return sources, f"container bridge IP {sources[0].split('/')[0]}"
+        ips = ", ".join(src.split("/")[0] for src in sources)
+        return sources, f"container bridge IPs {ips}"
+    raise RuntimeError("container has no IPv4 address in docker networks")
+
+
+def _render_denylist_rule(source_selectors: list[str]) -> str:
+    if not source_selectors:
+        raise RuntimeError("denylist source selector is empty")
+    if len(source_selectors) == 1:
+        src_expr = source_selectors[0]
+    else:
+        src_expr = "{ " + ", ".join(source_selectors) + " }"
+    return f'add rule inet filter awg_forward ip saddr {src_expr} ip daddr @awg_denylist drop comment "awg_denylist"\n'
+
+
+def _resolve_denylist_sources(container: str, vpn_subnet: str, mode: str) -> tuple[list[str], str]:
+    normalized_mode = (mode or "soft").strip().lower()
+    try:
+        return _derive_denylist_sources(container, vpn_subnet)
+    except Exception as e:
+        if normalized_mode == "strict":
+            raise RuntimeError(f"cannot derive denylist source selector in strict mode: {e}") from e
+        subnet = str(ipaddress.ip_network(vpn_subnet, strict=False))
+        return [subnet], f"VPN subnet {subnet} (fallback: source discovery failed)"
+
+
 def _load_policy(path: Path | None = None) -> tuple[str, str]:
     policy_path = path or POLICY_PATH
     try:
@@ -123,6 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_denylist_sync = sub.add_parser("denylist-sync")
     p_denylist_sync.add_argument("--vpn-subnet", required=True)
+    p_denylist_sync.add_argument("--mode", choices=("soft", "strict"), default="soft")
     p_denylist_clear = sub.add_parser("denylist-clear")
     p_denylist_clear.add_argument("--vpn-subnet", required=True)
     return parser
@@ -175,19 +243,24 @@ def main() -> int:
             _ensure_denylist_primitives()
             _run(["nft", "flush", "chain", "inet", "filter", "awg_forward"])
             _run(["nft", "flush", "set", "inet", "filter", "awg_denylist"])
-            print("denylist cleared")
+            try:
+                _selectors, source_desc = _derive_denylist_sources(container, args.vpn_subnet.strip())
+            except Exception:
+                source_desc = f"VPN subnet {str(ipaddress.ip_network(args.vpn_subnet.strip(), strict=False))}"
+            print(f"denylist cleared\nИсточник denylist enforcement: {source_desc}")
             return 0
         if args.op == "denylist-sync":
             subnet = ipaddress.ip_network(args.vpn_subnet.strip(), strict=False)
             cidrs = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
             validated = [str(ipaddress.ip_network(c, strict=False)) for c in cidrs]
+            source_selectors, source_desc = _resolve_denylist_sources(container, str(subnet), args.mode)
             _ensure_denylist_primitives()
             _run(["nft", "flush", "chain", "inet", "filter", "awg_forward"])
             _run(["nft", "flush", "set", "inet", "filter", "awg_denylist"])
             if validated:
                 _run_nft_script(f"add element inet filter awg_denylist {{ {', '.join(validated)} }}\n")
-            _run_nft_script(f'add rule inet filter awg_forward ip saddr {subnet} ip daddr @awg_denylist drop comment "awg_denylist"\n')
-            print(f"denylist synced {len(cidrs)}")
+            _run_nft_script(_render_denylist_rule(source_selectors))
+            print(f"denylist synced {len(cidrs)}\nИсточник denylist enforcement: {source_desc}")
             return 0
     except Exception as e:
         print(str(e), file=sys.stderr)
