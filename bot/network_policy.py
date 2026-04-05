@@ -95,7 +95,7 @@ async def denylist_sync(run_docker) -> None:
         return
     payload = "\n".join(sorted(set(resolved + cidr_values)))
     try:
-        await run_docker(["denylist-sync", "--vpn-subnet", vpn_subnet], input_data=payload)
+        await run_docker(["denylist-sync", "--vpn-subnet", vpn_subnet, "--mode", mode], input_data=payload)
         await set_metric("denylist_last_sync_ok", 1)
         await set_metric("denylist_last_sync_ts", int(datetime.utcnow().timestamp()))
         await set_metric("denylist_entries", len([line for line in payload.splitlines() if line.strip()]))
