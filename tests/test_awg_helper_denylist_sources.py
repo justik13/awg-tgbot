@@ -1,4 +1,5 @@
 import sys
+import io
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bot"))
@@ -99,3 +100,36 @@ def test_strict_mode_raises_on_source_discovery_failure(monkeypatch):
         assert "cannot derive denylist source selector in strict mode" in str(e)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_safe_ipv4_cidr_rejects_ipv6_with_clear_error():
+    try:
+        awg_helper._safe_ipv4_cidr("2001:db8::/64", "denylist entry")
+    except ValueError as e:
+        assert "IPv6 CIDR is not supported for denylist entry" in str(e)
+        assert "IPv4-only" in str(e)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_denylist_sync_rejects_ipv6_entry_from_stdin(monkeypatch, capsys):
+    monkeypatch.setattr(awg_helper, "_load_policy", lambda: ("amnezia-awg2", "awg0"))
+    monkeypatch.setattr(sys, "argv", ["awg_helper.py", "denylist-sync", "--vpn-subnet", "10.8.1.0/24", "--mode", "soft"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("2001:db8::/64\n"))
+
+    rc = awg_helper.main()
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert "IPv6 CIDR is not supported for denylist entry" in captured.err
+
+
+def test_denylist_clear_rejects_ipv6_vpn_subnet(monkeypatch, capsys):
+    monkeypatch.setattr(awg_helper, "_load_policy", lambda: ("amnezia-awg2", "awg0"))
+    monkeypatch.setattr(sys, "argv", ["awg_helper.py", "denylist-clear", "--vpn-subnet", "2001:db8::/64"])
+
+    rc = awg_helper.main()
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert "IPv6 CIDR is not supported for vpn-subnet" in captured.err

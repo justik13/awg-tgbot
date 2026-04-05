@@ -40,6 +40,17 @@ def _safe_ipv4(value: str) -> str:
     return str(ip)
 
 
+def _safe_ipv4_cidr(value: str, field: str) -> str:
+    raw = (value or "").strip()
+    try:
+        network = ipaddress.ip_network(raw, strict=False)
+    except ValueError as e:
+        raise ValueError(f"invalid IPv4 CIDR for {field}: {raw}") from e
+    if network.version != 4:
+        raise ValueError(f"IPv6 CIDR is not supported for {field}: {raw} (awg_denylist is IPv4-only)")
+    return str(network)
+
+
 def _run(args: list[str], stdin_text: str | None = None) -> str:
     proc = subprocess.run(
         args,
@@ -91,7 +102,7 @@ def _inspect_container_network(container: str) -> dict:
 
 
 def _derive_denylist_sources(container: str, vpn_subnet: str) -> tuple[list[str], str]:
-    subnet = str(ipaddress.ip_network(vpn_subnet, strict=False))
+    subnet = _safe_ipv4_cidr(vpn_subnet, "vpn-subnet")
     try:
         info = _inspect_container_network(container)
     except Exception as e:
@@ -142,7 +153,7 @@ def _resolve_denylist_sources(container: str, vpn_subnet: str, mode: str) -> tup
     except Exception as e:
         if normalized_mode == "strict":
             raise RuntimeError(f"cannot derive denylist source selector in strict mode: {e}") from e
-        subnet = str(ipaddress.ip_network(vpn_subnet, strict=False))
+        subnet = _safe_ipv4_cidr(vpn_subnet, "vpn-subnet")
         return [subnet], f"VPN subnet {subnet} (fallback: source discovery failed)"
 
 
@@ -239,21 +250,21 @@ def main() -> int:
             print(_run(["nft", "list", "table", "inet", "filter"]))
             return 0
         if args.op == "denylist-clear":
-            ipaddress.ip_network(args.vpn_subnet.strip(), strict=False)
+            vpn_subnet = _safe_ipv4_cidr(args.vpn_subnet, "vpn-subnet")
             _ensure_denylist_primitives()
             _run(["nft", "flush", "chain", "inet", "filter", "awg_forward"])
             _run(["nft", "flush", "set", "inet", "filter", "awg_denylist"])
             try:
-                _selectors, source_desc = _derive_denylist_sources(container, args.vpn_subnet.strip())
+                _selectors, source_desc = _derive_denylist_sources(container, vpn_subnet)
             except Exception:
-                source_desc = f"VPN subnet {str(ipaddress.ip_network(args.vpn_subnet.strip(), strict=False))}"
+                source_desc = f"VPN subnet {vpn_subnet}"
             print(f"denylist cleared\nИсточник denylist enforcement: {source_desc}")
             return 0
         if args.op == "denylist-sync":
-            subnet = ipaddress.ip_network(args.vpn_subnet.strip(), strict=False)
+            subnet = _safe_ipv4_cidr(args.vpn_subnet, "vpn-subnet")
             cidrs = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
-            validated = [str(ipaddress.ip_network(c, strict=False)) for c in cidrs]
-            source_selectors, source_desc = _resolve_denylist_sources(container, str(subnet), args.mode)
+            validated = [_safe_ipv4_cidr(c, "denylist entry") for c in cidrs]
+            source_selectors, source_desc = _resolve_denylist_sources(container, subnet, args.mode)
             _ensure_denylist_primitives()
             _run(["nft", "flush", "chain", "inet", "filter", "awg_forward"])
             _run(["nft", "flush", "set", "inet", "filter", "awg_denylist"])
