@@ -92,6 +92,12 @@ def test_reinstall_stops_service_before_runtime_snapshot():
     assert stop_pos < runtime_snapshot_pos
 
 
+def test_prepare_bot_log_for_reinstall_returns_newline_terminated_read_payload():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "printf '%s\\t%s\\n' \"$pending_archive\" \"$final_archive\"" in script
+    assert "printf '%s\\t%s' \"$pending_archive\" \"$final_archive\"" not in script
+
+
 def test_rollback_stops_service_before_restoring_repo_and_runtime():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert 'systemctl stop "$SERVICE_NAME" 2>/dev/null || true' in script
