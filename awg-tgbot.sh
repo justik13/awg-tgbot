@@ -1763,6 +1763,12 @@ create_runtime_snapshot_before_reinstall() {
   if [[ -f "$ENV_FILE" ]]; then
     cp -a "$ENV_FILE" "$snapshot_dir/.env.before"
   fi
+  if [[ -f "$VERSION_FILE" ]]; then
+    cp -a "$VERSION_FILE" "$snapshot_dir/version_file.before"
+  fi
+  if [[ -f "$REPO_BRANCH_FILE" ]]; then
+    cp -a "$REPO_BRANCH_FILE" "$snapshot_dir/repo_branch.before"
+  fi
   printf '%s' "$snapshot_dir"
 }
 
@@ -1793,7 +1799,7 @@ restore_repo_snapshot_after_failed_reinstall() {
 }
 
 run_post_restart_smokecheck() {
-  local failed=0 env_container env_interface policy_container policy_interface policy_error db_file db_result
+  local failed=0 env_container env_interface policy_container policy_interface policy_error db_result runtime_python awg_check_output
 
   if ! service_exists || [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" != "active" ]]; then
     warn "Smokecheck: сервис ${SERVICE_NAME} не в состоянии active."
@@ -1816,39 +1822,61 @@ run_post_restart_smokecheck() {
     failed=1
   fi
 
-  detect_awg_environment
-  if [[ "$STATE_AWG_FOUND" != "1" ]]; then
-    warn "Smokecheck: проверка AWG не пройдена."
+  if [[ ! -x "$AWG_HELPER_TARGET" ]]; then
+    warn "Smokecheck: helper ${AWG_HELPER_TARGET} не найден/не исполняемый."
     failed=1
+  elif [[ -n "$policy_error" ]]; then
+    warn "Smokecheck: пропускаю check-awg из-за ошибки helper policy."
+    failed=1
+  else
+    awg_check_output="$("$AWG_HELPER_TARGET" check-awg 2>&1 || true)"
+    if [[ "$awg_check_output" != *"AWG container reachable"* ]]; then
+      warn "Smokecheck: AWG check-awg не пройдён (${awg_check_output:-no-output})."
+      failed=1
+    fi
   fi
 
-  db_file="$(get_bot_db_file)"
-  db_result="$("$PYTHON_BIN" - "$db_file" <<'PY' 2>/dev/null || true
-import sqlite3
+  runtime_python="$PYTHON_BIN"
+  [[ -x "${VENV_DIR}/bin/python" ]] && runtime_python="${VENV_DIR}/bin/python"
+  db_result="$("$runtime_python" - "$BOT_DIR" "$ENV_FILE" <<'PY' 2>/dev/null || true
+import asyncio
+import os
 import sys
-from pathlib import Path
 
-db_file = Path(sys.argv[1])
-if not db_file.exists():
-    print("db_missing")
+bot_dir, env_file = sys.argv[1], sys.argv[2]
+if os.path.isfile(env_file):
+    for raw in open(env_file, "r", encoding="utf-8").read().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        os.environ.setdefault(key, value.strip())
+sys.path.insert(0, bot_dir)
+from database import db_health_info  # noqa: E402
+
+info = asyncio.run(db_health_info())
+if not info.get("schema_ready"):
+    print("schema_not_ready")
     raise SystemExit(1)
-con = sqlite3.connect(str(db_file))
-try:
-    cols = con.execute("PRAGMA table_info(keys)").fetchall()
-    if not cols:
-        print("keys_table_missing")
-        raise SystemExit(1)
-    names = {row[1] for row in cols}
-    required = {"user_id", "public_key", "ip"}
-    if not required.issubset(names):
-        print("required_columns_missing")
-        raise SystemExit(1)
-    print("ok")
-finally:
-    con.close()
+if not info.get("runtime_ready"):
+    integrity = info.get("instance_integrity") if isinstance(info.get("instance_integrity"), dict) else {}
+    issues = integrity.get("issues") if isinstance(integrity.get("issues"), list) else []
+    suffix = "; ".join(str(item) for item in issues if str(item).strip()) or "no_integrity_details"
+    print(f"runtime_not_ready:{suffix}")
+    raise SystemExit(1)
+print("runtime_ready")
 PY
 )"
-  if [[ "$db_result" != "ok" ]]; then
+  if [[ "$db_result" == "schema_not_ready" ]]; then
+    warn "Smokecheck: проверка БД не пройдена (schema_ready=false)."
+    failed=1
+  elif [[ "$db_result" == runtime_not_ready:* ]]; then
+    warn "Smokecheck: проверка БД не пройдена (runtime_ready=false, ${db_result#runtime_not_ready:})."
+    failed=1
+  elif [[ "$db_result" != "runtime_ready" ]]; then
     warn "Smokecheck: проверка БД не пройдена (${db_result:-unknown})."
     failed=1
   fi
@@ -1858,12 +1886,12 @@ PY
 
 rollback_failed_reinstall() {
   local repo_snapshot_dir="$1" runtime_snapshot_dir="$2"
-  local db_file rollback_ok=0
+  local db_file restore_repo_ok=0 restore_runtime_ok=0 restore_meta_ok=0 deps_ok=0 helper_sync_ok=0 post_rollback_smoke_ok=0
   db_file="$(get_bot_db_file)"
   warn "Переустановка завершилась с ошибкой smokecheck. Выполняю аварийный rollback."
 
   if restore_repo_snapshot_after_failed_reinstall "$repo_snapshot_dir"; then
-    rollback_ok=1
+    restore_repo_ok=1
   else
     warn "Rollback: не удалось восстановить файлы репозитория из ${repo_snapshot_dir}."
   fi
@@ -1871,26 +1899,51 @@ rollback_failed_reinstall() {
   if [[ -f "$runtime_snapshot_dir/db.before" ]]; then
     install -m 600 "$runtime_snapshot_dir/db.before" "$db_file" || true
     repair_runtime_file_access "$db_file" 600
-    rollback_ok=1
+    restore_runtime_ok=1
   fi
   if [[ -f "$runtime_snapshot_dir/.env.before" ]]; then
     install -m 600 "$runtime_snapshot_dir/.env.before" "$ENV_FILE" || true
     repair_runtime_file_access "$ENV_FILE" 600
-    rollback_ok=1
+    restore_runtime_ok=1
   fi
 
-  sync_awg_helper_policy_from_env || warn "Rollback: не удалось синхронизировать helper policy из восстановленного .env."
+  if [[ -f "$runtime_snapshot_dir/version_file.before" ]]; then
+    if install -m 600 "$runtime_snapshot_dir/version_file.before" "$VERSION_FILE"; then
+      restore_meta_ok=1
+    fi
+  else
+    rm -f "$VERSION_FILE" || true
+    restore_meta_ok=1
+  fi
+  if [[ -f "$runtime_snapshot_dir/repo_branch.before" ]]; then
+    if install -m 600 "$runtime_snapshot_dir/repo_branch.before" "$REPO_BRANCH_FILE"; then
+      restore_meta_ok=1
+    fi
+  fi
+
+  if ensure_venv_and_requirements; then
+    deps_ok=1
+  else
+    warn "Rollback: не удалось переустановить зависимости для восстановленного requirements.txt."
+  fi
+
+  if sync_awg_helper_policy_from_env; then
+    helper_sync_ok=1
+  else
+    warn "Rollback: не удалось синхронизировать helper policy из восстановленного .env."
+  fi
   start_service || true
   if run_post_restart_smokecheck; then
+    post_rollback_smoke_ok=1
     warn "Rollback выполнен. Предыдущий runtime снова проходит smokecheck."
   else
     warn "Rollback выполнен частично: сервис после rollback всё ещё не проходит smokecheck."
   fi
 
-  if [[ "$rollback_ok" == "1" ]]; then
-    warn "Переустановка отменена и откат выполнен (код + DB + .env)."
+  if [[ "$restore_repo_ok" == "1" && "$restore_runtime_ok" == "1" && "$restore_meta_ok" == "1" && "$deps_ok" == "1" && "$helper_sync_ok" == "1" && "$post_rollback_smoke_ok" == "1" ]]; then
+    warn "Переустановка провалена. Rollback выполнен полностью (код+DB+.env+state+deps), helper policy=ok, post-rollback smokecheck=ok."
   else
-    warn "Переустановка отменена, но rollback выполнен не полностью."
+    warn "Переустановка провалена. Rollback выполнен частично (repo=${restore_repo_ok}, runtime=${restore_runtime_ok}, state=${restore_meta_ok}, deps=${deps_ok}, helper_policy=${helper_sync_ok}, post_smoke=${post_rollback_smoke_ok})."
   fi
 }
 
@@ -1948,7 +2001,7 @@ restore_from_backup() {
   local backup_root="${BACKUP_ROOT}"
   local selected_index="" selected_archive="" confirm_restore=""
   local db_file db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before
-  local restore_ok=0 rollback_ok=0 smokecheck_ok=0
+  local restore_ok=0 rollback_ok=0 smokecheck_ok=0 helper_sync_ok=0 rollback_helper_sync_ok=0 rollback_smoke_ok=0
   mapfile -t archives < <(find "$backup_root" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' | sort -r)
   if [[ ${#archives[@]} -eq 0 ]]; then
     warn "Локальные бэкапы не найдены: ${backup_root}"
@@ -2023,6 +2076,8 @@ restore_from_backup() {
   if ! sync_awg_helper_policy_from_env; then
     warn "Восстановление: не удалось синхронизировать helper policy из восстановленного .env."
     restore_ok=0
+  else
+    helper_sync_ok=1
   fi
 
   if require_command systemctl && service_exists; then
@@ -2039,16 +2094,30 @@ restore_from_backup() {
     if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
     repair_runtime_file_access "$db_file" 600
     repair_runtime_file_access "$ENV_FILE" 600
-    sync_awg_helper_policy_from_env || warn "Rollback restore: не удалось синхронизировать helper policy."
+    if sync_awg_helper_policy_from_env; then
+      rollback_helper_sync_ok=1
+    else
+      warn "Rollback restore: не удалось синхронизировать helper policy."
+    fi
     if require_command systemctl && service_exists; then
       systemctl restart "$SERVICE_NAME" 2>/dev/null || true
     fi
-    warn "Восстановление не выполнено: rollback произведён ($([[ "$rollback_ok" == "1" ]] && echo 'успешно' || echo 'частично'))."
+    if run_post_restart_smokecheck; then
+      rollback_smoke_ok=1
+    fi
+    if [[ "$rollback_ok" == "1" && "$rollback_helper_sync_ok" == "1" && "$rollback_smoke_ok" == "1" ]]; then
+      warn "Restore failed; rollback succeeded fully (runtime restored, helper policy sync=ok, post-rollback smokecheck=ok)."
+    else
+      warn "Restore failed; rollback partial (runtime=${rollback_ok}, helper_policy=${rollback_helper_sync_ok}, post_smoke=${rollback_smoke_ok})."
+    fi
     return 1
   fi
 
   echo "Восстановление завершено."
   echo "Права файлов восстановлены для ${BOT_USER}: ${db_file}, ${ENV_FILE}"
+  if [[ "$helper_sync_ok" == "1" ]]; then
+    echo "Helper policy sync: успешно."
+  fi
   if require_command systemctl && service_exists; then
     echo "Сервис: $(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true) (enabled: ${service_enabled_before:-unknown})"
   fi
