@@ -1910,20 +1910,12 @@ run_post_restart_smokecheck() {
 import asyncio
 import os
 import sys
+from dotenv import load_dotenv
 
 bot_dir, env_file = sys.argv[1], sys.argv[2]
-if os.path.isfile(env_file):
-    for raw in open(env_file, "r", encoding="utf-8").read().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if not key:
-            continue
-        os.environ.setdefault(key, value.strip())
 install_dir = os.path.dirname(bot_dir)
 os.chdir(install_dir)
+load_dotenv(env_file, override=False)
 sys.path.insert(0, bot_dir)
 from database import db_health_info  # noqa: E402
 

@@ -45,8 +45,13 @@ def test_reinstall_includes_runtime_snapshot_smokecheck_and_rollback_hooks():
     assert '"$awg_check_rc" -ne 0' in script
     assert "runtime_not_ready:" in script
     assert "schema_not_ready" in script
+    assert "from dotenv import load_dotenv" in script
+    assert "load_dotenv(env_file, override=False)" in script
     assert "install_dir = os.path.dirname(bot_dir)" in script
     assert "os.chdir(install_dir)" in script
+    assert 'for raw in open(env_file, "r", encoding="utf-8").read().splitlines()' not in script
+    assert 'line.split("=", 1)' not in script
+    assert "os.environ.setdefault(" not in script
 
 
 def test_restore_includes_post_restore_smokecheck_and_rollback_message():
