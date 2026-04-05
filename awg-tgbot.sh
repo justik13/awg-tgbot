@@ -1799,7 +1799,7 @@ restore_repo_snapshot_after_failed_reinstall() {
 }
 
 run_post_restart_smokecheck() {
-  local failed=0 env_container env_interface policy_container policy_interface policy_error db_result runtime_python awg_check_output
+  local failed=0 env_container env_interface policy_container policy_interface policy_error db_result runtime_python awg_check_output awg_check_rc=0
 
   if ! service_exists || [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" != "active" ]]; then
     warn "Smokecheck: сервис ${SERVICE_NAME} не в состоянии active."
@@ -1823,15 +1823,18 @@ run_post_restart_smokecheck() {
   fi
 
   if [[ ! -x "$AWG_HELPER_TARGET" ]]; then
-    warn "Smokecheck: helper ${AWG_HELPER_TARGET} не найден/не исполняемый."
+    warn "Проверка после перезапуска: helper ${AWG_HELPER_TARGET} не найден/не исполняемый."
     failed=1
   elif [[ -n "$policy_error" ]]; then
-    warn "Smokecheck: пропускаю check-awg из-за ошибки helper policy."
+    warn "Проверка после перезапуска: check-awg пропущен из-за ошибки helper policy."
     failed=1
   else
-    awg_check_output="$("$AWG_HELPER_TARGET" check-awg 2>&1 || true)"
-    if [[ "$awg_check_output" != *"AWG container reachable"* ]]; then
-      warn "Smokecheck: AWG check-awg не пройдён (${awg_check_output:-no-output})."
+    set +e
+    awg_check_output="$("$AWG_HELPER_TARGET" check-awg 2>&1)"
+    awg_check_rc=$?
+    set -e
+    if [[ "$awg_check_rc" -ne 0 ]]; then
+      warn "Проверка после перезапуска: AWG check-awg завершился ошибкой (rc=${awg_check_rc}, output=${awg_check_output:-no-output})."
       failed=1
     fi
   fi
@@ -1871,13 +1874,13 @@ print("runtime_ready")
 PY
 )"
   if [[ "$db_result" == "schema_not_ready" ]]; then
-    warn "Smokecheck: проверка БД не пройдена (schema_ready=false)."
+    warn "Проверка после перезапуска: проверка БД не пройдена (schema_ready=false)."
     failed=1
   elif [[ "$db_result" == runtime_not_ready:* ]]; then
-    warn "Smokecheck: проверка БД не пройдена (runtime_ready=false, ${db_result#runtime_not_ready:})."
+    warn "Проверка после перезапуска: проверка БД не пройдена (runtime_ready=false, ${db_result#runtime_not_ready:})."
     failed=1
   elif [[ "$db_result" != "runtime_ready" ]]; then
-    warn "Smokecheck: проверка БД не пройдена (${db_result:-unknown})."
+    warn "Проверка после перезапуска: проверка БД не пройдена (${db_result:-unknown})."
     failed=1
   fi
 
@@ -1935,15 +1938,15 @@ rollback_failed_reinstall() {
   start_service || true
   if run_post_restart_smokecheck; then
     post_rollback_smoke_ok=1
-    warn "Rollback выполнен. Предыдущий runtime снова проходит smokecheck."
+    warn "Rollback выполнен: предыдущий runtime снова проходит проверку после перезапуска."
   else
-    warn "Rollback выполнен частично: сервис после rollback всё ещё не проходит smokecheck."
+    warn "Rollback выполнен частично: сервис после rollback всё ещё не проходит проверку после перезапуска."
   fi
 
   if [[ "$restore_repo_ok" == "1" && "$restore_runtime_ok" == "1" && "$restore_meta_ok" == "1" && "$deps_ok" == "1" && "$helper_sync_ok" == "1" && "$post_rollback_smoke_ok" == "1" ]]; then
-    warn "Переустановка провалена. Rollback выполнен полностью (код+DB+.env+state+deps), helper policy=ok, post-rollback smokecheck=ok."
+    warn "Переустановка не удалась; rollback выполнен полностью (код+DB+.env+state+deps), helper policy: ok, post-rollback проверка: ok."
   else
-    warn "Переустановка провалена. Rollback выполнен частично (repo=${restore_repo_ok}, runtime=${restore_runtime_ok}, state=${restore_meta_ok}, deps=${deps_ok}, helper_policy=${helper_sync_ok}, post_smoke=${post_rollback_smoke_ok})."
+    warn "Переустановка не удалась; rollback выполнен частично (repo=${restore_repo_ok}, runtime=${restore_runtime_ok}, state=${restore_meta_ok}, deps=${deps_ok}, helper policy=${helper_sync_ok}, post-rollback проверка=${post_rollback_smoke_ok})."
   fi
 }
 
@@ -2106,9 +2109,9 @@ restore_from_backup() {
       rollback_smoke_ok=1
     fi
     if [[ "$rollback_ok" == "1" && "$rollback_helper_sync_ok" == "1" && "$rollback_smoke_ok" == "1" ]]; then
-      warn "Restore failed; rollback succeeded fully (runtime restored, helper policy sync=ok, post-rollback smokecheck=ok)."
+      warn "Восстановление не удалось; rollback выполнен полностью (runtime восстановлен, helper policy: ok, post-rollback проверка: ok)."
     else
-      warn "Restore failed; rollback partial (runtime=${rollback_ok}, helper_policy=${rollback_helper_sync_ok}, post_smoke=${rollback_smoke_ok})."
+      warn "Восстановление не удалось; rollback выполнен частично (runtime=${rollback_ok}, helper policy=${rollback_helper_sync_ok}, post-rollback проверка=${rollback_smoke_ok})."
     fi
     return 1
   fi

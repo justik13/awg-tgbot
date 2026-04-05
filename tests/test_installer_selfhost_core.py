@@ -40,6 +40,9 @@ def test_reinstall_includes_runtime_snapshot_smokecheck_and_rollback_hooks():
     assert "rollback_failed_reinstall" in script
     assert "Переустановка не прошла smokecheck. Выполнен rollback" in script
     assert '"$AWG_HELPER_TARGET" check-awg' in script
+    assert "AWG container reachable" not in script
+    assert "awg_check_rc=$?" in script
+    assert '"$awg_check_rc" -ne 0' in script
     assert "runtime_not_ready:" in script
     assert "schema_not_ready" in script
 
@@ -47,8 +50,8 @@ def test_reinstall_includes_runtime_snapshot_smokecheck_and_rollback_hooks():
 def test_restore_includes_post_restore_smokecheck_and_rollback_message():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "Восстановление не прошло post-restore smokecheck. Запускаю rollback." in script
-    assert "Restore failed; rollback succeeded fully" in script
-    assert "Restore failed; rollback partial" in script
+    assert "Восстановление не удалось; rollback выполнен полностью" in script
+    assert "Восстановление не удалось; rollback выполнен частично" in script
     assert "sync_awg_helper_policy_from_env" in script
 
 
@@ -67,5 +70,5 @@ def test_rollback_restores_state_metadata_and_realigns_dependencies():
 
 def test_reinstall_rollback_messages_report_full_or_partial_outcome():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
-    assert "Rollback выполнен полностью" in script
-    assert "Rollback выполнен частично" in script
+    assert "Переустановка не удалась; rollback выполнен полностью" in script
+    assert "Переустановка не удалась; rollback выполнен частично" in script
