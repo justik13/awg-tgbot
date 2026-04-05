@@ -70,8 +70,10 @@ async def denylist_sync(run_docker) -> None:
         try:
             await denylist_clear(run_docker)
             await set_metric("denylist_entries", 0)
+            await set_metric("denylist_last_clear_ok", 1)
         except Exception as e:
             await increment_metric("denylist_errors")
+            await set_metric("denylist_last_clear_ok", 0)
             logger.warning("denylist_clear failed while denylist is disabled: %s", e)
         return
     mode = str(await get_setting("EGRESS_DENYLIST_MODE", str) or "soft").strip().lower()
@@ -126,4 +128,5 @@ async def policy_metrics() -> dict[str, int]:
         "denylist_last_sync_ok": await get_metric("denylist_last_sync_ok"),
         "denylist_last_sync_ts": await get_metric("denylist_last_sync_ts"),
         "denylist_entries": await get_metric("denylist_entries"),
+        "denylist_last_clear_ok": await get_metric("denylist_last_clear_ok"),
     }
