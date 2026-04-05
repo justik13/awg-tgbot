@@ -46,7 +46,10 @@ def test_reinstall_includes_runtime_snapshot_smokecheck_and_rollback_hooks():
     assert "runtime_not_ready:" in script
     assert "schema_not_ready" in script
     assert "from dotenv import load_dotenv" in script
-    assert "load_dotenv(env_file, override=False)" in script
+    assert "load_dotenv(env_file, override=True)" in script
+    assert "load_dotenv(env_file, override=False)" not in script
+    assert "schema_not_ready:path=" in script
+    assert "runtime_not_ready:path=" in script
     assert "install_dir = os.path.dirname(bot_dir)" in script
     assert "os.chdir(install_dir)" in script
     assert 'for raw in open(env_file, "r", encoding="utf-8").read().splitlines()' not in script
