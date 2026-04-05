@@ -69,8 +69,10 @@ async def denylist_sync(run_docker) -> None:
     if not enabled:
         try:
             await denylist_clear(run_docker)
-        except Exception:
-            pass
+            await set_metric("denylist_entries", 0)
+        except Exception as e:
+            await increment_metric("denylist_errors")
+            logger.warning("denylist_clear failed while denylist is disabled: %s", e)
         return
     mode = str(await get_setting("EGRESS_DENYLIST_MODE", str) or "soft").strip().lower()
     vpn_prefix = str(await get_setting("VPN_SUBNET_PREFIX", str) or "10.8.1.")
