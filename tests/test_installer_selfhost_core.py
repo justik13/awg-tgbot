@@ -70,6 +70,19 @@ def test_installer_dependencies_include_nftables_for_denylist():
     assert "nftables" in script
 
 
+def test_installer_does_not_grant_bot_write_access_to_entire_install_dir():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'chown -R "$BOT_USER:$BOT_USER" "$INSTALL_DIR" "$APP_LOG_DIR"' not in script
+    assert "enforce_root_owned_code_paths" in script
+    assert 'for path in "$INSTALL_DIR/awg-tgbot.sh" "$BOT_DIR" "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging" "$VENV_DIR"' in script
+
+
+def test_generated_service_wants_docker_service():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "After=network-online.target docker.service" in script
+    assert "Wants=network-online.target docker.service" in script
+
+
 def test_rollback_restores_state_metadata_and_realigns_dependencies():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "version_file.before" in script

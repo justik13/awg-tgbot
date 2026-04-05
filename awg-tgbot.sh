@@ -1358,10 +1358,35 @@ ensure_bot_user() {
     useradd --system --home "$INSTALL_DIR" --shell /usr/sbin/nologin "$BOT_USER" || return 1
   fi
   ensure_bot_not_in_docker_group
+  enforce_root_owned_code_paths
+  prepare_runtime_access_paths
+  return 0
+}
+
+enforce_root_owned_code_paths() {
+  local path
+  mkdir -p "$INSTALL_DIR"
+  chown root:root "$INSTALL_DIR" 2>/dev/null || true
+  chmod 755 "$INSTALL_DIR" 2>/dev/null || true
+  for path in "$INSTALL_DIR/awg-tgbot.sh" "$BOT_DIR" "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging" "$VENV_DIR"; do
+    [[ -e "$path" ]] || continue
+    chown -R root:root "$path" 2>/dev/null || true
+    chmod -R go-w "$path" 2>/dev/null || true
+  done
+  [[ -f "$INSTALL_DIR/awg-tgbot.sh" ]] && chmod 755 "$INSTALL_DIR/awg-tgbot.sh" 2>/dev/null || true
+  return 0
+}
+
+prepare_runtime_access_paths() {
+  local db_file
   mkdir -p "$APP_LOG_DIR"
   touch "$APP_LOG_FILE"
-  chown -R "$BOT_USER:$BOT_USER" "$INSTALL_DIR" "$APP_LOG_DIR"
-  chmod 750 "$INSTALL_DIR" || true
+  chown -R "$BOT_USER:$BOT_USER" "$APP_LOG_DIR" 2>/dev/null || true
+  chmod 750 "$APP_LOG_DIR" 2>/dev/null || true
+  chmod 640 "$APP_LOG_FILE" 2>/dev/null || true
+  db_file="$(get_bot_db_file)"
+  repair_runtime_file_access "$db_file" 600
+  repair_runtime_file_access "$ENV_FILE" 600
   return 0
 }
 
@@ -1389,7 +1414,7 @@ write_service() {
 [Unit]
 Description=AWG Telegram Bot
 After=network-online.target docker.service
-Wants=network-online.target
+Wants=network-online.target docker.service
 
 [Service]
 Type=simple
