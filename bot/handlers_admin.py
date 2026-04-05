@@ -75,7 +75,7 @@ admin_command_rate_limit: dict[str, object] = {}
 ADMIN_USERS_PAGE_SIZE = 10
 ADMIN_MANUAL_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/health", "быстрая проверка готовности"),
-    ("/sync_awg", "сверка AWG и БД"),
+    ("/sync_awg", "сверка ключей AWG, трафика и диагностика БД"),
     ("/stats", "краткая статистика"),
     ("/users", "короткий список пользователей"),
     ("/audit", "последние события"),
@@ -347,25 +347,25 @@ def _render_awg_sync_report_text(report: dict[str, object]) -> str:
         "🔄 <b>Проверка и синхронизация AWG</b>",
         "",
         _format_awg_sync_step(
-            "Сверка pending",
+            "Сверка ожидающих ключей",
             pending,
             keys=("activated", "deleted", "marked_manual", "awg_removed"),
             label_map={
                 "activated": "активировано",
                 "deleted": "удалено",
-                "marked_manual": "помечено_вручную",
-                "awg_removed": "удалено_из_awg",
+                "marked_manual": "помечено вручную",
+                "awg_removed": "удалено из AWG",
             },
         ),
         _format_awg_sync_step(
-            "Сверка active",
+            "Сверка активных ключей",
             active,
             keys=("restored", "already_present", "failed", "skipped_invalid_secret"),
             label_map={
                 "restored": "восстановлено",
-                "already_present": "уже_есть",
+                "already_present": "уже есть",
                 "failed": "ошибок",
-                "skipped_invalid_secret": "пропущено_битых_секретов",
+                "skipped_invalid_secret": "пропущено битых секретов",
             },
         ),
     ]
@@ -377,19 +377,19 @@ def _render_awg_sync_report_text(report: dict[str, object]) -> str:
         db_info = db_block.get("value") if isinstance(db_block.get("value"), dict) else {}
         lines.append(
             "• <b>Состояние БД:</b> "
-            f"файл_бд={'да' if db_info.get('exists') else 'нет'}, "
-            f"таблица_keys={'да' if db_info.get('keys_table_exists') else 'нет'}, "
-            f"нужные_колонки={'да' if db_info.get('has_required_columns') else 'нет'}, "
-            f"валидных_ключей={db_info.get('valid_keys_count', 0)}"
+            f"файл БД={'да' if db_info.get('exists') else 'нет'}, "
+            f"таблица keys={'да' if db_info.get('keys_table_exists') else 'нет'}, "
+            f"обязательные колонки={'да' if db_info.get('has_required_columns') else 'нет'}, "
+            f"валидных ключей={db_info.get('valid_keys_count', 0)}"
         )
     else:
         lines.append(f"• <b>Состояние БД:</b> ошибка — <code>{escape_html(str(db_block.get('error') or 'неизвестно'))}</code>")
     if orphan_block.get("status") == "ok":
         orphans = orphan_block.get("value")
         orphan_count = len(orphans) if isinstance(orphans, list) else 0
-        lines.append(f"• <b>Потерянные peer:</b> количество={orphan_count}")
+        lines.append(f"• <b>Потерянные пиры:</b> количество={orphan_count}")
     else:
-        lines.append(f"• <b>Потерянные peer:</b> ошибка — <code>{escape_html(str(orphan_block.get('error') or 'неизвестно'))}</code>")
+        lines.append(f"• <b>Потерянные пиры:</b> ошибка — <code>{escape_html(str(orphan_block.get('error') or 'неизвестно'))}</code>")
     return "\n".join(lines)
 
 
@@ -2566,7 +2566,7 @@ async def sync_awg_cmd(message: types.Message):
         await message.answer(await build_awg_sync_text(), parse_mode="HTML")
     except Exception as e:
         logger.exception("Ошибка /sync_awg: %s", e)
-        await message.answer("❌ Ошибка проверки синхронизации.")
+        await message.answer("❌ Ошибка проверки AWG.")
 
 
 @router.message(Command("send"), IsAdmin())
