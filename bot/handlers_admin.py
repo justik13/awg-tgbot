@@ -495,6 +495,7 @@ async def build_health_text() -> str:
     rate_buckets = await get_metric("rate_limit_active_buckets")
     denylist_enabled = int(await get_setting("EGRESS_DENYLIST_ENABLED", int) or 0)
     denylist_mode = await get_setting("EGRESS_DENYLIST_MODE", str) or "soft"
+    denylist_block = "\n".join(_denylist_history_block(enabled=denylist_enabled, metrics=policy_stats))
     return (
         "🩺 <b>Отчёт о состоянии</b>\n\n"
         f"Получено задач: <b>{stats['received']}</b>\n"
@@ -503,11 +504,8 @@ async def build_health_text() -> str:
         f"Застряли на ручной обработке: <b>{stats['stuck_manual']}</b>\n"
         f"Задержка восстановления: <b>{lag}</b>\n"
         f"Ошибки helper-сервиса: <b>{helper_failures}</b>\n"
-        f"denylist: <b>{denylist_enabled}</b> · режим: <b>{denylist_mode}</b>\n"
-        f"Ошибки denylist: <b>{policy_stats['denylist_errors']}</b>\n"
-        f"Последняя синхронизация denylist: <b>{policy_stats['denylist_last_sync_ok']}</b>\n"
-        f"Время последней синхронизации denylist: <b>{policy_stats['denylist_last_sync_ts']}</b>\n"
-        f"Записей в denylist: <b>{policy_stats['denylist_entries']}</b>\n"
+        f"Denylist: <b>{_bool_on_off(denylist_enabled)}</b> · режим: <b>{escape_html(str(denylist_mode))}</b>\n"
+        f"{denylist_block}\n"
         f"Ограничение запросов: отклонено всего: <b>{rate_drop_total}</b>\n"
         f"Ограничение запросов: отклонено сообщений: <b>{rate_drop_message}</b>\n"
         f"Ограничение запросов: отклонено кнопок: <b>{rate_drop_callback}</b>\n"
@@ -523,7 +521,7 @@ def _bool_on_off(value: int | bool) -> str:
 
 def _sync_status_text(value: int | str | None) -> str:
     try:
-        return "успешно" if int(str(value or 0)) == 1 else "не было"
+        return "успешно" if int(str(value or 0)) == 1 else "ошибка"
     except Exception:
         return "не было"
 
@@ -536,11 +534,37 @@ def _sync_time_or_ne_bilo(value: int | str | None) -> str:
         return datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M")
     except Exception:
         return "не было"
-def _metric_or_ne_bilo(value: int | str | None) -> str:
-    try:
-        return "не было" if int(str(value or 0)) == 0 else str(value)
-    except Exception:
-        return str(value or "не было")
+
+
+def _denylist_history_block(*, enabled: int, metrics: dict[str, int]) -> list[str]:
+    last_sync_ok = int(metrics.get("denylist_last_sync_ok", 0))
+    last_sync_ts = int(metrics.get("denylist_last_sync_ts", 0))
+    entries = int(metrics.get("denylist_entries", 0))
+    errors = int(metrics.get("denylist_errors", 0))
+    last_clear_ok = int(metrics.get("denylist_last_clear_ok", 0))
+    if enabled == 0:
+        if last_clear_ok == 1:
+            current_state_line = "Текущее состояние: <b>denylist выключен, синхронизация сейчас не выполняется</b>"
+            current_entries_line = "Текущих записей denylist: <b>0</b>"
+        elif last_clear_ok == 0:
+            current_state_line = "Текущее состояние: <b>denylist выключен, но последняя очистка завершилась ошибкой</b>"
+            current_entries_line = "Текущие правила denylist: <b>нужно проверить вручную</b>"
+        else:
+            current_state_line = "Текущее состояние: <b>denylist выключен, состояние правил не подтверждено</b>"
+            current_entries_line = "Текущие правила denylist: <b>проверь вручную или выполни sync/clear</b>"
+        return [
+            current_state_line,
+            current_entries_line,
+            f"Последний успешный sync denylist (история): <b>{_sync_time_or_ne_bilo(last_sync_ts)}</b>",
+            f"Ошибки denylist: <b>{errors}</b>",
+        ]
+    sync_status = "не было" if last_sync_ts <= 0 else _sync_status_text(last_sync_ok)
+    return [
+        f"Статус последней попытки sync denylist: <b>{sync_status}</b>",
+        f"Время последнего успешного sync denylist: <b>{_sync_time_or_ne_bilo(last_sync_ts)}</b>",
+        f"Текущих записей denylist: <b>{entries}</b>",
+        f"Ошибки denylist: <b>{errors}</b>",
+    ]
 
 
 
@@ -567,21 +591,14 @@ async def _render_network_policy_text() -> str:
     deny_enabled = int(await get_setting("EGRESS_DENYLIST_ENABLED", int) or 0)
     deny_mode = str(await get_setting("EGRESS_DENYLIST_MODE", str) or "soft").strip().lower()
     deny_refresh = int(await get_setting("EGRESS_DENYLIST_REFRESH_MINUTES", int) or 30)
-    health_lines: list[str] = []
-    if deny_enabled == 0:
-        health_lines.append("Denylist выключен — синхронизация не выполняется")
-    health_block = ("\n".join(health_lines) + "\n\n") if health_lines else ""
+    history_block = "\n".join(_denylist_history_block(enabled=deny_enabled, metrics=policy_stats))
     return (
         "🌐 <b>Сеть</b>\n\n"
         f"AWG: <b>{escape_html(DOCKER_CONTAINER)} / {escape_html(WG_INTERFACE)}</b>\n"
         f"Denylist: <b>{_bool_on_off(deny_enabled)}</b>\n"
         f"Режим denylist: <b>{escape_html(deny_mode)}</b>\n"
         f"Интервал обновления denylist: <b>{deny_refresh} мин</b>\n\n"
-        f"{health_block}"
-        f"Последняя синхронизация denylist: <b>{_metric_or_ne_bilo(policy_stats['denylist_last_sync_ok'])}</b>\n"
-        f"Время последней синхронизации denylist: <b>{_metric_or_ne_bilo(policy_stats['denylist_last_sync_ts'])}</b>\n"
-        f"Записей в denylist: <b>{policy_stats['denylist_entries']}</b>\n"
-        f"Ошибки denylist: <b>{policy_stats['denylist_errors']}</b>"
+        f"{history_block}"
     )
 
 
@@ -2545,16 +2562,14 @@ async def denylist_status_cmd(message: types.Message):
     mode = str(await get_setting("EGRESS_DENYLIST_MODE", str) or "soft")
     refresh_minutes = int(await get_setting("EGRESS_DENYLIST_REFRESH_MINUTES", int) or 30)
     metrics = await policy_metrics()
+    history_block = "\n".join(_denylist_history_block(enabled=enabled, metrics=metrics))
     await message.answer(
         (
             "🛡 <b>Статус denylist</b>\n"
-            f"Включено: {_bool_on_off(enabled)}\n"
-            f"Режим: {escape_html(mode)}\n"
-            f"Обновление: {refresh_minutes} мин\n"
-            f"Последняя синхронизация denylist: {_metric_or_ne_bilo(metrics['denylist_last_sync_ok'])}\n"
-            f"Время последней синхронизации denylist: {_metric_or_ne_bilo(metrics['denylist_last_sync_ts'])}\n"
-            f"Записей: {metrics['denylist_entries']}\n"
-            f"Ошибки: {metrics['denylist_errors']}"
+            f"Denylist: <b>{_bool_on_off(enabled)}</b>\n"
+            f"Режим: <b>{escape_html(mode)}</b>\n"
+            f"Обновление: <b>{refresh_minutes} мин</b>\n"
+            f"{history_block}"
         ),
         parse_mode="HTML",
     )
