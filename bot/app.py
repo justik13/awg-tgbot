@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import dataclass
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.base import STATE_RUNNING
+from apscheduler.schedulers import SchedulerNotRunningError
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.exceptions import TelegramUnauthorizedError
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -242,7 +244,7 @@ async def _startup_checks(bot: Bot) -> None:
         logger.info("Контейнер и интерфейс AWG доступны")
     except Exception as error:
         logger.exception("AWG недоступен: %s", error)
-        raise RuntimeError("AWG недоступен") from error
+        raise RuntimeError(f"AWG недоступен: {error}") from error
 
     try:
         admin_chat = await bot.get_chat(ADMIN_ID)
@@ -346,7 +348,13 @@ async def main() -> None:
         )
         await dp.start_polling(bot)
     finally:
-        scheduler.shutdown(wait=False)
+        try:
+            if scheduler.state == STATE_RUNNING:
+                scheduler.shutdown(wait=False)
+        except SchedulerNotRunningError:
+            pass
+        except Exception as shutdown_error:
+            logger.warning("Не удалось корректно остановить scheduler: %s", shutdown_error)
         await worker_pool.stop()
         await close_shared_db()
         await bot.session.close()

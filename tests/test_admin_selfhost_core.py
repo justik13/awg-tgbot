@@ -82,3 +82,62 @@ def test_open_user_card_jump_reuses_existing_flow(monkeypatch):
     monkeypatch.setattr(handlers_admin, "_send_user_manage_card", AsyncMock())
     asyncio.run(handlers_admin.admin_open_user_card_from_payment(cb))
     handlers_admin._send_user_manage_card.assert_awaited_once()
+
+
+def test_smokecheck_marks_invalid_helper_policy_json_as_failed(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "DOCKER_CONTAINER", "amnezia-awg")
+    monkeypatch.setattr(handlers_admin, "WG_INTERFACE", "awg0")
+    monkeypatch.setattr(handlers_admin, "AWG_HELPER_POLICY_PATH", "/etc/awg-bot-helper.json")
+    monkeypatch.setattr(handlers_admin, "db_health_info", AsyncMock(return_value={"is_healthy": True}))
+    monkeypatch.setattr(handlers_admin, "check_awg_container", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        handlers_admin,
+        "read_helper_policy",
+        lambda _path: ("", "", "helper policy parse failed: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"),
+    )
+
+    report = asyncio.run(handlers_admin.run_runtime_smokecheck())
+    checks = {item["name"]: item for item in report["checks"]}
+
+    assert report["overall"] == "failed"
+    assert checks["Политика helper"]["state"] == "failed"
+    assert "/etc/awg-bot-helper.json" in checks["Политика helper"]["detail"]
+    assert "Expecting property name enclosed in double quotes" in checks["Политика helper"]["detail"]
+    assert "исправь JSON в /etc/awg-bot-helper.json" in report["hint"]
+
+
+def test_smokecheck_awg_error_from_helper_policy_sets_critical_hint(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "DOCKER_CONTAINER", "amnezia-awg")
+    monkeypatch.setattr(handlers_admin, "WG_INTERFACE", "awg0")
+    monkeypatch.setattr(handlers_admin, "AWG_HELPER_POLICY_PATH", "/etc/awg-bot-helper.json")
+    monkeypatch.setattr(handlers_admin, "db_health_info", AsyncMock(return_value={"is_healthy": True}))
+    monkeypatch.setattr(
+        handlers_admin,
+        "check_awg_container",
+        AsyncMock(side_effect=RuntimeError("helper exec failed: invalid helper policy json: bad value")),
+    )
+    monkeypatch.setattr(handlers_admin, "read_helper_policy", lambda _path: ("amnezia-awg", "awg0", ""))
+
+    report = asyncio.run(handlers_admin.run_runtime_smokecheck())
+
+    assert report["overall"] == "failed"
+    assert "исправь JSON в /etc/awg-bot-helper.json" in report["hint"]
+    assert report["hint"] != "готово к работе"
+
+
+def test_build_runtime_smokecheck_text_escapes_parser_error_html(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "DOCKER_CONTAINER", "amnezia-awg")
+    monkeypatch.setattr(handlers_admin, "WG_INTERFACE", "awg0")
+    monkeypatch.setattr(handlers_admin, "AWG_HELPER_POLICY_PATH", "/etc/awg-bot-helper.json")
+    monkeypatch.setattr(handlers_admin, "db_health_info", AsyncMock(return_value={"is_healthy": True}))
+    monkeypatch.setattr(handlers_admin, "check_awg_container", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        handlers_admin,
+        "read_helper_policy",
+        lambda _path: ("", "", "helper policy parse failed: bad <tag>& value"),
+    )
+
+    text = asyncio.run(handlers_admin.build_runtime_smokecheck_text())
+
+    assert "bad &lt;tag&gt;&amp; value" in text
+    assert "bad <tag>& value" not in text

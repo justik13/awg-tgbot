@@ -42,3 +42,14 @@ def test_validate_helper_policy_detects_interface_mismatch(tmp_path: Path):
         assert "policy=awg/awg0" in str(e)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_read_helper_policy_reports_parse_error(tmp_path: Path):
+    policy = tmp_path / "helper.json"
+    policy.write_text("{container: awg", encoding="utf-8")
+
+    container, interface, error = read_helper_policy(policy)
+
+    assert container == ""
+    assert interface == ""
+    assert error.startswith("helper policy parse failed:")
