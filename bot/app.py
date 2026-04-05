@@ -275,13 +275,19 @@ async def _startup_checks(bot: Bot) -> None:
         db_info = await db_health_info()
         orphan_count = len(await get_orphan_awg_peers())
         logger.info(
-            "Проверка состояния: db_exists=%s, keys_table=%s, required_cols=%s, valid_keys=%s, orphan_peers=%s",
+            "Проверка состояния: db_exists=%s, schema_ready=%s, runtime_ready=%s, instance_integrity=%s, valid_keys=%s, orphan_peers=%s",
             db_info["exists"],
-            db_info["keys_table_exists"],
-            db_info["has_required_columns"],
+            db_info.get("schema_ready"),
+            db_info.get("runtime_ready"),
+            db_info.get("instance_integrity", {}).get("state"),
             db_info["valid_keys_count"],
             orphan_count,
         )
+        if db_info.get("instance_integrity", {}).get("state") == "critical":
+            logger.error(
+                "КРИТИЧНО: нарушена целостность инстанса: %s",
+                "; ".join(str(item) for item in db_info.get("instance_integrity", {}).get("issues", [])),
+            )
     except Exception as error:
         logger.exception("Ошибка стартовой диагностики: %s", error)
 

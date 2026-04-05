@@ -491,15 +491,46 @@ async def run_runtime_smokecheck() -> dict[str, object]:
         checks.append({"name": "Конфигурация", "state": "ok", "detail": "готово", "hint": ""})
 
     db_info = await db_health_info()
-    if db_info.get("is_healthy"):
-        checks.append({"name": "База данных", "state": "ok", "detail": "готово", "hint": ""})
+    schema_ready = db_info.get("schema_ready")
+    if schema_ready is None:
+        schema_ready = bool(db_info.get("is_healthy"))
+
+    if schema_ready:
+        checks.append({"name": "База данных (schema_ready)", "state": "ok", "detail": "готово", "hint": ""})
     else:
         checks.append(
             {
-                "name": "База данных",
+                "name": "База данных (schema_ready)",
                 "state": "failed",
                 "detail": "схема БД не готова",
                 "hint": "проверь БД вручную: init/migrations/права",
+            }
+        )
+
+    integrity = db_info.get("instance_integrity") if isinstance(db_info.get("instance_integrity"), dict) else {}
+    if not integrity:
+        integrity = {"state": "ok" if bool(db_info.get("is_healthy")) else "unknown", "issues": []}
+    integrity_state = str(integrity.get("state") or "unknown")
+    integrity_issues = integrity.get("issues") if isinstance(integrity.get("issues"), list) else []
+    if integrity_state == "critical":
+        details = "; ".join(str(item) for item in integrity_issues if str(item).strip())
+        checks.append(
+            {
+                "name": "Целостность инстанса",
+                "state": "failed",
+                "detail": details or "обнаружены критичные проблемы целостности",
+                "hint": "проверь backup/restore и ENCRYPTION_SECRET; состояние runtime_ready=false",
+            }
+        )
+    elif integrity_state == "ok":
+        checks.append({"name": "Целостность инстанса", "state": "ok", "detail": "готово", "hint": ""})
+    else:
+        checks.append(
+            {
+                "name": "Целостность инстанса",
+                "state": "warning",
+                "detail": "статус не определён",
+                "hint": "проверь БД вручную",
             }
         )
 

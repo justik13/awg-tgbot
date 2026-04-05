@@ -31,3 +31,23 @@ def test_helper_policy_non_object_json_is_handled_as_structured_error():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "if not isinstance(data, dict):" in script
     assert 'error = "helper policy must be a JSON object"' in script
+
+
+def test_reinstall_includes_runtime_snapshot_smokecheck_and_rollback_hooks():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "create_runtime_snapshot_before_reinstall" in script
+    assert "run_post_restart_smokecheck" in script
+    assert "rollback_failed_reinstall" in script
+    assert "Переустановка не прошла smokecheck. Выполнен rollback" in script
+
+
+def test_restore_includes_post_restore_smokecheck_and_rollback_message():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "Восстановление не прошло post-restore smokecheck. Запускаю rollback." in script
+    assert "Восстановление не выполнено: rollback произведён" in script
+    assert "sync_awg_helper_policy_from_env" in script
+
+
+def test_installer_dependencies_include_nftables_for_denylist():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "nftables" in script
