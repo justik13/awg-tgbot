@@ -1860,6 +1860,8 @@ if os.path.isfile(env_file):
         if not key:
             continue
         os.environ.setdefault(key, value.strip())
+install_dir = os.path.dirname(bot_dir)
+os.chdir(install_dir)
 sys.path.insert(0, bot_dir)
 from database import db_health_info  # noqa: E402
 
