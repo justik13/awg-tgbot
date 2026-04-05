@@ -111,5 +111,4 @@ def test_rollback_stops_service_before_restoring_repo_and_runtime():
     assert stop_pos != -1 and restore_log_pos != -1 and restore_repo_pos != -1 and restore_db_pos != -1
     assert stop_pos < restore_log_pos
     assert restore_log_pos < restore_repo_pos
-    assert stop_pos < restore_repo_pos
     assert stop_pos < restore_db_pos
