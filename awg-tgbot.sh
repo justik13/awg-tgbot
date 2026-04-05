@@ -1508,12 +1508,12 @@ prepare_bot_log_for_reinstall() {
 
   if ! touch "$APP_LOG_FILE" 2>/dev/null; then
     warn "Не удалось подготовить новый bot.log (${APP_LOG_FILE})."
-    printf '%s\t%s' "$pending_archive" "$final_archive"
+    printf '%s\t%s\n' "$pending_archive" "$final_archive"
     return 0
   fi
   chown "${BOT_USER}:${BOT_USER}" "$APP_LOG_FILE" 2>/dev/null || warn "Не удалось выставить владельца ${BOT_USER}:${BOT_USER} для ${APP_LOG_FILE}."
   chmod 640 "$APP_LOG_FILE" 2>/dev/null || warn "Не удалось выставить права 640 для ${APP_LOG_FILE}."
-  printf '%s\t%s' "$pending_archive" "$final_archive"
+  printf '%s\t%s\n' "$pending_archive" "$final_archive"
 }
 
 finalize_bot_log_reinstall_archive() {
