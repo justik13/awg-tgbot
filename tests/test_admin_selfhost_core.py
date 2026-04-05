@@ -123,3 +123,21 @@ def test_smokecheck_awg_error_from_helper_policy_sets_critical_hint(monkeypatch)
     assert report["overall"] == "failed"
     assert "исправь JSON в /etc/awg-bot-helper.json" in report["hint"]
     assert report["hint"] != "готово к работе"
+
+
+def test_build_runtime_smokecheck_text_escapes_parser_error_html(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "DOCKER_CONTAINER", "amnezia-awg")
+    monkeypatch.setattr(handlers_admin, "WG_INTERFACE", "awg0")
+    monkeypatch.setattr(handlers_admin, "AWG_HELPER_POLICY_PATH", "/etc/awg-bot-helper.json")
+    monkeypatch.setattr(handlers_admin, "db_health_info", AsyncMock(return_value={"is_healthy": True}))
+    monkeypatch.setattr(handlers_admin, "check_awg_container", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        handlers_admin,
+        "read_helper_policy",
+        lambda _path: ("", "", "helper policy parse failed: bad <tag>& value"),
+    )
+
+    text = asyncio.run(handlers_admin.build_runtime_smokecheck_text())
+
+    assert "bad &lt;tag&gt;&amp; value" in text
+    assert "bad <tag>& value" not in text

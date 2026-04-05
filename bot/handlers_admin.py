@@ -422,7 +422,7 @@ async def run_runtime_smokecheck() -> dict[str, object]:
                 parser_error = policy_error.split("parse failed:", 1)[1].strip()
                 detail = (
                     "ошибка чтения политики helper: /etc/awg-bot-helper.json содержит неверный JSON"
-                    + (f" ({_safe_policy_error_suffix(parser_error)})" if parser_error else "")
+                    + (f" ({escape_html(_safe_policy_error_suffix(parser_error))})" if parser_error else "")
                 )
             checks.append(
                 {
