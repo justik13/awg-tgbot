@@ -219,6 +219,83 @@ def test_denylist_sync_disabled_counts_errors_on_clear_failure(monkeypatch):
     logger_mock.warning.assert_called_once()
 
 
+def test_sync_awg_cmd_uses_awg_reconcile_report_without_denylist_sync(monkeypatch):
+    message = _msg("/sync_awg")
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "build_awg_sync_text", AsyncMock(return_value="awg-report"))
+    monkeypatch.setattr(handlers_admin, "denylist_sync", AsyncMock())
+
+    asyncio.run(handlers_admin.sync_awg_cmd(message))
+
+    handlers_admin.build_awg_sync_text.assert_awaited_once()
+    handlers_admin.denylist_sync.assert_not_called()
+    message.answer.assert_awaited_once_with("awg-report", parse_mode="HTML")
+
+
+def test_admin_sync_callback_uses_awg_reconcile_report_without_denylist_sync(monkeypatch):
+    cb = _cb(handlers_admin.CB_ADMIN_SYNC)
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "build_awg_sync_text", AsyncMock(return_value="awg-report"))
+    monkeypatch.setattr(handlers_admin, "denylist_sync", AsyncMock())
+
+    asyncio.run(handlers_admin.admin_sync_awg(cb))
+
+    handlers_admin.build_awg_sync_text.assert_awaited_once()
+    handlers_admin.denylist_sync.assert_not_called()
+    cb.message.answer.assert_awaited_once_with("awg-report", parse_mode="HTML")
+
+
+def test_build_awg_sync_text_includes_reconcile_and_diagnostics(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "run_awg_sync_report", AsyncMock(return_value={
+        "pending": {"status": "ok", "stats": {"activated": 2, "deleted": 1, "marked_manual": 0, "awg_removed": 1}},
+        "active": {"status": "ok", "stats": {"restored": 3, "already_present": 5, "failed": 1, "skipped_invalid_secret": 0}},
+        "traffic": {"status": "ok", "value": 7},
+        "db_health": {"status": "ok", "value": {"exists": True, "keys_table_exists": True, "has_required_columns": True, "valid_keys_count": 11}},
+        "orphans": {"status": "ok", "value": [{"public_key": "k1"}]},
+    }))
+
+    text = asyncio.run(handlers_admin.build_awg_sync_text())
+
+    assert "Проверка и синхронизация AWG" in text
+    assert "Сверка ожидающих ключей" in text
+    assert "активировано=2" in text
+    assert "Сверка активных ключей" in text
+    assert "восстановлено=3" in text
+    assert "Синхронизация трафика" in text and "обновлено=7" in text
+    assert "Состояние БД" in text and "валидных ключей=11" in text
+    assert "Потерянные пиры" in text and "количество=1" in text
+
+
+def test_build_awg_sync_text_renders_partial_failure_without_traceback(monkeypatch):
+    monkeypatch.setattr(handlers_admin, "reconcile_pending_awg_state", AsyncMock(side_effect=RuntimeError("pending failed")))
+    monkeypatch.setattr(handlers_admin, "reconcile_active_awg_state", AsyncMock(return_value={"restored": 1, "already_present": 0, "failed": 0, "skipped_invalid_secret": 0}))
+    monkeypatch.setattr(handlers_admin, "sync_traffic_counters", AsyncMock(return_value=3))
+    monkeypatch.setattr(handlers_admin, "db_health_info", AsyncMock(return_value={"exists": True, "keys_table_exists": True, "has_required_columns": True, "valid_keys_count": 2}))
+    monkeypatch.setattr(handlers_admin, "get_orphan_awg_peers", AsyncMock(return_value=[]))
+
+    text = asyncio.run(handlers_admin.build_awg_sync_text())
+
+    assert "Сверка ожидающих ключей" in text and "ошибка" in text
+    assert "Сверка активных ключей" in text and "восстановлено=1" in text
+    assert "Traceback" not in text
+    assert "File \"" not in text
+
+
+def test_denylist_sync_cmd_still_runs_denylist_sync(monkeypatch):
+    message = _msg("/denylist_sync")
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "denylist_sync", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
+
+    asyncio.run(handlers_admin.denylist_sync_cmd(message))
+
+    handlers_admin.denylist_sync.assert_awaited_once_with(handlers_admin.run_docker)
+    message.answer.assert_awaited_once_with("✅ Синхронизация denylist выполнена.")
+
+
 def test_findpay_slash_fallback(monkeypatch):
     message = _msg("/findpay tg-2")
     monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
