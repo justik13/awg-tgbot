@@ -12,7 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / 'bot'))
 import handlers_user
 import handlers_admin
 import payments
-from keyboards import get_config_post_conf_kb, get_support_center_kb, get_configs_devices_kb
+from keyboards import get_config_post_conf_kb, get_support_center_kb, get_configs_devices_kb, get_profile_inline_kb, get_buy_inline_kb, get_admin_inline_kb, get_support_back_kb
 from ui_constants import CB_CANCEL_ADD_DAYS, CB_CONFIRM_ADD_DAYS, is_admin_callback_data
 
 
@@ -69,12 +69,57 @@ def test_configs_screen_contains_profile_back():
 def test_support_back_returns_to_support_center(monkeypatch):
     cb = DummyCallback(data=handlers_user.CB_SUPPORT_BACK)
     monkeypatch.setattr(handlers_user, '_clear_promo_input_pending', AsyncMock())
-    monkeypatch.setattr(handlers_user, 'get_support_full_text', AsyncMock(return_value='support-center'))
+    monkeypatch.setattr(handlers_user, 'get_user_subscription', AsyncMock(return_value=None))
+    monkeypatch.setattr(handlers_user, 'get_status_text', lambda *_: ('не активна', '—'))
+    monkeypatch.setattr(handlers_user, 'format_tg_username', lambda *_: '@u')
+    monkeypatch.setattr(handlers_user, 'escape_html', lambda x: x)
+    monkeypatch.setattr(handlers_user, 'subscription_is_active', lambda *_: False)
+    monkeypatch.setattr(handlers_user, 'get_user_keys', AsyncMock(return_value=[]))
+    monkeypatch.setattr(handlers_user, 'get_latest_user_payment_summary', AsyncMock(return_value=None))
+    monkeypatch.setattr(handlers_user, '_build_user_device_activity_lines', AsyncMock(return_value=['-']))
+    monkeypatch.setattr(handlers_user, '_build_user_traffic_lines', AsyncMock(return_value=['-']))
+    monkeypatch.setattr(handlers_user, 'get_support_short_text', AsyncMock(return_value='support'))
+    monkeypatch.setattr(handlers_user, 'get_setting', AsyncMock(return_value=0))
+    monkeypatch.setattr(handlers_user, 'get_text', AsyncMock(return_value='profile'))
 
     asyncio.run(handlers_user.support_back_callback(cb))
 
     cb.message.edit_text.assert_awaited_once()
-    assert 'support-center' in cb.message.edit_text.await_args.args[0]
+    assert 'profile' in cb.message.edit_text.await_args.args[0]
+
+
+def test_profile_hub_contains_core_actions():
+    kb = get_profile_inline_kb(subscription_active=True, referrals_enabled=True)
+    texts = [button.text for row in kb.inline_keyboard for button in row]
+    assert "🔄 Продлить доступ" in texts
+    assert "🔑 Подключение" in texts
+    assert "🎟 Ввести промокод" in texts
+    assert "🎁 Рефералы" in texts
+    assert "🆘 Помощь и поддержка" in texts
+    assert "📖 Как подключиться" in texts
+
+
+def test_guide_and_buy_have_profile_back():
+    buy_kb = get_buy_inline_kb()
+    buy_texts = [button.text for row in buy_kb.inline_keyboard for button in row]
+    assert "⬅️ В профиль" in buy_texts
+
+    guide_back_kb = get_support_back_kb()
+    guide_back_texts = [button.text for row in guide_back_kb.inline_keyboard for button in row]
+    assert guide_back_texts == ["⬅️ В профиль"]
+
+
+def test_admin_menu_labels_are_russian_only_for_main_sections():
+    kb = get_admin_inline_kb()
+    texts = [button.text for row in kb.inline_keyboard for button in row]
+    assert "👥 Пользователи" in texts
+    assert "💳 Платежи" in texts
+    assert "📊 Статистика" in texts
+    assert "🩺 Состояние" in texts
+    assert "🔄 Синхронизация" in texts
+    assert "🟠 Техработы" in texts
+    assert "👥 Users" not in texts
+    assert "💳 Payments" not in texts
 
 
 def test_admin_health_stats_sync_use_back_navigation(monkeypatch):

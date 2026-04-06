@@ -9,7 +9,6 @@ from aiogram.filters import CommandObject
 sys.path.append(str(Path(__file__).resolve().parents[1] / 'bot'))
 
 import handlers_user
-from ui_constants import BTN_PROMO
 
 
 class DummyMessage:
@@ -19,16 +18,20 @@ class DummyMessage:
         self.answer = AsyncMock()
 
 
-def test_promo_button_starts_pending_mode(monkeypatch):
-    message = DummyMessage(text=BTN_PROMO)
-    monkeypatch.setattr(handlers_user, 'ensure_user_exists', AsyncMock())
+def test_profile_inline_promo_starts_pending_mode(monkeypatch):
+    cb = SimpleNamespace(
+        data='promo_input_start',
+        from_user=SimpleNamespace(id=42, username='u', first_name='U'),
+        message=SimpleNamespace(answer=AsyncMock()),
+        answer=AsyncMock(),
+    )
     monkeypatch.setattr(handlers_user, 'set_pending_admin_action', AsyncMock())
     monkeypatch.setattr(handlers_user, 'clear_pending_admin_action', AsyncMock())
 
-    asyncio.run(handlers_user.promo_from_menu(message))
+    asyncio.run(handlers_user.promo_input_start_callback(cb))
 
     handlers_user.set_pending_admin_action.assert_awaited_once()
-    message.answer.assert_awaited()
+    cb.message.answer.assert_awaited()
 
 
 def test_profile_inline_promo_starts_same_flow(monkeypatch):
@@ -118,17 +121,34 @@ def test_top_level_flows_clear_stale_promo_pending(monkeypatch):
     assert handlers_user.clear_pending_admin_action.await_count >= 5
 
 
-def test_referrals_and_guide_clear_stale_promo_pending(monkeypatch):
-    message = DummyMessage()
-    message.bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username='bot')))
+def test_referrals_and_guide_callbacks_clear_stale_promo_pending(monkeypatch):
+    cb = SimpleNamespace(
+        data='x',
+        from_user=SimpleNamespace(id=42, username='u', first_name='U'),
+        message=SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock()),
+        answer=AsyncMock(),
+        bot=SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username='bot'))),
+    )
     monkeypatch.setattr(handlers_user, '_clear_promo_input_pending', AsyncMock())
     monkeypatch.setattr(handlers_user, 'ensure_user_exists', AsyncMock())
     monkeypatch.setattr(handlers_user, 'get_referral_screen_data', AsyncMock(return_value={'link': 'l', 'invited_count': 0, 'rewarded_count': 0, 'bonus_days': 0}))
     monkeypatch.setattr(handlers_user, 'get_text', AsyncMock(return_value='ok'))
     monkeypatch.setattr(handlers_user, 'get_instruction_with_policy_text', AsyncMock(return_value='guide'))
+    monkeypatch.setattr(handlers_user, 'get_support_short_text', AsyncMock(return_value='support'))
+    monkeypatch.setattr(handlers_user, 'get_user_subscription', AsyncMock(return_value=None))
+    monkeypatch.setattr(handlers_user, 'get_status_text', lambda *_: ('не активна', '—'))
+    monkeypatch.setattr(handlers_user, 'format_tg_username', lambda *_: '@u')
+    monkeypatch.setattr(handlers_user, 'escape_html', lambda x: x)
+    monkeypatch.setattr(handlers_user, 'subscription_is_active', lambda *_: False)
+    monkeypatch.setattr(handlers_user, 'get_user_keys', AsyncMock(return_value=[]))
+    monkeypatch.setattr(handlers_user, 'get_latest_user_payment_summary', AsyncMock(return_value=None))
+    monkeypatch.setattr(handlers_user, '_build_user_device_activity_lines', AsyncMock(return_value=['-']))
+    monkeypatch.setattr(handlers_user, '_build_user_traffic_lines', AsyncMock(return_value=['-']))
+    monkeypatch.setattr(handlers_user, 'get_setting', AsyncMock(return_value=0))
+    monkeypatch.setattr(handlers_user, 'get_profile_inline_kb', lambda *_args, **_kwargs: None)
 
-    asyncio.run(handlers_user.referrals_screen(message, message.bot))
-    asyncio.run(handlers_user.guide(message))
+    asyncio.run(handlers_user.referrals_from_profile(cb))
+    asyncio.run(handlers_user.show_instruction_callback(cb))
 
     assert handlers_user._clear_promo_input_pending.await_count == 2
 
@@ -136,7 +156,7 @@ def test_referrals_and_guide_clear_stale_promo_pending(monkeypatch):
 def test_navigation_callbacks_clear_stale_promo_pending(monkeypatch):
     cb = SimpleNamespace(
         from_user=SimpleNamespace(id=42, username='u', first_name='U'),
-        message=SimpleNamespace(answer=AsyncMock()),
+        message=SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock()),
         answer=AsyncMock(),
     )
     monkeypatch.setattr(handlers_user, '_clear_promo_input_pending', AsyncMock())
@@ -151,6 +171,9 @@ def test_navigation_callbacks_clear_stale_promo_pending(monkeypatch):
     monkeypatch.setattr(handlers_user, 'get_text', AsyncMock(return_value='ok'))
     monkeypatch.setattr(handlers_user, 'get_user_keys', AsyncMock(return_value=[]))
     monkeypatch.setattr(handlers_user, 'get_user_subscription', AsyncMock(return_value=None))
+    monkeypatch.setattr(handlers_user, 'get_latest_user_payment_summary', AsyncMock(return_value=None))
+    monkeypatch.setattr(handlers_user, '_build_user_device_activity_lines', AsyncMock(return_value=['-']))
+    monkeypatch.setattr(handlers_user, '_build_user_traffic_lines', AsyncMock(return_value=['-']))
     monkeypatch.setattr(handlers_user, 'subscription_is_active', lambda *_: False)
 
     asyncio.run(handlers_user.open_configs_from_profile(cb))

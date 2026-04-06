@@ -49,6 +49,7 @@ def get_buy_inline_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"30 дней — {config.STARS_PRICE_30_DAYS}⭐", callback_data=CB_BUY_30)],
         [InlineKeyboardButton(text=f"90 дней — {config.STARS_PRICE_90_DAYS}⭐", callback_data=CB_BUY_90)],
         [InlineKeyboardButton(text="📖 Как подключиться", callback_data=CB_SHOW_INSTRUCTION)],
+        [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -142,7 +143,6 @@ def get_support_center_kb() -> InlineKeyboardMarkup:
 def get_support_back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад в помощь", callback_data=CB_OPEN_SUPPORT)],
             [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
         ]
     )
@@ -161,6 +161,7 @@ def get_promo_cancel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_PROMO_INPUT_CANCEL)],
+            [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
         ]
     )
 
@@ -178,10 +179,10 @@ def get_configs_empty_kb() -> InlineKeyboardMarkup:
 def get_admin_inline_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👥 Users", callback_data=CB_ADMIN_LIST), InlineKeyboardButton(text="💳 Payments", callback_data=CB_ADMIN_PAYMENTS)],
+            [InlineKeyboardButton(text="👥 Пользователи", callback_data=CB_ADMIN_LIST), InlineKeyboardButton(text="💳 Платежи", callback_data=CB_ADMIN_PAYMENTS)],
             [InlineKeyboardButton(text="⚙️ Настройки сервиса", callback_data=CB_ADMIN_SERVICE_SETTINGS), InlineKeyboardButton(text="🌐 Сеть", callback_data=CB_ADMIN_NETWORK_POLICY)],
-            [InlineKeyboardButton(text="📊 Stats", callback_data=CB_ADMIN_STATS), InlineKeyboardButton(text="🩺 Health", callback_data=CB_ADMIN_HEALTH)],
-            [InlineKeyboardButton(text="🔄 Sync", callback_data=CB_ADMIN_SYNC), InlineKeyboardButton(text="🟠 Maintenance", callback_data=CB_ADMIN_MAINTENANCE)],
+            [InlineKeyboardButton(text="📊 Статистика", callback_data=CB_ADMIN_STATS), InlineKeyboardButton(text="🩺 Состояние", callback_data=CB_ADMIN_HEALTH)],
+            [InlineKeyboardButton(text="🔄 Синхронизация", callback_data=CB_ADMIN_SYNC), InlineKeyboardButton(text="🟠 Техработы", callback_data=CB_ADMIN_MAINTENANCE)],
             [InlineKeyboardButton(text="💸 Цены", callback_data=CB_ADMIN_PRICES), InlineKeyboardButton(text="🎟 Промокоды", callback_data=CB_ADMIN_PROMOCODES)],
             [InlineKeyboardButton(text="🎁 Рефералы", callback_data=CB_ADMIN_REFERRALS), InlineKeyboardButton(text="📢 Рассылка", callback_data=CB_ADMIN_BROADCAST)],
             [InlineKeyboardButton(text="📝 Тексты", callback_data=CB_ADMIN_TEXT_OVERRIDES)],

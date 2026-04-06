@@ -62,10 +62,7 @@ from texts import (
 from ui_constants import (
     BTN_BUY,
     BTN_CONFIGS,
-    BTN_GUIDE,
     BTN_PROFILE,
-    BTN_PROMO,
-    BTN_REFERRALS,
     BTN_SUPPORT,
     CB_CHECK_ACTIVATION_STATUS,
     CB_CONFIG_CONF_PREFIX,
@@ -686,12 +683,6 @@ async def open_profile_callback(cb: types.CallbackQuery):
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
 
-@router.message(F.text == BTN_GUIDE)
-async def guide(message: types.Message):
-    await _clear_promo_input_pending(message.from_user.id)
-    await message.answer(await get_instruction_with_policy_text(), parse_mode="HTML", disable_web_page_preview=True)
-
-
 @router.message(F.text == BTN_SUPPORT)
 async def support(message: types.Message):
     await _clear_promo_input_pending(message.from_user.id)
@@ -830,11 +821,8 @@ async def support_back_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
-        await _send_or_edit_user_screen(
-            cb,
-            f"{await get_support_full_text()}\n\nВыберите, с чем нужна помощь:",
-            reply_markup=get_support_center_kb(),
-        )
+        text, markup = await _render_profile_screen(cb.from_user)
+        await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
 
 @router.message(F.text == BTN_BUY)
@@ -844,16 +832,6 @@ async def buy(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         maybe_set_support_username(message.from_user.username)
     await _send_buy_menu(message, message.from_user.id)
-
-
-@router.message(F.text == BTN_REFERRALS)
-async def referrals_screen(message: types.Message, bot):
-    await _clear_promo_input_pending(message.from_user.id)
-    await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    me = await bot.get_me()
-    bot_username = getattr(me, "username", "") or "bot"
-    data = await get_referral_screen_data(message.from_user.id, bot_username)
-    await message.answer(await get_text("referral_screen", ref_link=data["link"], invited_count=data["invited_count"], rewarded_count=data["rewarded_count"], bonus_days=data["bonus_days"]), parse_mode="HTML")
 
 
 @router.callback_query(F.data == CB_OPEN_REFERRALS)
@@ -902,12 +880,6 @@ async def show_instruction_callback(cb: types.CallbackQuery):
             reply_markup=get_support_back_kb(),
             disable_web_page_preview=True,
         )
-
-
-@router.message(F.text == BTN_PROMO)
-async def promo_from_menu(message: types.Message):
-    await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    await _start_promo_input_flow(message, message.from_user)
 
 
 @router.callback_query(F.data == CB_PROMO_INPUT_START)
