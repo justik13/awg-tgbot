@@ -36,7 +36,15 @@ from database import (
 )
 from device_activity import render_device_activity_line
 from traffic import format_bytes_compact, render_device_traffic_line
-from helpers import escape_html, format_remaining_time, format_tg_username, get_status_text, subscription_is_active, utc_now_naive
+from helpers import (
+    escape_html,
+    format_moscow_datetime,
+    format_remaining_time,
+    format_tg_username,
+    get_status_text,
+    subscription_is_active,
+    utc_now_naive,
+)
 from keyboards import (
     get_buy_inline_kb,
     get_config_post_conf_kb,
@@ -427,7 +435,7 @@ async def _apply_promo_code(message: types.Message, code: str) -> None:
             f"code={code}; days={bonus_days}; until={new_until.isoformat()}",
         )
         await message.answer(
-            f"✅ Промокод применён: +{bonus_days} дней.\n📅 Доступ до: <b>{new_until.strftime('%d.%m.%Y %H:%M')}</b>",
+            f"✅ Промокод применён: +{bonus_days} дней.\n📅 Доступ до: <b>{format_moscow_datetime(new_until)}</b>",
             parse_mode="HTML",
         )
     except Exception as e:
@@ -694,6 +702,7 @@ async def open_traffic_devices_callback(cb: types.CallbackQuery):
 @router.message(F.text == BTN_SUPPORT)
 async def support(message: types.Message):
     await _clear_promo_input_pending(message.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(message.bot, message.from_user.id)
     support_username = get_support_username()
     if not support_username:
         logger.warning("SUPPORT_USERNAME is not configured; support contact hidden from user flow")
