@@ -7,6 +7,7 @@ import config
 
 from aiogram import F, Router, types
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import BaseFilter, Command, CommandObject
 
 from awg_backend import (
@@ -715,8 +716,12 @@ async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_
         try:
             await message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
             return
-        except Exception:
-            pass
+        except TelegramBadRequest as error:
+            if "message is not modified" in str(error).lower():
+                return
+            logger.debug("Admin screen edit fallback due to TelegramBadRequest: %s", error)
+        except Exception as error:
+            logger.warning("Admin screen edit fallback due to unexpected error: %s", error)
     if message is not None:
         await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
 

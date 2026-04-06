@@ -3,12 +3,16 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from datetime import datetime
+
+from aiogram.exceptions import TelegramBadRequest
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / 'bot'))
 
 import handlers_user
 import handlers_admin
 import payments
+from ui_constants import CB_CANCEL_ADD_DAYS, CB_CONFIRM_ADD_DAYS, is_admin_callback_data
 
 
 class DummyMessage:
@@ -114,3 +118,69 @@ def test_payment_success_uses_single_progress_message(monkeypatch):
 
     message.answer.assert_awaited_once_with('progress')
     progress_message.edit_text.assert_awaited_once()
+
+
+def test_user_send_or_edit_noop_does_not_fallback_to_new_message():
+    message = DummyMessage()
+    message.edit_text = AsyncMock(side_effect=TelegramBadRequest(None, "Bad Request: message is not modified"))
+    cb = DummyCallback()
+    cb.message = message
+
+    asyncio.run(handlers_user._send_or_edit_user_screen(cb, "screen"))
+
+    message.answer.assert_not_called()
+
+
+def test_admin_send_or_edit_noop_does_not_fallback_to_new_message():
+    message = DummyMessage()
+    message.edit_text = AsyncMock(side_effect=TelegramBadRequest(None, "Bad Request: message is not modified"))
+    cb = DummyCallback()
+    cb.from_user = SimpleNamespace(id=handlers_admin.ADMIN_ID)
+    cb.message = message
+
+    asyncio.run(handlers_admin._send_or_edit_admin_message(cb, "screen", reply_markup=None))
+
+    message.answer.assert_not_called()
+
+
+def test_send_or_edit_fallback_kept_for_real_edit_errors():
+    message = DummyMessage()
+    message.edit_text = AsyncMock(side_effect=TelegramBadRequest(None, "Bad Request: message can't be edited"))
+    cb = DummyCallback()
+    cb.message = message
+
+    asyncio.run(handlers_user._send_or_edit_user_screen(cb, "screen"))
+
+    message.answer.assert_awaited_once()
+
+
+def test_admin_add_days_callbacks_are_in_admin_namespace():
+    assert is_admin_callback_data(CB_CONFIRM_ADD_DAYS) is True
+    assert is_admin_callback_data(CB_CANCEL_ADD_DAYS) is True
+
+
+def test_admin_add_days_confirm_callback_still_works(monkeypatch):
+    cb = DummyCallback(data=CB_CONFIRM_ADD_DAYS)
+    cb.from_user = SimpleNamespace(id=handlers_admin.ADMIN_ID)
+    cb.bot = SimpleNamespace()
+    monkeypatch.setattr(handlers_admin, "pop_pending_admin_action", AsyncMock(return_value={"uid": 77, "days": 30, "page": 0}))
+    monkeypatch.setattr(handlers_admin, "admin_command_limited", lambda *_: False)
+    monkeypatch.setattr(handlers_admin, "issue_subscription", AsyncMock(return_value=datetime(2026, 1, 1, 12, 0)))
+    monkeypatch.setattr(handlers_admin, "notify_user_subscription_granted", AsyncMock(return_value=True))
+    monkeypatch.setattr(handlers_admin, "write_audit_log", AsyncMock())
+
+    asyncio.run(handlers_admin.admin_add_days_confirm(cb))
+
+    handlers_admin.issue_subscription.assert_awaited_once_with(77, 30)
+    cb.message.answer.assert_awaited_once()
+
+
+def test_admin_add_days_cancel_callback_still_works(monkeypatch):
+    cb = DummyCallback(data=CB_CANCEL_ADD_DAYS)
+    cb.from_user = SimpleNamespace(id=handlers_admin.ADMIN_ID)
+    monkeypatch.setattr(handlers_admin, "clear_pending_admin_action", AsyncMock())
+
+    asyncio.run(handlers_admin.admin_add_days_cancel(cb))
+
+    handlers_admin.clear_pending_admin_action.assert_awaited_once()
+    cb.message.answer.assert_awaited_once()

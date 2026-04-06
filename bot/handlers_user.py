@@ -2,6 +2,7 @@ import re
 from datetime import datetime
 
 from aiogram import F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -309,8 +310,12 @@ async def _send_or_edit_user_screen(
                 kwargs["disable_web_page_preview"] = disable_web_page_preview
             await message.edit_text(text, **kwargs)
             return
-        except Exception:
-            pass
+        except TelegramBadRequest as error:
+            if "message is not modified" in str(error).lower():
+                return
+            logger.debug("User screen edit fallback due to TelegramBadRequest: %s", error)
+        except Exception as error:
+            logger.warning("User screen edit fallback due to unexpected error: %s", error)
     if message is not None:
         kwargs = {"parse_mode": "HTML", "reply_markup": reply_markup}
         if disable_web_page_preview is not None:
