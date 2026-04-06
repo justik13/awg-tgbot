@@ -25,6 +25,7 @@ from ui_constants import (
     CB_PROMO_INPUT_CANCEL, CB_PROMO_INPUT_START,
     CB_SHOW_BUY_MENU, CB_SHOW_INSTRUCTION, CB_USER_REISSUE_CANCEL, CB_USER_REISSUE_CONFIRM,
     CB_SUPPORT_BACK, CB_SUPPORT_CONNECTION, CB_SUPPORT_PAYMENT, CB_SUPPORT_TERMS, CB_USER_REISSUE_DEVICE_PREFIX,
+    CB_CONFIRM_ADD_DAYS, CB_CANCEL_ADD_DAYS,
 )
 
 
@@ -117,7 +118,7 @@ def get_support_center_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💳 Помощь с оплатой", callback_data=CB_SUPPORT_PAYMENT)],
             [InlineKeyboardButton(text="🔌 Помощь с подключением", callback_data=CB_SUPPORT_CONNECTION)],
             [InlineKeyboardButton(text="📄 Краткие условия", callback_data=CB_SUPPORT_TERMS)],
-            [InlineKeyboardButton(text="⬅️ К меню", callback_data=CB_SUPPORT_BACK)],
+            [InlineKeyboardButton(text="⬅️ К разделу помощи", callback_data=CB_SUPPORT_BACK)],
         ]
     )
 
@@ -282,9 +283,9 @@ def get_admin_network_policy_kb() -> InlineKeyboardMarkup:
 def get_admin_denylist_kb(*, denylist_enabled: int, denylist_mode: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=f"Denylist: {'ВКЛ' if int(denylist_enabled) == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_DENYLIST_TOGGLE)],
+            [InlineKeyboardButton(text=f"🛡 Denylist: {'ВКЛ' if int(denylist_enabled) == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_DENYLIST_TOGGLE)],
             [InlineKeyboardButton(text=f"Режим denylist: {denylist_mode}", callback_data=CB_ADMIN_NET_DENYLIST)],
-            [InlineKeyboardButton(text="Soft режим", callback_data=CB_ADMIN_DENYLIST_MODE_SOFT), InlineKeyboardButton(text="Strict режим", callback_data=CB_ADMIN_DENYLIST_MODE_STRICT)],
+            [InlineKeyboardButton(text="Мягкий режим", callback_data=CB_ADMIN_DENYLIST_MODE_SOFT), InlineKeyboardButton(text="Строгий режим", callback_data=CB_ADMIN_DENYLIST_MODE_STRICT)],
             [InlineKeyboardButton(text="👁 Домены", callback_data=CB_ADMIN_DENYLIST_VIEW_DOMAINS), InlineKeyboardButton(text="👁 CIDR", callback_data=CB_ADMIN_DENYLIST_VIEW_CIDRS)],
             [InlineKeyboardButton(text="✏️ Заменить домены", callback_data=CB_ADMIN_DENYLIST_REPLACE_DOMAINS)],
             [InlineKeyboardButton(text="✏️ Заменить CIDR", callback_data=CB_ADMIN_DENYLIST_REPLACE_CIDRS)],
@@ -299,11 +300,20 @@ def get_admin_service_settings_kb(ref_enabled: int, torrent_enabled: int) -> Inl
         inline_keyboard=[
             [InlineKeyboardButton(text="🆘 Поддержка", callback_data=CB_ADMIN_SERVICE_SUPPORT)],
             [InlineKeyboardButton(text="🔗 Ссылка на загрузку", callback_data=CB_ADMIN_SERVICE_DOWNLOAD)],
-            [InlineKeyboardButton(text=f"🎁 Рефералы: {'ON' if ref_enabled == 1 else 'OFF'}", callback_data=CB_ADMIN_SERVICE_REFERRAL_TOGGLE)],
+            [InlineKeyboardButton(text=f"🎁 Рефералы: {'ВКЛ' if ref_enabled == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_SERVICE_REFERRAL_TOGGLE)],
             [InlineKeyboardButton(text="🎁 Бонус другу", callback_data=CB_ADMIN_SERVICE_INVITEE_BONUS)],
             [InlineKeyboardButton(text="🏅 Бонус пригласившему", callback_data=CB_ADMIN_SERVICE_INVITER_BONUS)],
-            [InlineKeyboardButton(text=f"⚠️ Предупреждение о торрентах: {'ON' if torrent_enabled == 1 else 'OFF'}", callback_data=CB_ADMIN_SERVICE_TORRENT_TOGGLE)],
+            [InlineKeyboardButton(text=f"⚠️ Предупреждение о торрентах: {'ВКЛ' if torrent_enabled == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_SERVICE_TORRENT_TOGGLE)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
+        ]
+    )
+
+
+def get_admin_add_days_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, выдать +30 дней", callback_data=CB_CONFIRM_ADD_DAYS)],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_CANCEL_ADD_DAYS)],
         ]
     )
 

@@ -108,6 +108,8 @@ CB_CONFIRM_DEVICE_DELETE = "confirm_device_delete"
 CB_CANCEL_DEVICE_DELETE = "cancel_device_delete"
 CB_CONFIRM_DEVICE_REISSUE = "confirm_device_reissue"
 CB_CANCEL_DEVICE_REISSUE = "cancel_device_reissue"
+CB_CONFIRM_ADD_DAYS = "a:ud:c"
+CB_CANCEL_ADD_DAYS = "a:ud:x"
 def is_admin_callback_data(data: str | None) -> bool:
     return bool(data and data.startswith(ADMIN_CALLBACK_PREFIX))
 
