@@ -14,6 +14,11 @@ REPO_OWNER="${REPO_OWNER:-${DETECTED_REPO_OWNER:-justik13}}"
 REPO_NAME="${REPO_NAME:-${DETECTED_REPO_NAME:-awg-tgbot}}"
 DEFAULT_REPO_BRANCH="main"
 INSTALL_DIR="/opt/amnezia/bot"
+RUNTIME_DIR="${INSTALL_DIR}/runtime"
+DEFAULT_DB_BASENAME="vpn_bot.db"
+DEFAULT_DB_PATH="${RUNTIME_DIR}/${DEFAULT_DB_BASENAME}"
+LEGACY_DB_BASENAME="vpn_bot.db"
+LEGACY_DB_PATH="${INSTALL_DIR}/${LEGACY_DB_BASENAME}"
 STATE_DIR="${INSTALL_DIR}/.state"
 REPO_BRANCH_FILE="${STATE_DIR}/repo_branch"
 REPO_BRANCH="${REPO_BRANCH:-$(cat "$REPO_BRANCH_FILE" 2>/dev/null | tr -d '\r\n' || true)}"
@@ -1249,7 +1254,7 @@ write_common_env() {
   if [[ -n "$db_path" ]]; then
     set_env_value DB_PATH "$db_path"
   else
-    set_env_value DB_PATH "vpn_bot.db"
+    set_env_value DB_PATH "$DEFAULT_DB_PATH"
   fi
   return 0
 }
@@ -1379,6 +1384,9 @@ enforce_root_owned_code_paths() {
 
 prepare_runtime_access_paths() {
   local db_file
+  mkdir -p "$RUNTIME_DIR"
+  chown "$BOT_USER:$BOT_USER" "$RUNTIME_DIR" 2>/dev/null || true
+  chmod 750 "$RUNTIME_DIR" 2>/dev/null || true
   mkdir -p "$APP_LOG_DIR"
   touch "$APP_LOG_FILE"
   chown -R "$BOT_USER:$BOT_USER" "$APP_LOG_DIR" 2>/dev/null || true
@@ -1387,6 +1395,74 @@ prepare_runtime_access_paths() {
   db_file="$(get_bot_db_file)"
   repair_runtime_file_access "$db_file" 600
   repair_runtime_file_access "$ENV_FILE" 600
+  return 0
+}
+
+copy_sqlite_runtime_bundle() {
+  local src_db="$1" dst_db="$2" src_file dst_file suffix
+  [[ -f "$src_db" ]] || return 1
+  mkdir -p "$(dirname "$dst_db")"
+  install -m 600 "$src_db" "$dst_db" || return 1
+  repair_runtime_file_access "$dst_db" 600
+  for suffix in "-wal" "-shm"; do
+    src_file="${src_db}${suffix}"
+    dst_file="${dst_db}${suffix}"
+    if [[ -f "$src_file" ]]; then
+      install -m 600 "$src_file" "$dst_file" || return 1
+      repair_runtime_file_access "$dst_file" 600
+    else
+      rm -f "$dst_file"
+    fi
+  done
+  return 0
+}
+
+snapshot_sqlite_runtime_bundle() {
+  local src_db="$1" snapshot_dir="$2" snapshot_name="$3"
+  local snapshot_db="${snapshot_dir}/${snapshot_name}"
+  [[ -f "$src_db" ]] || return 1
+  copy_sqlite_runtime_bundle "$src_db" "$snapshot_db"
+}
+
+restore_sqlite_runtime_bundle() {
+  local snapshot_db="$1" target_db="$2"
+  [[ -f "$snapshot_db" ]] || return 1
+  copy_sqlite_runtime_bundle "$snapshot_db" "$target_db"
+}
+
+collect_existing_sqlite_bundle_basenames() {
+  local db_file="$1"
+  local suffix candidate
+  [[ -f "$db_file" ]] || return 1
+  printf '%s\n' "$(basename "$db_file")"
+  for suffix in "-wal" "-shm"; do
+    candidate="${db_file}${suffix}"
+    [[ -f "$candidate" ]] && printf '%s\n' "$(basename "$candidate")"
+  done
+  return 0
+}
+
+migrate_legacy_default_db_path() {
+  local current_db_path old_db_file
+  current_db_path="$(get_env_value DB_PATH)"
+  if [[ -z "$current_db_path" ]]; then
+    old_db_file="$LEGACY_DB_PATH"
+  elif [[ "$current_db_path" == "$LEGACY_DB_BASENAME" ]]; then
+    old_db_file="$LEGACY_DB_PATH"
+  elif [[ "$current_db_path" == "$LEGACY_DB_PATH" ]]; then
+    old_db_file="$LEGACY_DB_PATH"
+  else
+    return 0
+  fi
+
+  if [[ "$old_db_file" != "$DEFAULT_DB_PATH" ]]; then
+    mkdir -p "$RUNTIME_DIR"
+    if [[ -f "$old_db_file" ]]; then
+      copy_sqlite_runtime_bundle "$old_db_file" "$DEFAULT_DB_PATH" || return 1
+    fi
+  fi
+
+  set_env_value DB_PATH "$DEFAULT_DB_PATH"
   return 0
 }
 
@@ -1730,6 +1806,7 @@ install_or_reinstall_flow() {
   rm -rf "$tmp_dir"
   ensure_env_file
   migrate_legacy_tariff_defaults
+  migrate_legacy_default_db_path || die "Не удалось подготовить путь БД для runtime."
 
   write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
   ensure_selfhost_network_defaults
@@ -1824,7 +1901,7 @@ install_or_reinstall_flow() {
 get_bot_db_file() {
   local db_path db_file
   db_path="$(get_env_value DB_PATH)"
-  [[ -n "$db_path" ]] || db_path="vpn_bot.db"
+  [[ -n "$db_path" ]] || db_path="$DEFAULT_DB_PATH"
   if [[ "$db_path" = /* ]]; then
     db_file="$db_path"
   else
@@ -1848,7 +1925,7 @@ create_runtime_snapshot_before_reinstall() {
   snapshot_dir="$(mktemp -d "${SAFETY_SNAPSHOT_PREFIX}-${snapshot_label}-$(date -u +%Y%m%d_%H%M%S)-XXXXXX")"
   chmod 700 "$snapshot_dir" || true
   if [[ -f "$db_file" ]]; then
-    cp -a "$db_file" "$snapshot_dir/db.before"
+    snapshot_sqlite_runtime_bundle "$db_file" "$snapshot_dir" "db.before" || return 1
   fi
   if [[ -f "$ENV_FILE" ]]; then
     cp -a "$ENV_FILE" "$snapshot_dir/.env.before"
@@ -2001,8 +2078,7 @@ rollback_failed_reinstall() {
   fi
 
   if [[ -f "$runtime_snapshot_dir/db.before" ]]; then
-    install -m 600 "$runtime_snapshot_dir/db.before" "$db_file" || true
-    repair_runtime_file_access "$db_file" 600
+    restore_sqlite_runtime_bundle "$runtime_snapshot_dir/db.before" "$db_file" || true
     restore_runtime_ok=1
   fi
   if [[ -f "$runtime_snapshot_dir/.env.before" ]]; then
@@ -2053,6 +2129,7 @@ rollback_failed_reinstall() {
 
 create_local_backup() {
   local db_file timestamp archive_file meta_dir meta_file local_sha
+  local -a db_bundle_names=()
   if ! has_residual_files || [[ ! -f "$ENV_FILE" || ! -d "$BOT_DIR" ]]; then
     warn "Бот не установлен полностью. Нечего архивировать."
     return 1
@@ -2061,6 +2138,11 @@ create_local_backup() {
   db_file="$(get_bot_db_file)"
   if [[ ! -f "$db_file" ]]; then
     warn "Файл БД не найден: ${db_file}"
+    return 1
+  fi
+  mapfile -t db_bundle_names < <(collect_existing_sqlite_bundle_basenames "$db_file")
+  if [[ ${#db_bundle_names[@]} -eq 0 ]]; then
+    warn "Не удалось собрать SQLite bundle для бэкапа: ${db_file}"
     return 1
   fi
 
@@ -2082,11 +2164,12 @@ created_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 repo_branch=${REPO_BRANCH}
 local_sha=${local_sha}
 db_file=$(basename "$db_file")
+db_bundle=$(IFS=,; echo "${db_bundle_names[*]}")
 env_file=.env
 EOF
 
   if ! tar -czf "$archive_file" \
-    -C "$(dirname "$db_file")" "$(basename "$db_file")" \
+    -C "$(dirname "$db_file")" "${db_bundle_names[@]}" \
     -C "$INSTALL_DIR" ".env" \
     -C "$meta_dir" "metadata.txt"; then
     rm -rf "$meta_dir"
@@ -2105,6 +2188,7 @@ restore_from_backup() {
   local backup_root="${BACKUP_ROOT}"
   local selected_index="" selected_archive="" confirm_restore=""
   local db_file db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before
+  local -a archive_entries=() restore_members=()
   local restore_ok=0 rollback_ok=0 smokecheck_ok=0 helper_sync_ok=0 rollback_helper_sync_ok=0 rollback_smoke_ok=0
   mapfile -t archives < <(find "$backup_root" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' | sort -r)
   if [[ ${#archives[@]} -eq 0 ]]; then
@@ -2128,14 +2212,29 @@ restore_from_backup() {
   selected_archive="${archives[$((selected_index - 1))]}"
   db_file="$(get_bot_db_file)"
   db_basename="$(basename "$db_file")"
+  mapfile -t archive_entries < <(tar -tzf "$selected_archive" 2>/dev/null || true)
+  restore_members=("$db_basename")
+  if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-wal"; then
+    restore_members+=("${db_basename}-wal")
+  fi
+  if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-shm"; then
+    restore_members+=("${db_basename}-shm")
+  fi
   meta_content="$(tar -xOf "$selected_archive" metadata.txt 2>/dev/null || true)"
   if [[ -n "$meta_content" ]]; then
     db_basename="$(printf '%s\n' "$meta_content" | awk -F= '/^db_file=/{print $2}' | tail -n1)"
     [[ -n "$db_basename" ]] || db_basename="$(basename "$db_file")"
+    restore_members=("$db_basename")
+    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-wal"; then
+      restore_members+=("${db_basename}-wal")
+    fi
+    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-shm"; then
+      restore_members+=("${db_basename}-shm")
+    fi
   fi
 
   echo "Выбран архив: $(basename "$selected_archive")"
-  echo "Будет восстановлено: ${db_basename}, .env"
+  echo "Будет восстановлено: ${db_basename} (+sidecars при наличии), .env"
   if ! confirm_explicit "Продолжить восстановление?"; then
     warn "Восстановление отменено."
     return 1
@@ -2149,26 +2248,27 @@ restore_from_backup() {
 
   snapshot_dir="$(mktemp -d "${backup_root}/pre-restore-$(date -u +%Y%m%d_%H%M%S)-XXXXXX")"
   chmod 700 "$snapshot_dir" || true
-  if [[ -f "$db_file" ]]; then cp -a "$db_file" "$snapshot_dir/${db_basename}.before"; fi
+  if [[ -f "$db_file" ]]; then snapshot_sqlite_runtime_bundle "$db_file" "$snapshot_dir" "${db_basename}.before" || true; fi
   if [[ -f "$ENV_FILE" ]]; then cp -a "$ENV_FILE" "$snapshot_dir/.env.before"; fi
 
   tmp_restore="$(mktemp -d)"
-  if tar -xzf "$selected_archive" -C "$tmp_restore" "$db_basename" ".env"; then
+  if tar -xzf "$selected_archive" -C "$tmp_restore" "${restore_members[@]}" ".env"; then
     mkdir -p "$(dirname "$db_file")" "$INSTALL_DIR"
-    install -m 600 "$tmp_restore/$db_basename" "$db_file"
-    install -m 600 "$tmp_restore/.env" "$ENV_FILE"
-    repair_runtime_file_access "$db_file" 600
-    repair_runtime_file_access "$ENV_FILE" 600
-    restore_ok=1
+    if restore_sqlite_runtime_bundle "$tmp_restore/$db_basename" "$db_file"; then
+      install -m 600 "$tmp_restore/.env" "$ENV_FILE"
+      repair_runtime_file_access "$ENV_FILE" 600
+      restore_ok=1
+    else
+      warn "Ошибка восстановления SQLite bundle из архива."
+    fi
   else
     warn "Ошибка извлечения файлов из архива."
   fi
   rm -rf "$tmp_restore"
 
   if [[ "$restore_ok" != "1" ]]; then
-    if [[ -f "$snapshot_dir/${db_basename}.before" ]]; then install -m 600 "$snapshot_dir/${db_basename}.before" "$db_file" && rollback_ok=1; fi
+    if [[ -f "$snapshot_dir/${db_basename}.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/${db_basename}.before" "$db_file" && rollback_ok=1; fi
     if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
-    repair_runtime_file_access "$db_file" 600
     repair_runtime_file_access "$ENV_FILE" 600
     warn "Восстановление не завершено. Откат: $([[ "$rollback_ok" == "1" ]] && echo 'выполнен' || echo 'частично/не выполнен')."
     if [[ "$service_active_before" == "active" ]] && require_command systemctl && service_exists; then
@@ -2194,9 +2294,8 @@ restore_from_backup() {
 
   if [[ "$restore_ok" != "1" || "$smokecheck_ok" != "1" ]]; then
     warn "Восстановление не прошло post-restore smokecheck. Запускаю rollback."
-    if [[ -f "$snapshot_dir/${db_basename}.before" ]]; then install -m 600 "$snapshot_dir/${db_basename}.before" "$db_file" && rollback_ok=1; fi
+    if [[ -f "$snapshot_dir/${db_basename}.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/${db_basename}.before" "$db_file" && rollback_ok=1; fi
     if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
-    repair_runtime_file_access "$db_file" 600
     repair_runtime_file_access "$ENV_FILE" 600
     if sync_awg_helper_policy_from_env; then
       rollback_helper_sync_ok=1
@@ -2352,7 +2451,7 @@ remove_keep_db_and_env() {
   REMOVE_BACKUPS_WERE_PRESENT=0
   REMOVE_BACKUPS_RESTORED=0
   db_path="$(get_env_value DB_PATH)"
-  [[ -n "$db_path" ]] || db_path="vpn_bot.db"
+  [[ -n "$db_path" ]] || db_path="$DEFAULT_DB_PATH"
   if [[ "$db_path" = /* ]]; then
     db_file="$db_path"
   else
@@ -2361,8 +2460,8 @@ remove_keep_db_and_env() {
   db_tmp=""
   env_tmp=""
   if [[ -f "$db_file" ]]; then
-    db_tmp="$(mktemp)"
-    cp -a "$db_file" "$db_tmp"
+    db_tmp="$(mktemp -d)"
+    snapshot_sqlite_runtime_bundle "$db_file" "$db_tmp" "db.keep" || return 1
   fi
   if [[ -f "$ENV_FILE" ]]; then
     env_tmp="$(mktemp)"
@@ -2385,15 +2484,15 @@ remove_keep_db_and_env() {
   remove_everything
   mkdir -p "$INSTALL_DIR"
   chmod 755 "$INSTALL_DIR" || true
-  if [[ -n "$db_tmp" && -f "$db_tmp" ]]; then
+  if [[ -n "$db_tmp" && -f "$db_tmp/db.keep" ]]; then
     if [[ "$db_path" = /* ]]; then
       restored_dir="$(dirname "$db_path")"
       mkdir -p "$restored_dir"
-      cp -a "$db_tmp" "$db_path"
+      restore_sqlite_runtime_bundle "$db_tmp/db.keep" "$db_path" || return 1
     else
-      cp -a "$db_tmp" "$INSTALL_DIR/$db_path"
+      restore_sqlite_runtime_bundle "$db_tmp/db.keep" "$INSTALL_DIR/$db_path" || return 1
     fi
-    rm -f "$db_tmp"
+    rm -rf "$db_tmp"
   fi
   if [[ -n "$env_tmp" && -f "$env_tmp" ]]; then
     cp -a "$env_tmp" "$ENV_FILE"

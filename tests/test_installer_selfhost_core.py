@@ -77,6 +77,62 @@ def test_installer_does_not_grant_bot_write_access_to_entire_install_dir():
     assert 'for path in "$INSTALL_DIR/awg-tgbot.sh" "$BOT_DIR" "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging" "$VENV_DIR"' in script
 
 
+def test_installer_uses_runtime_db_dir_with_absolute_default_path():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'RUNTIME_DIR="${INSTALL_DIR}/runtime"' in script
+    assert 'DEFAULT_DB_PATH="${RUNTIME_DIR}/${DEFAULT_DB_BASENAME}"' in script
+    assert 'set_env_value DB_PATH "$DEFAULT_DB_PATH"' in script
+    assert 'set_env_value DB_PATH "vpn_bot.db"' not in script
+
+
+def test_runtime_dir_permissions_are_narrow_and_bot_writable():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'mkdir -p "$RUNTIME_DIR"' in script
+    assert 'chown "$BOT_USER:$BOT_USER" "$RUNTIME_DIR"' in script
+    assert 'chmod 750 "$RUNTIME_DIR"' in script
+
+
+def test_legacy_default_db_migration_copies_main_db_and_sqlite_sidecars():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "migrate_legacy_default_db_path" in script
+    assert "copy_sqlite_runtime_bundle" in script
+    assert 'copy_sqlite_runtime_bundle "$old_db_file" "$DEFAULT_DB_PATH"' in script
+    assert 'for suffix in "-wal" "-shm"; do' in script
+    assert 'set_env_value DB_PATH "$DEFAULT_DB_PATH"' in script
+    assert "migrate_legacy_default_db_path || die" in script
+
+
+def test_sqlite_bundle_helpers_are_shared_across_snapshot_restore_and_backup_flows():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "snapshot_sqlite_runtime_bundle()" in script
+    assert "restore_sqlite_runtime_bundle()" in script
+    assert "collect_existing_sqlite_bundle_basenames()" in script
+    assert 'snapshot_sqlite_runtime_bundle "$db_file" "$snapshot_dir" "db.before"' in script
+    assert 'restore_sqlite_runtime_bundle "$runtime_snapshot_dir/db.before" "$db_file"' in script
+    assert 'mapfile -t db_bundle_names < <(collect_existing_sqlite_bundle_basenames "$db_file")' in script
+
+
+def test_backup_and_restore_include_sqlite_wal_sidecars_when_present():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert '-C "$(dirname "$db_file")" "${db_bundle_names[@]}"' in script
+    assert 'restore_members+=("${db_basename}-wal")' in script
+    assert 'restore_members+=("${db_basename}-shm")' in script
+    assert 'restore_sqlite_runtime_bundle "$tmp_restore/$db_basename" "$db_file"' in script
+
+
+def test_remove_keep_db_and_env_preserves_sqlite_bundle_not_only_main_db():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'snapshot_sqlite_runtime_bundle "$db_file" "$db_tmp" "db.keep"' in script
+    assert 'restore_sqlite_runtime_bundle "$db_tmp/db.keep" "$db_path"' in script
+
+
+def test_custom_db_path_is_not_treated_as_legacy_default_during_migration():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "elif [[ \"$current_db_path\" == \"$LEGACY_DB_PATH\" ]]; then" in script
+    assert "else" in script
+    assert "return 0" in script
+
+
 def test_generated_service_wants_docker_service():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "After=network-online.target docker.service" in script
@@ -120,7 +176,7 @@ def test_rollback_stops_service_before_restoring_repo_and_runtime():
     stop_pos = script.find('systemctl stop "$SERVICE_NAME" 2>/dev/null || true', rollback_pos)
     restore_log_pos = script.find('restore_bot_log_after_failed_reinstall "$pending_log_archive"', rollback_pos)
     restore_repo_pos = script.find('restore_repo_snapshot_after_failed_reinstall "$repo_snapshot_dir"', rollback_pos)
-    restore_db_pos = script.find('install -m 600 "$runtime_snapshot_dir/db.before" "$db_file"', rollback_pos)
+    restore_db_pos = script.find('restore_sqlite_runtime_bundle "$runtime_snapshot_dir/db.before" "$db_file"', rollback_pos)
     assert stop_pos != -1 and restore_log_pos != -1 and restore_repo_pos != -1 and restore_db_pos != -1
     assert stop_pos < restore_log_pos
     assert restore_log_pos < restore_repo_pos
