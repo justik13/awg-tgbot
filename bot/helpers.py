@@ -2,10 +2,49 @@
 import base64
 import html
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+DATETIME_DISPLAY_FORMAT = "%d.%m.%Y %H:%M"
 
 
 def utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def as_utc_aware(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def utc_naive_to_moscow(dt: datetime) -> datetime:
+    return as_utc_aware(dt).astimezone(MOSCOW_TZ)
+
+
+def parse_iso_utc_naive(dt_str: str) -> datetime:
+    return datetime.fromisoformat(dt_str)
+
+
+def iso_to_moscow(dt_str: str) -> datetime:
+    return utc_naive_to_moscow(parse_iso_utc_naive(dt_str))
+
+
+def timestamp_to_moscow(ts: int | float) -> datetime:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(MOSCOW_TZ)
+
+
+def format_moscow_datetime(dt: datetime, fmt: str = DATETIME_DISPLAY_FORMAT) -> str:
+    return utc_naive_to_moscow(dt).strftime(fmt)
+
+
+def format_iso_to_moscow(dt_str: str, fmt: str = DATETIME_DISPLAY_FORMAT) -> str:
+    return format_moscow_datetime(parse_iso_utc_naive(dt_str), fmt=fmt)
+
+
+def format_timestamp_to_moscow(ts: int | float, fmt: str = DATETIME_DISPLAY_FORMAT) -> str:
+    return timestamp_to_moscow(ts).strftime(fmt)
 
 
 
@@ -13,7 +52,7 @@ def subscription_is_active(dt_str: str | None) -> bool:
     if not dt_str or dt_str == "0":
         return False
     try:
-        return datetime.fromisoformat(dt_str) > utc_now_naive()
+        return parse_iso_utc_naive(dt_str) > utc_now_naive()
     except ValueError:
         return False
 
@@ -22,10 +61,11 @@ def get_status_text(dt_str: str | None) -> tuple[str, str]:
     if not dt_str or dt_str == "0":
         return "🔴 Не активен", "Доступ отсутствует"
     try:
-        sub_dt = datetime.fromisoformat(dt_str)
+        sub_dt = parse_iso_utc_naive(dt_str)
+        until_text = format_moscow_datetime(sub_dt)
         if sub_dt > utc_now_naive():
-            return "🟢 Активен", sub_dt.strftime("%d.%m.%Y %H:%M")
-        return "🔴 Истек", sub_dt.strftime("%d.%m.%Y %H:%M")
+            return "🟢 Активен", until_text
+        return "🔴 Истек", until_text
     except ValueError:
         return "⚠️ Ошибка", "Некорректная дата"
 
@@ -34,7 +74,7 @@ def format_remaining_time(dt_str: str | None) -> str:
     if not dt_str or dt_str == "0":
         return "0 дн."
     try:
-        delta = datetime.fromisoformat(dt_str) - utc_now_naive()
+        delta = parse_iso_utc_naive(dt_str) - utc_now_naive()
         if delta.total_seconds() <= 0:
             return "0 дн."
         days = delta.days

@@ -36,7 +36,15 @@ from database import (
     get_pending_admin_action, get_pending_broadcast, get_recent_audit, get_referral_admin_stats, get_referral_summary, get_user_keys, get_user_meta, normalize_promo_code, pop_pending_admin_action,
     reset_text_override, set_app_setting, set_pending_admin_action, set_pending_broadcast, set_text_override, write_audit_log,
 )
-from helpers import escape_html, format_tg_username, get_status_text, utc_now_naive
+from helpers import (
+    escape_html,
+    format_iso_to_moscow,
+    format_moscow_datetime,
+    format_timestamp_to_moscow,
+    format_tg_username,
+    get_status_text,
+    utc_now_naive,
+)
 from device_activity import render_device_activity_line
 from traffic import format_bytes_compact, render_device_traffic_line
 from keyboards import (
@@ -266,7 +274,7 @@ async def notify_user_subscription_granted(bot: Bot, user_id: int, days: int, ne
             (
                 "🎁 <b>Вам выдан доступ</b>\n\n"
                 f"⏳ <b>Срок:</b> +{days} дн.\n"
-                f"📅 <b>Действует до:</b> {new_until.strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"📅 <b>Действует до:</b> {format_moscow_datetime(new_until)}\n\n"
                 "🔑 Подключение доступно в разделе <b>Подключение</b>."
             ),
             parse_mode="HTML",
@@ -667,9 +675,19 @@ def _sync_time_or_ne_bilo(value: int | str | None) -> str:
         ts = int(str(value or 0))
         if ts <= 0:
             return "не было"
-        return datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M")
+        return format_timestamp_to_moscow(ts)
     except Exception:
         return "не было"
+
+
+def _format_optional_iso_moscow(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "—"
+    try:
+        return format_iso_to_moscow(raw)
+    except ValueError:
+        return raw
 
 
 def _denylist_history_block(*, enabled: int, metrics: dict[str, int]) -> list[str]:
@@ -1001,7 +1019,7 @@ def _render_payment_lookup_text(payment_summary: dict) -> str:
         f"📌 Статус: <b>{escape_html(str(payment_summary.get('status') or '—'))}</b>\n"
         f"💰 Сумма: <b>{payment_summary.get('amount')} {escape_html(str(payment_summary.get('currency') or '—'))}</b>\n"
         f"📦 Данные платежа: <code>{escape_html(str(payment_summary.get('payload') or '—'))}</code>\n"
-        f"🕒 Создан: <code>{escape_html(str(payment_summary.get('created_at') or '—'))}</code>\n"
+        f"🕒 Создан: <code>{escape_html(_format_optional_iso_moscow(payment_summary.get('created_at')))}</code>\n"
         f"🚦 Статус активации: <b>{escape_html(str(payment_summary.get('last_provision_status') or '—'))}</b>"
     )
 
@@ -1462,7 +1480,7 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
             (
                 f"✅ <b>Пользователю выдано +{days} дней</b>\n\n"
                 f"🆔 <code>{uid}</code>\n"
-                f"📅 До: <b>{new_until.strftime('%d.%m.%Y %H:%M')}</b>"
+                f"📅 До: <b>{format_moscow_datetime(new_until)}</b>"
             ),
             parse_mode="HTML",
             reply_markup=_user_manage_kb(uid, page),
@@ -1499,7 +1517,7 @@ async def admin_add_days_confirm(cb: types.CallbackQuery):
         (
             f"✅ <b>Пользователю выдано +{days} дней</b>\n\n"
             f"🆔 <code>{uid}</code>\n"
-            f"📅 До: <b>{new_until.strftime('%d.%m.%Y %H:%M')}</b>"
+            f"📅 До: <b>{format_moscow_datetime(new_until)}</b>"
         ),
         parse_mode="HTML",
         reply_markup=_user_manage_kb(uid, page),
@@ -2422,7 +2440,7 @@ async def give_manual(message: types.Message, command: CommandObject):
         await message.answer(
             (
                 f"✅ Доступ продлён на {days} дней пользователю <code>{uid}</code>\n"
-                f"📅 Действует до: <b>{new_until.strftime('%d.%m.%Y %H:%M')}</b>"
+                f"📅 Действует до: <b>{format_moscow_datetime(new_until)}</b>"
             ),
             parse_mode="HTML",
         )
@@ -2664,7 +2682,7 @@ async def audit_cmd(message: types.Message, command: CommandObject):
         for row_id, user_id, action, details, created_at in rows:
             lines.append(
                 f"#{row_id} | <code>{user_id}</code> | <b>{action}</b>\n"
-                f"{created_at}\n"
+                f"{_format_optional_iso_moscow(str(created_at))}\n"
                 f"{details or '-'}\n"
             )
         await message.answer("\n".join(lines), parse_mode="HTML")

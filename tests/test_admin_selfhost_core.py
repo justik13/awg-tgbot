@@ -88,7 +88,7 @@ def test_network_policy_screen_disabled_denylist_shows_cleared_state_when_confir
     assert "Denylist: <b>выключено</b>" in text
     assert "синхронизация сейчас не выполняется" in text
     assert "Текущих записей denylist: <b>0</b>" in text
-    assert "Последний успешный sync denylist (история): <b>09.03.2024 16:00</b>" in text
+    assert "Последний успешный sync denylist (история): <b>09.03.2024 19:00</b>" in text
     assert "1710000000" not in text
     assert "denylist_last_sync_ok" not in text
 
@@ -177,7 +177,7 @@ def test_denylist_status_cmd_no_raw_sync_values(monkeypatch):
     sent = message.answer.await_args.args[0]
 
     assert "Статус последней попытки sync denylist: <b>ошибка</b>" in sent
-    assert "Время последнего успешного sync denylist: <b>09.03.2024 16:00</b>" in sent
+    assert "Время последнего успешного sync denylist: <b>09.03.2024 19:00</b>" in sent
     assert "Последняя синхронизация denylist: 0" not in sent
     assert "1710000000" not in sent
 

@@ -60,6 +60,7 @@ from payments import router as payments_router
 from ui_constants import is_admin_callback_data
 from ui_constants import CB_SHOW_BUY_MENU
 from workers import WorkerPool, WorkerSpec
+from helpers import format_iso_to_moscow
 
 
 @dataclass(frozen=True)
@@ -313,7 +314,7 @@ async def _notify_expiring_subscriptions(bot: Bot) -> None:
             try:
                 await bot.send_message(
                     user_id,
-                    f"{intro}\nОкончание: {sub_until[:16].replace('T', ' ')}",
+                    f"{intro}\nОкончание: {format_iso_to_moscow(sub_until)}",
                     reply_markup=kb.as_markup(),
                 )
                 await mark_subscription_notification_sent(user_id, sub_until, kind)
