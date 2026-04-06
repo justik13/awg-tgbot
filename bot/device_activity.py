@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from helpers import format_moscow_datetime
 
 RECENT_HANDSHAKE_WINDOW = timedelta(hours=24)
 
@@ -16,7 +17,7 @@ def classify_handshake_recency(last_handshake_at: datetime | None, now: datetime
 def format_handshake_timestamp(last_handshake_at: datetime | None) -> str:
     if last_handshake_at is None:
         return "—"
-    return last_handshake_at.strftime("%d.%m %H:%M")
+    return format_moscow_datetime(last_handshake_at, fmt="%d.%m %H:%M")
 
 
 def render_device_activity_line(

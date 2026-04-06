@@ -11,6 +11,8 @@ import app
 import handlers_admin
 import handlers_user
 from helpers import get_status_text
+from device_activity import format_handshake_timestamp
+from aiogram.filters import CommandObject
 
 
 def test_get_status_text_renders_moscow_time():
@@ -79,3 +81,31 @@ def test_support_top_level_cleans_pending_invoice(monkeypatch):
     asyncio.run(handlers_user.support(message))
 
     handlers_user._cleanup_pending_invoice_for_navigation.assert_awaited_once_with(message.bot, 42)
+
+
+def test_device_activity_handshake_timestamp_uses_moscow():
+    assert format_handshake_timestamp(datetime(2026, 1, 1, 0, 0)) == "01.01 03:00"
+
+
+def test_admin_audit_command_renders_created_at_in_moscow(monkeypatch):
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=handlers_admin.ADMIN_ID),
+        answer=AsyncMock(),
+    )
+    monkeypatch.setattr(handlers_admin, "_clear_network_policy_pending", AsyncMock())
+    monkeypatch.setattr(handlers_admin, "_clear_service_settings_pending", AsyncMock())
+    monkeypatch.setattr(
+        handlers_admin,
+        "get_recent_audit",
+        AsyncMock(return_value=[(1, 42, "evt", "details", "2026-01-01T00:00:00")]),
+    )
+
+    asyncio.run(
+        handlers_admin.audit_cmd(
+            message,
+            CommandObject(prefix="/", command="audit", mention=None, args=None),
+        )
+    )
+
+    text = message.answer.await_args.args[0]
+    assert "01.01.2026 03:00" in text

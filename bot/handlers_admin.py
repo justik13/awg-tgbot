@@ -2682,7 +2682,7 @@ async def audit_cmd(message: types.Message, command: CommandObject):
         for row_id, user_id, action, details, created_at in rows:
             lines.append(
                 f"#{row_id} | <code>{user_id}</code> | <b>{action}</b>\n"
-                f"{created_at}\n"
+                f"{_format_optional_iso_moscow(str(created_at))}\n"
                 f"{details or '-'}\n"
             )
         await message.answer("\n".join(lines), parse_mode="HTML")
