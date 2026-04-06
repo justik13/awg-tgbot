@@ -145,7 +145,9 @@ def test_navigation_callbacks_clear_stale_promo_pending(monkeypatch):
     monkeypatch.setattr(handlers_user, '_send_buy_menu', AsyncMock())
     monkeypatch.setattr(handlers_user, 'get_instruction_with_policy_text', AsyncMock(return_value='guide'))
     monkeypatch.setattr(handlers_user, 'get_support_short_text', AsyncMock(return_value='support'))
+    monkeypatch.setattr(handlers_user, 'get_support_full_text', AsyncMock(return_value='support full'))
     monkeypatch.setattr(handlers_user, 'get_text', AsyncMock(return_value='ok'))
+    monkeypatch.setattr(handlers_user, 'get_user_keys', AsyncMock(return_value=[]))
     monkeypatch.setattr(handlers_user, 'get_user_subscription', AsyncMock(return_value=None))
     monkeypatch.setattr(handlers_user, 'subscription_is_active', lambda *_: False)
 

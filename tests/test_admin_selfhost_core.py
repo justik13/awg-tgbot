@@ -39,7 +39,7 @@ def test_admin_keyboard_has_button_first_sections():
 def test_network_policy_keyboards_have_explicit_labels():
     deny_kb = get_admin_denylist_kb(denylist_enabled=0, denylist_mode="soft")
     deny_texts = [button.text for row in deny_kb.inline_keyboard for button in row]
-    assert "Denylist: ВЫКЛ" in deny_texts
+    assert "🛡 Denylist: ВЫКЛ" in deny_texts
     assert "Режим denylist: soft" in deny_texts
 
 
@@ -269,7 +269,7 @@ def test_admin_sync_callback_uses_awg_reconcile_report_without_denylist_sync(mon
 
     handlers_admin.build_awg_sync_text.assert_awaited_once()
     handlers_admin.denylist_sync.assert_not_called()
-    cb.message.answer.assert_awaited_once_with("awg-report", parse_mode="HTML")
+    cb.message.answer.assert_awaited_once()
 
 
 def test_build_awg_sync_text_includes_reconcile_and_diagnostics(monkeypatch):

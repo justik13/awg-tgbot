@@ -309,9 +309,8 @@ async def success_pay(message: types.Message):
             status="received",
             raw_payload_json=json.dumps(raw_payload, ensure_ascii=False),
         )
-        await message.answer(await get_text("payment_received"))
+        progress_message = await message.answer(await get_text("payment_progress_compact"))
         await update_last_provision_status(payment.telegram_payment_charge_id, "payment_received")
-        await message.answer(await get_text("payment_provisioning_started"))
         await update_last_provision_status(payment.telegram_payment_charge_id, "provisioning")
         applied = await process_payment_provisioning(
             payment_id=payment.telegram_payment_charge_id,
@@ -339,16 +338,33 @@ async def success_pay(message: types.Message):
                 result_status = "ready_config_pending"
                 await _log_critical_delivery_error(payment.telegram_payment_charge_id, message.from_user.id, str(delivery_error)[:500])
                 logger.exception("Критическая ошибка отправки конфига после оплаты: %s", delivery_error)
-            await message.answer(
-                await get_payment_result_text(result_status),
-                parse_mode="HTML",
-                reply_markup=get_post_payment_kb(),
-            )
+            final_text = await get_payment_result_text(result_status)
+            try:
+                await progress_message.edit_text(
+                    final_text,
+                    parse_mode="HTML",
+                    reply_markup=get_post_payment_kb(),
+                )
+            except Exception:
+                await message.answer(
+                    final_text,
+                    parse_mode="HTML",
+                    reply_markup=get_post_payment_kb(),
+                )
         else:
-            await message.answer(
-                await get_payment_result_text("pending"),
-                reply_markup=get_post_payment_kb(),
-            )
+            pending_text = await get_payment_result_text("pending")
+            try:
+                await progress_message.edit_text(
+                    pending_text,
+                    parse_mode="HTML",
+                    reply_markup=get_post_payment_kb(),
+                )
+            except Exception:
+                await message.answer(
+                    pending_text,
+                    parse_mode="HTML",
+                    reply_markup=get_post_payment_kb(),
+                )
     except Exception as e:
         logger.exception("Ошибка обработки оплаты: %s", e)
         retry_at = (utc_now_naive() + timedelta(seconds=PAYMENT_RETRY_DELAY_SECONDS)).isoformat()

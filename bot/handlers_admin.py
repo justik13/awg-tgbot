@@ -42,7 +42,7 @@ from keyboards import (
     get_admin_confirm_kb, get_admin_inline_kb, get_admin_maintenance_kb, get_admin_payments_kb, get_admin_price_confirm_kb, get_admin_prices_kb, get_admin_promocodes_kb,
     get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb, get_open_user_card_kb,
     get_admin_network_policy_kb, get_admin_denylist_kb,
-    get_admin_service_settings_kb, get_admin_text_override_item_kb, get_admin_text_overrides_kb,
+    get_admin_service_settings_kb, get_admin_text_override_item_kb, get_admin_text_overrides_kb, get_admin_add_days_confirm_kb,
 )
 from ui_constants import (
     BTN_ADMIN, CB_ADMIN_BACK_MAIN, CB_ADMIN_BROADCAST,
@@ -64,6 +64,7 @@ from ui_constants import (
     CB_ADMIN_REVOKE_PREFIX, CB_ADMIN_DELETE_PREFIX, CB_CONFIRM_REVOKE, CB_CANCEL_REVOKE, CB_CONFIRM_DELETE_USER,
     CB_CANCEL_DELETE_USER, CB_CONFIRM_DEVICE_DELETE,
     CB_CANCEL_DEVICE_DELETE, CB_CONFIRM_DEVICE_REISSUE, CB_CANCEL_DEVICE_REISSUE,
+    CB_CONFIRM_ADD_DAYS, CB_CANCEL_ADD_DAYS,
 )
 from config_validate import read_helper_policy
 from network_policy import denylist_sync, parse_cidrs, policy_metrics
@@ -110,6 +111,7 @@ SERVICE_DOWNLOAD_INPUT_ACTION_KEY = "service_download_input"
 SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY = "service_invitee_bonus_input"
 SERVICE_INVITER_BONUS_INPUT_ACTION_KEY = "service_inviter_bonus_input"
 TEXT_OVERRIDE_INPUT_ACTION_KEY = "text_override_input"
+ADD_DAYS_CONFIRM_ACTION_KEY = "add_days_confirm"
 TEXT_OVERRIDE_ALLOWED_KEYS = {"start", "buy_menu", "renew_menu", "support_contact"}
 TEXT_OVERRIDE_CALLBACK_KEY_MAP = {
     CB_ADMIN_TEXT_START: "start",
@@ -1083,7 +1085,7 @@ async def admin_back_main(cb: types.CallbackQuery):
         return
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await cb.message.answer("⚙️ Админ-меню", reply_markup=get_admin_inline_kb())
+    await _send_or_edit_admin_message(cb, "⚙️ <b>Админ-меню</b>", get_admin_inline_kb())
     await cb.answer()
 
 
@@ -1093,10 +1095,10 @@ async def admin_manual_commands(cb: types.CallbackQuery):
         return
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await cb.message.answer(
+    await _send_or_edit_admin_message(
+        cb,
         build_admin_manual_commands_text(),
-        parse_mode="HTML",
-        reply_markup=get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN),
+        get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN),
     )
     await cb.answer("Готово")
 
@@ -1109,7 +1111,7 @@ async def admin_payments_screen(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
-    await cb.message.answer("💳 <b>Платежи</b>", parse_mode="HTML", reply_markup=get_admin_payments_kb())
+    await _send_or_edit_admin_message(cb, "💳 <b>Платежи</b>", get_admin_payments_kb())
     await cb.answer()
 
 
@@ -1139,11 +1141,7 @@ async def admin_prices(cb: types.CallbackQuery):
         return
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await cb.message.answer(
-        _render_admin_prices_text(),
-        parse_mode="HTML",
-        reply_markup=get_admin_prices_kb(),
-    )
+    await _send_or_edit_admin_message(cb, _render_admin_prices_text(), get_admin_prices_kb())
     await cb.answer()
 
 
@@ -1243,7 +1241,11 @@ async def admin_stats_cb(cb: types.CallbackQuery):
         return
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await cb.message.answer(await build_stats_text(), parse_mode="HTML")
+    await _send_or_edit_admin_message(
+        cb,
+        await build_stats_text(),
+        get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN, refresh_cb=CB_ADMIN_STATS),
+    )
     await cb.answer("Готово")
 
 
@@ -1254,7 +1256,11 @@ async def admin_sync_awg(cb: types.CallbackQuery):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     try:
-        await cb.message.answer(await build_awg_sync_text(), parse_mode="HTML")
+        await _send_or_edit_admin_message(
+            cb,
+            await build_awg_sync_text(),
+            get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN, refresh_cb=CB_ADMIN_SYNC),
+        )
         await cb.answer("Синхронизация AWG выполнена")
     except Exception as e:
         logger.exception("Ошибка admin_sync_awg: %s", e)
@@ -1415,6 +1421,23 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
         uid = int(uid_raw)
         days = int(days_raw)
         page = int(page_raw)
+        if days >= 30:
+            await clear_pending_admin_action(ADMIN_ID, ADD_DAYS_CONFIRM_ACTION_KEY)
+            await set_pending_admin_action(
+                ADMIN_ID,
+                ADD_DAYS_CONFIRM_ACTION_KEY,
+                {"uid": uid, "days": days, "page": page},
+            )
+            await cb.message.answer(
+                (
+                    "⚠️ <b>Подтвердите действие</b>\n\n"
+                    f"Выдать пользователю <code>{uid}</code> <b>+{days} дней</b>?"
+                ),
+                parse_mode="HTML",
+                reply_markup=get_admin_add_days_confirm_kb(),
+            )
+            await cb.answer("Нужно подтверждение")
+            return
         if admin_command_limited(f"admin_add_{days}", cb.from_user.id):
             await cb.answer("Слишком часто", show_alert=True)
             return
@@ -1436,6 +1459,50 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
     except Exception as e:
         logger.exception("Ошибка admin_add_days_btn: %s", e)
         await cb.answer("❌ Не удалось продлить доступ", show_alert=True)
+
+
+@router.callback_query(F.data == CB_CONFIRM_ADD_DAYS)
+async def admin_add_days_confirm(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    action = await pop_pending_admin_action(ADMIN_ID, ADD_DAYS_CONFIRM_ACTION_KEY)
+    if not action:
+        await cb.answer("Нет ожидающего действия", show_alert=True)
+        return
+    uid = int(action.get("uid", 0))
+    days = int(action.get("days", 0))
+    page = int(action.get("page", 0))
+    if uid <= 0 or days <= 0:
+        await cb.answer("Некорректные параметры", show_alert=True)
+        return
+    if admin_command_limited(f"admin_add_{days}", cb.from_user.id):
+        await cb.answer("Слишком часто", show_alert=True)
+        return
+    new_until = await issue_subscription(uid, days)
+    notified = await notify_user_subscription_granted(cb.bot, uid, days, new_until)
+    await write_audit_log(ADMIN_ID, f"admin_add_{days}", f"target={uid}; until={new_until.isoformat()}; notified={int(notified)}")
+    await cb.answer(f"✅ +{days} дней пользователю {uid}")
+    await cb.message.answer(
+        (
+            f"✅ <b>Пользователю выдано +{days} дней</b>\n\n"
+            f"🆔 <code>{uid}</code>\n"
+            f"📅 До: <b>{new_until.strftime('%d.%m.%Y %H:%M')}</b>"
+        ),
+        parse_mode="HTML",
+        reply_markup=_user_manage_kb(uid, page),
+    )
+    if not notified:
+        await cb.message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.")
+
+
+@router.callback_query(F.data == CB_CANCEL_ADD_DAYS)
+async def admin_add_days_cancel(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await clear_pending_admin_action(ADMIN_ID, ADD_DAYS_CONFIRM_ACTION_KEY)
+    await cb.answer("Отменено")
+    if cb.message:
+        await cb.message.answer("❌ Выдача дней отменена.")
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_RETRY_ACTIVATION_PREFIX))
@@ -1978,7 +2045,11 @@ async def admin_health_summary(cb: types.CallbackQuery):
         return
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await cb.message.answer(await build_runtime_smokecheck_text(), parse_mode="HTML")
+    await _send_or_edit_admin_message(
+        cb,
+        await build_runtime_smokecheck_text(),
+        get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN, refresh_cb=CB_ADMIN_REFRESH_HEALTH),
+    )
     await cb.answer("Готово")
 
 

@@ -256,6 +256,13 @@ async def _send_configs_menu(target, user: types.User):
     )
 
 
+async def _render_configs_menu_screen(user_id: int) -> tuple[str, types.InlineKeyboardMarkup]:
+    configs = await get_user_keys(user_id)
+    if not configs:
+        return await get_text("configs_empty"), get_configs_empty_kb()
+    return await get_text("configs_menu"), get_configs_devices_kb(configs)
+
+
 async def _find_user_config_by_key_id(user_id: int, key_id: int):
     configs = await get_user_keys(user_id)
     return next((item for item in configs if item[0] == key_id), None)
@@ -285,6 +292,30 @@ async def _send_support_center(target) -> None:
         parse_mode="HTML",
         reply_markup=get_support_center_kb(),
     )
+
+
+async def _send_or_edit_user_screen(
+    cb: types.CallbackQuery,
+    text: str,
+    *,
+    reply_markup=None,
+    disable_web_page_preview: bool | None = None,
+) -> None:
+    message = cb.message
+    if message is not None and hasattr(message, "edit_text"):
+        try:
+            kwargs = {"parse_mode": "HTML", "reply_markup": reply_markup}
+            if disable_web_page_preview is not None:
+                kwargs["disable_web_page_preview"] = disable_web_page_preview
+            await message.edit_text(text, **kwargs)
+            return
+        except Exception:
+            pass
+    if message is not None:
+        kwargs = {"parse_mode": "HTML", "reply_markup": reply_markup}
+        if disable_web_page_preview is not None:
+            kwargs["disable_web_page_preview"] = disable_web_page_preview
+        await message.answer(text, **kwargs)
 
 
 async def _clear_promo_input_pending(user_id: int) -> None:
@@ -513,8 +544,8 @@ async def profile(message: types.Message):
             remaining=remaining,
             connection_status=connection_status,
             **payment_fields,
-            device_activity_block="\n".join(device_activity_lines),
-            traffic_block="\n".join(traffic_lines),
+            device_activity_block=" · ".join(device_activity_lines),
+            traffic_block=" · ".join(traffic_lines),
             next_step=next_step,
             support_line=await get_support_short_text(),
         ),
@@ -552,13 +583,14 @@ async def show_selected_device_config(cb: types.CallbackQuery):
 
     _, device_num, _cfg, vpn_key = selected
     if vpn_key and vpn_key.strip():
-        await cb.message.answer(
+        await _send_or_edit_user_screen(
+            cb,
             await get_text("config_vpn_ready", device_num=device_num, vpn_key=escape_html(vpn_key)),
-            parse_mode="HTML",
             reply_markup=get_config_result_kb(key_id),
         )
     else:
-        await cb.message.answer(
+        await _send_or_edit_user_screen(
+            cb,
             await get_text("config_vpn_missing"),
             reply_markup=get_configs_empty_kb(),
         )
@@ -594,6 +626,7 @@ async def send_selected_device_conf(cb: types.CallbackQuery):
         )
         await cb.message.answer(
             await get_text("config_conf_sent"),
+            reply_markup=get_config_result_kb(key_id),
         )
     else:
         await cb.message.answer(
@@ -612,7 +645,8 @@ async def open_configs_from_profile(cb: types.CallbackQuery):
     if not cb.message:
         await cb.answer(await get_text("callback_message_unavailable"), show_alert=True)
         return
-    await _send_configs_menu(cb.message, cb.from_user)
+    text, markup = await _render_configs_menu_screen(cb.from_user.id)
+    await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
 
 @router.message(F.text == BTN_GUIDE)
@@ -684,7 +718,8 @@ async def user_reissue_confirm(cb: types.CallbackQuery):
         await write_audit_log(cb.from_user.id, "user_reissue_device", f"device_num={device_num}")
         if cb.message:
             await cb.message.answer("✅ Перевыпуск выполнен. Старый конфиг отключён, используйте новый в разделе «🔑 Подключение».")
-            await _send_configs_menu(cb.message, cb.from_user)
+            text, markup = await _render_configs_menu_screen(cb.from_user.id)
+            await _send_or_edit_user_screen(cb, text, reply_markup=markup)
     except Exception as error:
         logger.exception("Ошибка user_reissue_confirm: %s", error)
         if cb.message:
@@ -700,14 +735,14 @@ async def check_activation_status(cb: types.CallbackQuery):
     payment_summary = await get_latest_user_payment_summary(cb.from_user.id)
     has_config = bool(await get_user_keys(cb.from_user.id))
     if not payment_summary:
-        await cb.message.answer(await get_text("activation_status_no_payments"), reply_markup=get_buy_inline_kb())
+        await _send_or_edit_user_screen(cb, await get_text("activation_status_no_payments"), reply_markup=get_buy_inline_kb())
         return
     status = payment_summary["last_provision_status"] or payment_summary["status"]
     if payment_summary["status"] in {"needs_repair", "stuck_manual", "failed"}:
         status = payment_summary["status"]
-    await cb.message.answer(
+    await _send_or_edit_user_screen(
+        cb,
         f"{await get_activation_status_text(status, has_config=has_config)}\n\n{await get_support_short_text()}",
-        parse_mode="HTML",
         reply_markup=get_support_back_kb() if status in {"needs_repair", "stuck_manual", "failed"} else get_profile_inline_kb(subscription_active=is_active),
     )
 
@@ -717,7 +752,11 @@ async def open_support_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
-        await _send_support_center(cb.message)
+        await _send_or_edit_user_screen(
+            cb,
+            f"{await get_support_full_text()}\n\nВыберите, с чем нужна помощь:",
+            reply_markup=get_support_center_kb(),
+        )
 
 
 @router.callback_query(F.data == CB_SUPPORT_PAYMENT)
@@ -725,7 +764,7 @@ async def support_payment_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
-        await cb.message.answer(_payment_support_text(), parse_mode="HTML", reply_markup=get_support_back_kb())
+        await _send_or_edit_user_screen(cb, _payment_support_text(), reply_markup=get_support_back_kb())
 
 
 @router.callback_query(F.data == CB_SUPPORT_CONNECTION)
@@ -733,11 +772,11 @@ async def support_connection_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
-        await cb.message.answer(
+        await _send_or_edit_user_screen(
+            cb,
             f"{await get_instruction_with_policy_text()}\n\n{await get_support_short_text()}",
-            parse_mode="HTML",
-            disable_web_page_preview=True,
             reply_markup=get_support_back_kb(),
+            disable_web_page_preview=True,
         )
 
 
@@ -746,7 +785,7 @@ async def support_terms_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
-        await cb.message.answer(_terms_text(), parse_mode="HTML", reply_markup=get_support_back_kb())
+        await _send_or_edit_user_screen(cb, _terms_text(), reply_markup=get_support_back_kb())
 
 
 @router.callback_query(F.data == CB_SUPPORT_BACK)
@@ -754,10 +793,10 @@ async def support_back_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
-        sub_until = await get_user_subscription(cb.from_user.id)
-        await cb.message.answer(
-            "⬅️ Возврат в основное меню помощи.\nОткройте «👤 Профиль» или «🔑 Подключение» для нужного действия.",
-            reply_markup=get_profile_inline_kb(subscription_active=subscription_is_active(sub_until)),
+        await _send_or_edit_user_screen(
+            cb,
+            f"{await get_support_full_text()}\n\nВыберите, с чем нужна помощь:",
+            reply_markup=get_support_center_kb(),
         )
 
 

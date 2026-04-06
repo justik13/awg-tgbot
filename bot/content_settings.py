@@ -48,19 +48,15 @@ TEXT_DEFAULTS: dict[str, str] = {
     "support_contact": "🆘 <b>Поддержка</b>\n\nПо всем вопросам пишите: <b>{support_username}</b>",
     "profile_screen": (
         "👤 <b>Профиль</b>\n\n"
-        "🆔 <b>ID:</b> <code>{user_id}</code>\n"
-        "👤 <b>Имя:</b> {first_name}\n"
-        "✈️ <b>Telegram:</b> {tg_username}\n"
-        "📌 <b>Подписка:</b> {status_text}\n"
+        "👤 <b>{first_name}</b> ({tg_username})\n"
+        "🆔 <code>{user_id}</code>\n\n"
+        "📌 <b>Статус:</b> {status_text}\n"
         "📅 <b>Действует до:</b> {until_text}\n"
         "⏳ <b>Осталось:</b> {remaining}\n"
         "🔑 <b>Подключение:</b> {connection_status}\n"
-        "💸 <b>Последняя оплата:</b> {payment_tariff}\n"
-        "📅 <b>Дата:</b> {payment_date}\n"
-        "💰 <b>Сумма:</b> {payment_amount}\n"
-        "🚦 <b>Статус:</b> {payment_status}\n"
-        "📱 <b>Последняя активность:</b>\n{device_activity_block}\n"
-        "📊 <b>Трафик:</b>\n{traffic_block}\n\n"
+        "💸 <b>Последняя оплата:</b> {payment_tariff} · {payment_status} · {payment_date}\n"
+        "📊 <b>Трафик:</b> {traffic_block}\n"
+        "📱 <b>Устройства:</b> {device_activity_block}\n\n"
         "➡️ <b>Дальше:</b> {next_step}\n"
         "{support_line}"
     ),
@@ -82,7 +78,7 @@ TEXT_DEFAULTS: dict[str, str] = {
     "config_vpn_missing": "Для выбранного устройства не удалось собрать ключ импорта. Напишите в поддержку или попросите администратора перевыдать доступ.",
     "config_conf_not_found": "Не удалось найти .conf для выбранного устройства. Откройте раздел «Подключение» ещё раз.",
     "config_conf_caption": "📄 Файл подключения для устройства {device_num}",
-    "config_conf_sent": "Файл отправлен ✅ Можно вернуться к списку устройств:",
+    "config_conf_sent": "Файл отправлен ✅ Выберите следующий шаг:",
     "config_conf_missing": "Для выбранного устройства не удалось собрать .conf. Напишите в поддержку или попросите администратора перевыдать доступ.",
     "config_invalid_device": "Некорректный выбор устройства.",
     "config_invalid_conf_request": "Некорректный запрос .conf.",
@@ -93,6 +89,7 @@ TEXT_DEFAULTS: dict[str, str] = {
     "payment_error": "⚠️ Платёж получен, но активация не завершилась. Проверьте статус через минуту или напишите в поддержку.",
     "payment_received": "✅ Оплата получена.",
     "payment_provisioning_started": "⏳ Доступ выпускается. Обычно это занимает до минуты.",
+    "payment_progress_compact": "⏳ Платёж принят. Выпускаю доступ, обычно это занимает до минуты…",
     "payment_payload_error": "Ошибка оплаты: неизвестный payload.",
     "payment_currency_error": "Ошибка оплаты: неверная валюта.",
     "payment_amount_error": "Ошибка оплаты: неверная сумма.",
