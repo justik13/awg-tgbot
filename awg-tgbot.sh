@@ -14,6 +14,11 @@ REPO_OWNER="${REPO_OWNER:-${DETECTED_REPO_OWNER:-justik13}}"
 REPO_NAME="${REPO_NAME:-${DETECTED_REPO_NAME:-awg-tgbot}}"
 DEFAULT_REPO_BRANCH="main"
 INSTALL_DIR="/opt/amnezia/bot"
+RUNTIME_DIR="${INSTALL_DIR}/runtime"
+DEFAULT_DB_BASENAME="vpn_bot.db"
+DEFAULT_DB_PATH="${RUNTIME_DIR}/${DEFAULT_DB_BASENAME}"
+LEGACY_DB_BASENAME="vpn_bot.db"
+LEGACY_DB_PATH="${INSTALL_DIR}/${LEGACY_DB_BASENAME}"
 STATE_DIR="${INSTALL_DIR}/.state"
 REPO_BRANCH_FILE="${STATE_DIR}/repo_branch"
 REPO_BRANCH="${REPO_BRANCH:-$(cat "$REPO_BRANCH_FILE" 2>/dev/null | tr -d '\r\n' || true)}"
@@ -1249,7 +1254,7 @@ write_common_env() {
   if [[ -n "$db_path" ]]; then
     set_env_value DB_PATH "$db_path"
   else
-    set_env_value DB_PATH "vpn_bot.db"
+    set_env_value DB_PATH "$DEFAULT_DB_PATH"
   fi
   return 0
 }
@@ -1379,6 +1384,9 @@ enforce_root_owned_code_paths() {
 
 prepare_runtime_access_paths() {
   local db_file
+  mkdir -p "$RUNTIME_DIR"
+  chown "$BOT_USER:$BOT_USER" "$RUNTIME_DIR" 2>/dev/null || true
+  chmod 750 "$RUNTIME_DIR" 2>/dev/null || true
   mkdir -p "$APP_LOG_DIR"
   touch "$APP_LOG_FILE"
   chown -R "$BOT_USER:$BOT_USER" "$APP_LOG_DIR" 2>/dev/null || true
@@ -1387,6 +1395,47 @@ prepare_runtime_access_paths() {
   db_file="$(get_bot_db_file)"
   repair_runtime_file_access "$db_file" 600
   repair_runtime_file_access "$ENV_FILE" 600
+  return 0
+}
+
+copy_sqlite_runtime_sidecars() {
+  local src_db="$1" dst_db="$2" suffix src_file dst_file
+  for suffix in "-wal" "-shm"; do
+    src_file="${src_db}${suffix}"
+    dst_file="${dst_db}${suffix}"
+    if [[ -f "$src_file" ]]; then
+      install -m 600 "$src_file" "$dst_file" || return 1
+      repair_runtime_file_access "$dst_file" 600
+    fi
+  done
+  return 0
+}
+
+migrate_legacy_default_db_path() {
+  local current_db_path old_db_file
+  current_db_path="$(get_env_value DB_PATH)"
+  if [[ -z "$current_db_path" ]]; then
+    old_db_file="$LEGACY_DB_PATH"
+  elif [[ "$current_db_path" == "$LEGACY_DB_BASENAME" ]]; then
+    old_db_file="$LEGACY_DB_PATH"
+  elif [[ "$current_db_path" == "$LEGACY_DB_PATH" ]]; then
+    old_db_file="$LEGACY_DB_PATH"
+  else
+    return 0
+  fi
+
+  if [[ "$old_db_file" != "$DEFAULT_DB_PATH" ]]; then
+    mkdir -p "$RUNTIME_DIR"
+    if [[ -f "$old_db_file" ]]; then
+      install -m 600 "$old_db_file" "$DEFAULT_DB_PATH" || return 1
+      repair_runtime_file_access "$DEFAULT_DB_PATH" 600
+    fi
+    if [[ -f "${old_db_file}-wal" || -f "${old_db_file}-shm" ]]; then
+      copy_sqlite_runtime_sidecars "$old_db_file" "$DEFAULT_DB_PATH" || return 1
+    fi
+  fi
+
+  set_env_value DB_PATH "$DEFAULT_DB_PATH"
   return 0
 }
 
@@ -1730,6 +1779,7 @@ install_or_reinstall_flow() {
   rm -rf "$tmp_dir"
   ensure_env_file
   migrate_legacy_tariff_defaults
+  migrate_legacy_default_db_path || die "Не удалось подготовить путь БД для runtime."
 
   write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
   ensure_selfhost_network_defaults
@@ -1824,7 +1874,7 @@ install_or_reinstall_flow() {
 get_bot_db_file() {
   local db_path db_file
   db_path="$(get_env_value DB_PATH)"
-  [[ -n "$db_path" ]] || db_path="vpn_bot.db"
+  [[ -n "$db_path" ]] || db_path="$DEFAULT_DB_PATH"
   if [[ "$db_path" = /* ]]; then
     db_file="$db_path"
   else
@@ -2352,7 +2402,7 @@ remove_keep_db_and_env() {
   REMOVE_BACKUPS_WERE_PRESENT=0
   REMOVE_BACKUPS_RESTORED=0
   db_path="$(get_env_value DB_PATH)"
-  [[ -n "$db_path" ]] || db_path="vpn_bot.db"
+  [[ -n "$db_path" ]] || db_path="$DEFAULT_DB_PATH"
   if [[ "$db_path" = /* ]]; then
     db_file="$db_path"
   else

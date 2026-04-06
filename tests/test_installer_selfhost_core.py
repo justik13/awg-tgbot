@@ -77,6 +77,31 @@ def test_installer_does_not_grant_bot_write_access_to_entire_install_dir():
     assert 'for path in "$INSTALL_DIR/awg-tgbot.sh" "$BOT_DIR" "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging" "$VENV_DIR"' in script
 
 
+def test_installer_uses_runtime_db_dir_with_absolute_default_path():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'RUNTIME_DIR="${INSTALL_DIR}/runtime"' in script
+    assert 'DEFAULT_DB_PATH="${RUNTIME_DIR}/${DEFAULT_DB_BASENAME}"' in script
+    assert 'set_env_value DB_PATH "$DEFAULT_DB_PATH"' in script
+    assert 'set_env_value DB_PATH "vpn_bot.db"' not in script
+
+
+def test_runtime_dir_permissions_are_narrow_and_bot_writable():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'mkdir -p "$RUNTIME_DIR"' in script
+    assert 'chown "$BOT_USER:$BOT_USER" "$RUNTIME_DIR"' in script
+    assert 'chmod 750 "$RUNTIME_DIR"' in script
+
+
+def test_legacy_default_db_migration_copies_main_db_and_sqlite_sidecars():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "migrate_legacy_default_db_path" in script
+    assert "copy_sqlite_runtime_sidecars" in script
+    assert 'install -m 600 "$old_db_file" "$DEFAULT_DB_PATH"' in script
+    assert 'for suffix in "-wal" "-shm"; do' in script
+    assert 'set_env_value DB_PATH "$DEFAULT_DB_PATH"' in script
+    assert "migrate_legacy_default_db_path || die" in script
+
+
 def test_generated_service_wants_docker_service():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "After=network-online.target docker.service" in script

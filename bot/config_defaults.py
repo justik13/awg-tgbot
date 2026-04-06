@@ -8,7 +8,7 @@ DEFAULT_ENV: dict[str, str] = {
     'AWG_TRANSPORT_PROTO': 'udp',
     'DOCKER_CONTAINER': 'amnezia-awg2',
     'WG_INTERFACE': 'awg0',
-    'DB_PATH': 'vpn_bot.db',
+    'DB_PATH': '/opt/amnezia/bot/runtime/vpn_bot.db',
     'VPN_SUBNET_PREFIX': '10.8.1.',
     'FIRST_CLIENT_OCTET': '3',
     'MAX_CLIENT_OCTET': '254',
