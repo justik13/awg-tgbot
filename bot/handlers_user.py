@@ -1,5 +1,4 @@
 import re
-from datetime import datetime
 
 from aiogram import F, Router, types
 from aiogram.exceptions import TelegramBadRequest
@@ -70,6 +69,7 @@ from ui_constants import (
     CB_OPEN_CONFIGS,
     CB_OPEN_PROFILE,
     CB_OPEN_REFERRALS,
+    CB_OPEN_TRAFFIC_DEVICES,
     CB_OPEN_SUPPORT,
     CB_PROMO_INPUT_CANCEL,
     CB_PROMO_INPUT_START,
@@ -100,54 +100,6 @@ class HasPendingPromoInput(BaseFilter):
 def _config_filename_prefix() -> str:
     base = re.sub(r"[^\w.-]+", "_", (SERVER_NAME or "configs").strip(), flags=re.UNICODE).strip("._")
     return base or "configs"
-
-
-def _format_last_payment_status(status: str | None) -> str:
-    mapped = {
-        "applied": "успешно",
-        "received": "в обработке",
-        "provisioning": "в обработке",
-        "needs_repair": "нужна проверка",
-        "stuck_manual": "нужна проверка",
-        "failed": "нужна проверка",
-    }
-    return mapped.get(str(status or "").strip(), "в обработке")
-
-
-def _format_last_payment_tariff(payload: str | None) -> str:
-    if payload == "sub_7":
-        return "7 дней"
-    if payload == "sub_30":
-        return "30 дней"
-    if payload == "sub_90":
-        return "90 дней"
-    return "—"
-
-
-def _format_last_payment_date(created_at: str | None) -> str:
-    if not created_at:
-        return "—"
-    try:
-        parsed = datetime.fromisoformat(str(created_at))
-        return parsed.strftime("%d.%m.%Y %H:%M")
-    except ValueError:
-        return str(created_at).replace("T", " ")[:16]
-
-
-def _build_last_payment_fields(payment_summary: dict | None) -> dict[str, str]:
-    fields = {
-        "payment_tariff": "нет данных",
-        "payment_date": "—",
-        "payment_amount": "—",
-        "payment_status": "—",
-    }
-    if not payment_summary:
-        return fields
-    fields["payment_tariff"] = _format_last_payment_tariff(payment_summary.get("payload"))
-    fields["payment_date"] = _format_last_payment_date(payment_summary.get("created_at"))
-    fields["payment_amount"] = f"{payment_summary['amount']} {payment_summary['currency']}"
-    fields["payment_status"] = _format_last_payment_status(str(payment_summary.get("status")))
-    return fields
 
 
 async def _build_user_device_activity_lines(user_id: int) -> list[str]:
@@ -210,6 +162,41 @@ async def _build_user_traffic_lines(user_id: int) -> list[str]:
     total_bytes = await get_user_total_traffic_bytes(user_id)
     lines.append(f"• Всего трафика — {format_bytes_compact(total_bytes)}")
     return lines
+
+
+async def _build_user_device_summary_line(user_id: int) -> str:
+    key_rows = await fetchall(
+        """
+        SELECT public_key
+        FROM keys
+        WHERE user_id = ?
+          AND state = 'active'
+          AND public_key NOT LIKE 'pending:%'
+        """,
+        (user_id,),
+    )
+    active_devices = len(key_rows)
+    if active_devices == 0:
+        return "нет активных устройств"
+    online_devices = 0
+    try:
+        runtime_peers = await get_awg_peers()
+        public_keys = {str(row[0]).strip() for row in key_rows if str(row[0]).strip()}
+        for peer in runtime_peers:
+            peer_key = str(peer.get("public_key") or "").strip()
+            if peer_key and peer_key in public_keys and peer.get("latest_handshake_at"):
+                online_devices += 1
+    except Exception:
+        return f"{active_devices} активн."
+    return f"{active_devices} активн. · {online_devices} онлайн"
+
+
+async def _build_user_traffic_summary_line(user_id: int) -> str:
+    total_bytes = await get_user_total_traffic_bytes(user_id)
+    rows = await get_user_device_traffic_summary(user_id)
+    if not rows:
+        return "0 B"
+    return f"{format_bytes_compact(total_bytes)} · устройств с трафиком: {len(rows)}"
 
 
 async def _send_buy_menu(target, user_id: int):
@@ -292,16 +279,8 @@ async def _render_profile_screen(user: types.User) -> tuple[str, types.InlineKey
     configs = await get_user_keys(user.id)
     has_connection = bool(configs)
     connection_status = "готово ✅" if has_connection else "ещё не выдано"
-    if has_connection:
-        next_step = "Откройте «🔑 Подключение» и импортируйте vpn://"
-    elif is_active:
-        next_step = "Нажмите «⏱ Проверить статус активации» или откройте «🔑 Подключение»"
-    else:
-        next_step = "Нажмите «💳 Купить / Продлить»"
-    payment_summary = await get_latest_user_payment_summary(user.id)
-    payment_fields = _build_last_payment_fields(payment_summary)
-    device_activity_lines = await _build_user_device_activity_lines(user.id)
-    traffic_lines = await _build_user_traffic_lines(user.id)
+    device_summary = await _build_user_device_summary_line(user.id)
+    traffic_summary = await _build_user_traffic_summary_line(user.id)
     referrals_enabled = int(await get_setting("REFERRAL_ENABLED", int) or 0) == 1
     return (
         await get_text(
@@ -313,13 +292,23 @@ async def _render_profile_screen(user: types.User) -> tuple[str, types.InlineKey
             until_text=until_text,
             remaining=remaining,
             connection_status=connection_status,
-            **payment_fields,
-            device_activity_block=" · ".join(device_activity_lines),
-            traffic_block=" · ".join(traffic_lines),
-            next_step=next_step,
-            support_line=await get_support_short_text(),
+            device_summary=device_summary,
+            traffic_summary=traffic_summary,
         ),
         get_profile_inline_kb(is_active, referrals_enabled=referrals_enabled),
+    )
+
+
+async def _render_traffic_devices_screen(user_id: int) -> tuple[str, types.InlineKeyboardMarkup]:
+    traffic_lines = await _build_user_traffic_lines(user_id)
+    device_activity_lines = await _build_user_device_activity_lines(user_id)
+    return (
+        await get_text(
+            "traffic_devices_screen",
+            traffic_block="\n".join(traffic_lines),
+            device_activity_block="\n".join(device_activity_lines),
+        ),
+        get_support_back_kb(),
     )
 
 
@@ -680,6 +669,15 @@ async def open_profile_callback(cb: types.CallbackQuery):
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer()
     text, markup = await _render_profile_screen(cb.from_user)
+    await _send_or_edit_user_screen(cb, text, reply_markup=markup)
+
+
+@router.callback_query(F.data == CB_OPEN_TRAFFIC_DEVICES)
+async def open_traffic_devices_callback(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
+    await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
+    await cb.answer()
+    text, markup = await _render_traffic_devices_screen(cb.from_user.id)
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
 

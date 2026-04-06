@@ -54,11 +54,22 @@ TEXT_DEFAULTS: dict[str, str] = {
         "📅 <b>Действует до:</b> {until_text}\n"
         "⏳ <b>Осталось:</b> {remaining}\n"
         "🔑 <b>Подключение:</b> {connection_status}\n"
-        "💸 <b>Последняя оплата:</b> {payment_tariff} · {payment_status} · {payment_date}\n"
-        "📊 <b>Трафик:</b> {traffic_block}\n"
-        "📱 <b>Устройства:</b> {device_activity_block}\n\n"
-        "➡️ <b>Дальше:</b> {next_step}\n"
-        "{support_line}"
+        "📱 <b>Устройства:</b> {device_summary}\n"
+        "📊 <b>Трафик:</b> {traffic_summary}"
+    ),
+    "traffic_devices_screen": (
+        "📊 <b>Трафик и устройства</b>\n\n"
+        "📊 <b>Трафик по устройствам</b>\n"
+        "{traffic_block}\n\n"
+        "📱 <b>Последняя активность</b>\n"
+        "{device_activity_block}"
+    ),
+    "payment_confirm_screen": (
+        "💳 <b>Подтверждение покупки</b>\n\n"
+        "Тариф: <b>{tariff_title}</b>\n"
+        "Что входит: доступ до <b>{configs_per_user} устройств</b>\n"
+        "Цена: <b>{amount} {currency}</b>\n\n"
+        "Нажмите «⭐ Подтвердить и оплатить», чтобы открыть оплату."
     ),
     "configs_empty": (
         "🔑 <b>Подключение</b>\n\n"

@@ -75,10 +75,8 @@ def test_support_back_returns_to_support_center(monkeypatch):
     monkeypatch.setattr(handlers_user, 'escape_html', lambda x: x)
     monkeypatch.setattr(handlers_user, 'subscription_is_active', lambda *_: False)
     monkeypatch.setattr(handlers_user, 'get_user_keys', AsyncMock(return_value=[]))
-    monkeypatch.setattr(handlers_user, 'get_latest_user_payment_summary', AsyncMock(return_value=None))
-    monkeypatch.setattr(handlers_user, '_build_user_device_activity_lines', AsyncMock(return_value=['-']))
-    monkeypatch.setattr(handlers_user, '_build_user_traffic_lines', AsyncMock(return_value=['-']))
-    monkeypatch.setattr(handlers_user, 'get_support_short_text', AsyncMock(return_value='support'))
+    monkeypatch.setattr(handlers_user, '_build_user_device_summary_line', AsyncMock(return_value='devices'))
+    monkeypatch.setattr(handlers_user, '_build_user_traffic_summary_line', AsyncMock(return_value='traffic'))
     monkeypatch.setattr(handlers_user, 'get_setting', AsyncMock(return_value=0))
     monkeypatch.setattr(handlers_user, 'get_text', AsyncMock(return_value='profile'))
 
@@ -93,10 +91,56 @@ def test_profile_hub_contains_core_actions():
     texts = [button.text for row in kb.inline_keyboard for button in row]
     assert "🔄 Продлить доступ" in texts
     assert "🔑 Подключение" in texts
+    assert "📊 Трафик и устройства" in texts
     assert "🎟 Ввести промокод" in texts
     assert "🎁 Рефералы" in texts
     assert "🆘 Помощь и поддержка" in texts
     assert "📖 Как подключиться" in texts
+
+
+def test_profile_screen_is_short_summary_without_legacy_lines(monkeypatch):
+    monkeypatch.setattr(handlers_user, "get_user_subscription", AsyncMock(return_value=None))
+    monkeypatch.setattr(handlers_user, "get_status_text", lambda *_: ("не активна", "—"))
+    monkeypatch.setattr(handlers_user, "format_tg_username", lambda *_: "@u")
+    monkeypatch.setattr(handlers_user, "escape_html", lambda x: x)
+    monkeypatch.setattr(handlers_user, "subscription_is_active", lambda *_: False)
+    monkeypatch.setattr(handlers_user, "get_user_keys", AsyncMock(return_value=[]))
+    monkeypatch.setattr(handlers_user, "_build_user_device_summary_line", AsyncMock(return_value="нет активных устройств"))
+    monkeypatch.setattr(handlers_user, "_build_user_traffic_summary_line", AsyncMock(return_value="0 B"))
+    monkeypatch.setattr(handlers_user, "get_setting", AsyncMock(return_value=0))
+    monkeypatch.setattr(handlers_user, "get_text", AsyncMock(return_value="profile text\nТрафик:\nУстройства:"))
+
+    text, _ = asyncio.run(handlers_user._render_profile_screen(SimpleNamespace(id=42, username="u", first_name="U")))
+
+    assert "Последняя оплата" not in text
+    assert "Дальше:" not in text
+    assert "Поддержка:" not in text
+    assert "Трафик:" in text
+    assert "Устройства:" in text
+
+
+def test_traffic_devices_screen_contains_detailed_blocks(monkeypatch):
+    monkeypatch.setattr(handlers_user, "_build_user_traffic_lines", AsyncMock(return_value=["• dev1 — 1 GB", "• Всего трафика — 1 GB"]))
+    monkeypatch.setattr(handlers_user, "_build_user_device_activity_lines", AsyncMock(return_value=["• dev1 — активен"]))
+    monkeypatch.setattr(
+        handlers_user,
+        "get_text",
+        AsyncMock(
+            side_effect=lambda _key, **kwargs: (
+                "📊 Трафик и устройства\n"
+                f"{kwargs['traffic_block']}\n"
+                "Последняя активность\n"
+                f"{kwargs['device_activity_block']}"
+            )
+        ),
+    )
+
+    text, markup = asyncio.run(handlers_user._render_traffic_devices_screen(42))
+
+    assert "Трафик и устройства" in text
+    assert "dev1 — 1 GB" in text
+    assert "Последняя активность" in text
+    assert markup.inline_keyboard[0][0].text == "⬅️ В профиль"
 
 
 def test_guide_and_buy_have_profile_back():
@@ -184,6 +228,31 @@ def test_payment_success_uses_single_progress_message(monkeypatch):
 
     message.answer.assert_awaited_once_with('progress')
     progress_message.edit_text.assert_awaited_once()
+
+
+def test_buy_tariff_opens_confirm_screen_without_invoice(monkeypatch):
+    cb = DummyCallback(data=payments.CB_BUY_30)
+    monkeypatch.setattr(payments, "is_purchase_maintenance_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(payments, "get_text", AsyncMock(return_value="confirm"))
+    send_invoice_mock = AsyncMock()
+    monkeypatch.setattr(payments, "_send_stars_invoice", send_invoice_mock)
+
+    asyncio.run(payments.buy_30_days(cb))
+
+    cb.message.edit_text.assert_awaited_once()
+    send_invoice_mock.assert_not_called()
+
+
+def test_confirm_screen_pay_sends_invoice(monkeypatch):
+    cb = DummyCallback(data=payments.CB_BUY_PAY_30)
+    bot = SimpleNamespace(send_invoice=AsyncMock())
+    monkeypatch.setattr(payments, "is_purchase_maintenance_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(payments, "is_purchase_rate_limited", lambda *_: (False, 0))
+    monkeypatch.setattr(payments, "is_purchase_rate_limited_persistent", AsyncMock(return_value=(False, 0)))
+
+    asyncio.run(payments.buy_pay_30_days(cb, bot))
+
+    bot.send_invoice.assert_awaited_once()
 
 
 def test_user_send_or_edit_noop_does_not_fallback_to_new_message():

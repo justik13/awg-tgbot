@@ -5,6 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from aiogram import Bot, F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import LabeledPrice, PreCheckoutQuery
 
 from awg_backend import check_awg_container, issue_subscription
@@ -45,7 +46,7 @@ from database import (
     get_user_keys,
 )
 from helpers import utc_now_naive
-from keyboards import get_post_payment_kb
+from keyboards import get_buy_confirm_kb, get_post_payment_kb
 from content_settings import get_text
 from referrals import (
     apply_referral_recurring_inviter_reward,
@@ -53,7 +54,7 @@ from referrals import (
     notify_inviter_about_referral_reward,
 )
 from texts import get_payment_result_text
-from ui_constants import CB_BUY_30, CB_BUY_7, CB_BUY_90
+from ui_constants import CB_BUY_30, CB_BUY_7, CB_BUY_90, CB_BUY_PAY_30, CB_BUY_PAY_7, CB_BUY_PAY_90
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 
 router = Router()
@@ -115,6 +116,40 @@ async def _send_stars_invoice(bot: Bot, chat_id: int, payload: str, title: str, 
     )
 
 
+async def _send_or_edit_payment_screen(cb: types.CallbackQuery, text: str, *, reply_markup=None) -> None:
+    message = cb.message
+    if message is not None and hasattr(message, "edit_text"):
+        try:
+            await message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
+            return
+        except TelegramBadRequest as error:
+            if "message is not modified" in str(error).lower():
+                return
+            logger.debug("Payment screen edit fallback due to TelegramBadRequest: %s", error)
+        except Exception as error:
+            logger.warning("Payment screen edit fallback due to unexpected error: %s", error)
+    if message is not None:
+        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+
+
+async def _show_buy_confirmation(cb: types.CallbackQuery, payload: str) -> None:
+    tariffs = get_tariffs()
+    tariff = tariffs[payload]
+    title_map = {
+        "sub_7": "7 дней",
+        "sub_30": "30 дней",
+        "sub_90": "90 дней",
+    }
+    text = await get_text(
+        "payment_confirm_screen",
+        tariff_title=title_map[payload],
+        configs_per_user=CONFIGS_PER_USER,
+        amount=int(tariff["amount"]),
+        currency=tariff["currency"],
+    )
+    await _send_or_edit_payment_screen(cb, text, reply_markup=get_buy_confirm_kb(payload))
+
+
 async def checkout_readiness() -> tuple[bool, str]:
     now_ts = utc_now_naive().timestamp()
     expires_at = _checkout_readiness_cache.get("expires_at")
@@ -144,51 +179,84 @@ async def checkout_readiness() -> tuple[bool, str]:
 
 
 @router.callback_query(F.data == CB_BUY_7)
-async def buy_7_days(cb: types.CallbackQuery, bot: Bot):
+async def buy_7_days(cb: types.CallbackQuery):
     if await is_purchase_maintenance_enabled():
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
-    mem_limited, mem_wait = is_purchase_rate_limited(cb.from_user.id)
-    persistent_limited, persistent_wait = await is_purchase_rate_limited_persistent(cb.from_user.id, CB_BUY_7)
-    limited = persistent_limited or mem_limited
-    if limited:
-        wait_seconds = max(mem_wait, persistent_wait, 1)
-        await cb.answer(f"Подождите {wait_seconds} сек.", show_alert=True)
-        return
     await cb.answer()
-    await _send_stars_invoice(bot, cb.message.chat.id, "sub_7", "Свободный Интернет на 7 дней", "7 дней доступа", int(config.STARS_PRICE_7_DAYS))
+    await _show_buy_confirmation(cb, "sub_7")
 
 
 @router.callback_query(F.data == CB_BUY_30)
-async def buy_30_days(cb: types.CallbackQuery, bot: Bot):
+async def buy_30_days(cb: types.CallbackQuery):
     if await is_purchase_maintenance_enabled():
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
-    mem_limited, mem_wait = is_purchase_rate_limited(cb.from_user.id)
-    persistent_limited, persistent_wait = await is_purchase_rate_limited_persistent(cb.from_user.id, CB_BUY_30)
-    limited = persistent_limited or mem_limited
-    if limited:
-        wait_seconds = max(mem_wait, persistent_wait, 1)
-        await cb.answer(f"Подождите {wait_seconds} сек.", show_alert=True)
-        return
     await cb.answer()
-    await _send_stars_invoice(bot, cb.message.chat.id, "sub_30", "Свободный Интернет на 30 дней", "30 дней доступа", int(config.STARS_PRICE_30_DAYS))
+    await _show_buy_confirmation(cb, "sub_30")
 
 
 @router.callback_query(F.data == CB_BUY_90)
-async def buy_90_days(cb: types.CallbackQuery, bot: Bot):
+async def buy_90_days(cb: types.CallbackQuery):
+    if await is_purchase_maintenance_enabled():
+        await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
+        return
+    await cb.answer()
+    await _show_buy_confirmation(cb, "sub_90")
+
+
+async def _send_invoice_from_confirm(cb: types.CallbackQuery, bot: Bot, *, callback_action: str, payload: str, title: str, label: str, amount: int) -> None:
     if await is_purchase_maintenance_enabled():
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     mem_limited, mem_wait = is_purchase_rate_limited(cb.from_user.id)
-    persistent_limited, persistent_wait = await is_purchase_rate_limited_persistent(cb.from_user.id, CB_BUY_90)
+    persistent_limited, persistent_wait = await is_purchase_rate_limited_persistent(cb.from_user.id, callback_action)
     limited = persistent_limited or mem_limited
     if limited:
         wait_seconds = max(mem_wait, persistent_wait, 1)
         await cb.answer(f"Подождите {wait_seconds} сек.", show_alert=True)
         return
     await cb.answer()
-    await _send_stars_invoice(bot, cb.message.chat.id, "sub_90", "Свободный Интернет на 90 дней", "90 дней доступа", int(config.STARS_PRICE_90_DAYS))
+    await _send_stars_invoice(bot, cb.message.chat.id, payload, title, label, amount)
+
+
+@router.callback_query(F.data == CB_BUY_PAY_7)
+async def buy_pay_7_days(cb: types.CallbackQuery, bot: Bot):
+    await _send_invoice_from_confirm(
+        cb,
+        bot,
+        callback_action=CB_BUY_PAY_7,
+        payload="sub_7",
+        title="Свободный Интернет на 7 дней",
+        label="7 дней доступа",
+        amount=int(config.STARS_PRICE_7_DAYS),
+    )
+
+
+@router.callback_query(F.data == CB_BUY_PAY_30)
+async def buy_pay_30_days(cb: types.CallbackQuery, bot: Bot):
+    await _send_invoice_from_confirm(
+        cb,
+        bot,
+        callback_action=CB_BUY_PAY_30,
+        payload="sub_30",
+        title="Свободный Интернет на 30 дней",
+        label="30 дней доступа",
+        amount=int(config.STARS_PRICE_30_DAYS),
+    )
+
+
+@router.callback_query(F.data == CB_BUY_PAY_90)
+async def buy_pay_90_days(cb: types.CallbackQuery, bot: Bot):
+    await _send_invoice_from_confirm(
+        cb,
+        bot,
+        callback_action=CB_BUY_PAY_90,
+        payload="sub_90",
+        title="Свободный Интернет на 90 дней",
+        label="90 дней доступа",
+        amount=int(config.STARS_PRICE_90_DAYS),
+    )
 
 
 @router.pre_checkout_query()
