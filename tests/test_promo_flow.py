@@ -88,6 +88,8 @@ def test_promo_command_clears_pending_then_fallback_works(monkeypatch):
 
 def test_top_level_flows_clear_stale_promo_pending(monkeypatch):
     message = DummyMessage()
+    message.bot = SimpleNamespace()
+    monkeypatch.setattr(handlers_user, "_cleanup_pending_invoice_for_navigation", AsyncMock())
     monkeypatch.setattr(handlers_user, 'clear_pending_admin_action', AsyncMock())
     monkeypatch.setattr(handlers_user, 'ensure_user_exists', AsyncMock())
     monkeypatch.setattr(handlers_user, 'capture_referral_start', AsyncMock())
@@ -160,7 +162,9 @@ def test_navigation_callbacks_clear_stale_promo_pending(monkeypatch):
         from_user=SimpleNamespace(id=42, username='u', first_name='U'),
         message=SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock()),
         answer=AsyncMock(),
+        bot=SimpleNamespace(),
     )
+    monkeypatch.setattr(handlers_user, "_cleanup_pending_invoice_for_navigation", AsyncMock())
     monkeypatch.setattr(handlers_user, '_clear_promo_input_pending', AsyncMock())
     monkeypatch.setattr(handlers_user, 'ensure_user_exists', AsyncMock())
     monkeypatch.setattr(handlers_user, '_send_configs_menu', AsyncMock())
