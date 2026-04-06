@@ -19,9 +19,10 @@ from ui_constants import (
     CB_ADMIN_DENYLIST_MODE_SOFT, CB_ADMIN_DENYLIST_MODE_STRICT,
     CB_ADMIN_FIND_CHARGE, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_OPEN_USER_CARD_PREFIX,
     CB_BROADCAST_CANCEL, CB_BROADCAST_CONFIRM, CB_BUY_30, CB_BUY_7, CB_BUY_90,
+    CB_BUY_PAY_7, CB_BUY_PAY_30, CB_BUY_PAY_90,
     CB_CHECK_ACTIVATION_STATUS,
     CB_CONFIG_CONF_PREFIX, CB_CONFIG_DEVICE_PREFIX, CB_OPEN_CONFIGS, CB_OPEN_PROFILE, CB_OPEN_REFERRALS,
-    CB_OPEN_SUPPORT,
+    CB_OPEN_SUPPORT, CB_OPEN_TRAFFIC_DEVICES,
     CB_PROMO_INPUT_CANCEL, CB_PROMO_INPUT_START,
     CB_SHOW_BUY_MENU, CB_SHOW_INSTRUCTION, CB_USER_REISSUE_CANCEL, CB_USER_REISSUE_CONFIRM,
     CB_SUPPORT_BACK, CB_SUPPORT_CONNECTION, CB_SUPPORT_PAYMENT, CB_SUPPORT_TERMS, CB_USER_REISSUE_DEVICE_PREFIX,
@@ -61,6 +62,7 @@ def get_profile_inline_kb(subscription_active: bool, *, referrals_enabled: bool 
     else:
         rows.append([InlineKeyboardButton(text="💳 Купить / Продлить", callback_data=CB_SHOW_BUY_MENU)])
     rows.append([InlineKeyboardButton(text="🔑 Подключение", callback_data=CB_OPEN_CONFIGS)])
+    rows.append([InlineKeyboardButton(text="📊 Трафик и устройства", callback_data=CB_OPEN_TRAFFIC_DEVICES)])
     rows.append([InlineKeyboardButton(text="🎟 Ввести промокод", callback_data=CB_PROMO_INPUT_START)])
     if referrals_enabled:
         rows.append([InlineKeyboardButton(text="🎁 Рефералы", callback_data=CB_OPEN_REFERRALS)])
@@ -68,6 +70,21 @@ def get_profile_inline_kb(subscription_active: bool, *, referrals_enabled: bool 
     rows.append([InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)])
     rows.append([InlineKeyboardButton(text="📖 Как подключиться", callback_data=CB_SHOW_INSTRUCTION)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_buy_confirm_kb(payload: str) -> InlineKeyboardMarkup:
+    action_by_payload = {
+        "sub_7": CB_BUY_PAY_7,
+        "sub_30": CB_BUY_PAY_30,
+        "sub_90": CB_BUY_PAY_90,
+    }
+    pay_action = action_by_payload[payload]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⭐ Подтвердить и оплатить", callback_data=pay_action)],
+            [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
+        ]
+    )
 
 
 def get_instruction_inline_kb() -> InlineKeyboardMarkup:
