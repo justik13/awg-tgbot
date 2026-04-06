@@ -40,6 +40,7 @@ from traffic import format_bytes_compact, render_device_traffic_line
 from helpers import escape_html, format_remaining_time, format_tg_username, get_status_text, subscription_is_active, utc_now_naive
 from keyboards import (
     get_buy_inline_kb,
+    get_config_post_conf_kb,
     get_configs_empty_kb,
     get_config_result_kb,
     get_configs_devices_kb,
@@ -47,6 +48,7 @@ from keyboards import (
     get_main_menu,
     get_promo_cancel_kb,
     get_profile_inline_kb,
+    get_referrals_kb,
     get_support_back_kb,
     get_support_center_kb,
     get_user_reissue_confirm_kb,
@@ -60,15 +62,14 @@ from texts import (
 from ui_constants import (
     BTN_BUY,
     BTN_CONFIGS,
-    BTN_GUIDE,
     BTN_PROFILE,
-    BTN_PROMO,
-    BTN_REFERRALS,
     BTN_SUPPORT,
     CB_CHECK_ACTIVATION_STATUS,
     CB_CONFIG_CONF_PREFIX,
     CB_CONFIG_DEVICE_PREFIX,
     CB_OPEN_CONFIGS,
+    CB_OPEN_PROFILE,
+    CB_OPEN_REFERRALS,
     CB_OPEN_SUPPORT,
     CB_PROMO_INPUT_CANCEL,
     CB_PROMO_INPUT_START,
@@ -240,6 +241,23 @@ async def _send_buy_menu(target, user_id: int):
     )
 
 
+async def _render_buy_menu_text(user_id: int) -> str:
+    sub_until = await get_user_subscription(user_id)
+    price_lines = [
+        f"• 7 дней — {config.STARS_PRICE_7_DAYS}⭐",
+        f"• 30 дней — {config.STARS_PRICE_30_DAYS}⭐",
+        f"• 90 дней — {config.STARS_PRICE_90_DAYS}⭐",
+    ]
+    if subscription_is_active(sub_until):
+        remaining = format_remaining_time(sub_until)
+        return await get_text("renew_menu", remaining=remaining, price_lines="\n".join(price_lines))
+    return await get_text(
+        "buy_menu",
+        price_lines="\n".join(price_lines),
+        configs_per_user=int(await get_setting("CONFIGS_PER_USER", int) or config.CONFIGS_PER_USER),
+    )
+
+
 async def _send_configs_menu(target, user: types.User):
     configs = await get_user_keys(user.id)
     if not configs:
@@ -262,6 +280,47 @@ async def _render_configs_menu_screen(user_id: int) -> tuple[str, types.InlineKe
     if not configs:
         return await get_text("configs_empty"), get_configs_empty_kb()
     return await get_text("configs_menu"), get_configs_devices_kb(configs)
+
+
+async def _render_profile_screen(user: types.User) -> tuple[str, types.InlineKeyboardMarkup]:
+    sub_until = await get_user_subscription(user.id)
+    status_text, until_text = get_status_text(sub_until)
+    tg_username = format_tg_username(user.username)
+    first_name = escape_html(user.first_name)
+    is_active = subscription_is_active(sub_until)
+    remaining = format_remaining_time(sub_until) if is_active else "—"
+    configs = await get_user_keys(user.id)
+    has_connection = bool(configs)
+    connection_status = "готово ✅" if has_connection else "ещё не выдано"
+    if has_connection:
+        next_step = "Откройте «🔑 Подключение» и импортируйте vpn://"
+    elif is_active:
+        next_step = "Нажмите «⏱ Проверить статус активации» или откройте «🔑 Подключение»"
+    else:
+        next_step = "Нажмите «💳 Купить / Продлить»"
+    payment_summary = await get_latest_user_payment_summary(user.id)
+    payment_fields = _build_last_payment_fields(payment_summary)
+    device_activity_lines = await _build_user_device_activity_lines(user.id)
+    traffic_lines = await _build_user_traffic_lines(user.id)
+    referrals_enabled = int(await get_setting("REFERRAL_ENABLED", int) or 0) == 1
+    return (
+        await get_text(
+            "profile_screen",
+            user_id=user.id,
+            first_name=first_name,
+            tg_username=escape_html(tg_username),
+            status_text=status_text,
+            until_text=until_text,
+            remaining=remaining,
+            connection_status=connection_status,
+            **payment_fields,
+            device_activity_block=" · ".join(device_activity_lines),
+            traffic_block=" · ".join(traffic_lines),
+            next_step=next_step,
+            support_line=await get_support_short_text(),
+        ),
+        get_profile_inline_kb(is_active, referrals_enabled=referrals_enabled),
+    )
 
 
 async def _find_user_config_by_key_id(user_id: int, key_id: int):
@@ -519,44 +578,8 @@ async def profile(message: types.Message):
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if message.from_user.id == ADMIN_ID:
         maybe_set_support_username(message.from_user.username)
-    sub_until = await get_user_subscription(message.from_user.id)
-    status_text, until_text = get_status_text(sub_until)
-    tg_username = format_tg_username(message.from_user.username)
-    first_name = escape_html(message.from_user.first_name)
-    is_active = subscription_is_active(sub_until)
-    remaining = format_remaining_time(sub_until) if is_active else "—"
-    configs = await get_user_keys(message.from_user.id)
-    has_connection = bool(configs)
-    connection_status = "готово ✅" if has_connection else "ещё не выдано"
-    if has_connection:
-        next_step = "Откройте «🔑 Подключение» и импортируйте vpn://"
-    elif is_active:
-        next_step = "Нажмите «⏱ Проверить статус активации» или откройте «🔑 Подключение»"
-    else:
-        next_step = "Нажмите «💳 Купить / Продлить»"
-    payment_summary = await get_latest_user_payment_summary(message.from_user.id)
-    payment_fields = _build_last_payment_fields(payment_summary)
-    device_activity_lines = await _build_user_device_activity_lines(message.from_user.id)
-    traffic_lines = await _build_user_traffic_lines(message.from_user.id)
-    await message.answer(
-        await get_text(
-            "profile_screen",
-            user_id=message.from_user.id,
-            first_name=first_name,
-            tg_username=escape_html(tg_username),
-            status_text=status_text,
-            until_text=until_text,
-            remaining=remaining,
-            connection_status=connection_status,
-            **payment_fields,
-            device_activity_block=" · ".join(device_activity_lines),
-            traffic_block=" · ".join(traffic_lines),
-            next_step=next_step,
-            support_line=await get_support_short_text(),
-        ),
-        parse_mode="HTML",
-        reply_markup=get_profile_inline_kb(is_active),
-    )
+    text, markup = await _render_profile_screen(message.from_user)
+    await message.answer(text, parse_mode="HTML", reply_markup=markup)
 
 
 @router.message(F.text == BTN_CONFIGS)
@@ -629,10 +652,7 @@ async def send_selected_device_conf(cb: types.CallbackQuery):
             caption=await get_text("config_conf_caption", device_num=device_num),
             parse_mode="HTML",
         )
-        await cb.message.answer(
-            await get_text("config_conf_sent"),
-            reply_markup=get_config_result_kb(key_id),
-        )
+        await _send_or_edit_user_screen(cb, await get_text("config_conf_sent"), reply_markup=get_config_post_conf_kb(key_id))
     else:
         await cb.message.answer(
             await get_text("config_conf_missing"),
@@ -654,10 +674,13 @@ async def open_configs_from_profile(cb: types.CallbackQuery):
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
 
-@router.message(F.text == BTN_GUIDE)
-async def guide(message: types.Message):
-    await _clear_promo_input_pending(message.from_user.id)
-    await message.answer(await get_instruction_with_policy_text(), parse_mode="HTML", disable_web_page_preview=True)
+@router.callback_query(F.data == CB_OPEN_PROFILE)
+async def open_profile_callback(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
+    await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
+    await cb.answer()
+    text, markup = await _render_profile_screen(cb.from_user)
+    await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
 
 @router.message(F.text == BTN_SUPPORT)
@@ -798,11 +821,8 @@ async def support_back_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
-        await _send_or_edit_user_screen(
-            cb,
-            f"{await get_support_full_text()}\n\nВыберите, с чем нужна помощь:",
-            reply_markup=get_support_center_kb(),
-        )
+        text, markup = await _render_profile_screen(cb.from_user)
+        await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
 
 @router.message(F.text == BTN_BUY)
@@ -814,14 +834,25 @@ async def buy(message: types.Message):
     await _send_buy_menu(message, message.from_user.id)
 
 
-@router.message(F.text == BTN_REFERRALS)
-async def referrals_screen(message: types.Message, bot):
-    await _clear_promo_input_pending(message.from_user.id)
-    await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    me = await bot.get_me()
+@router.callback_query(F.data == CB_OPEN_REFERRALS)
+async def referrals_from_profile(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
+    await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
+    await cb.answer()
+    me = await cb.bot.get_me()
     bot_username = getattr(me, "username", "") or "bot"
-    data = await get_referral_screen_data(message.from_user.id, bot_username)
-    await message.answer(await get_text("referral_screen", ref_link=data["link"], invited_count=data["invited_count"], rewarded_count=data["rewarded_count"], bonus_days=data["bonus_days"]), parse_mode="HTML")
+    data = await get_referral_screen_data(cb.from_user.id, bot_username)
+    await _send_or_edit_user_screen(
+        cb,
+        await get_text(
+            "referral_screen",
+            ref_link=data["link"],
+            invited_count=data["invited_count"],
+            rewarded_count=data["rewarded_count"],
+            bonus_days=data["bonus_days"],
+        ),
+        reply_markup=get_referrals_kb(),
+    )
 
 
 @router.callback_query(F.data == CB_SHOW_BUY_MENU)
@@ -832,7 +863,10 @@ async def show_buy_menu_callback(cb: types.CallbackQuery):
     if not cb.message:
         await cb.answer(await get_text("callback_message_unavailable"), show_alert=True)
         return
-    await _send_buy_menu(cb.message, cb.from_user.id)
+    if await is_purchase_maintenance_enabled():
+        await _send_or_edit_user_screen(cb, await get_purchase_maintenance_text())
+        return
+    await _send_or_edit_user_screen(cb, await _render_buy_menu_text(cb.from_user.id), reply_markup=get_buy_inline_kb())
 
 
 @router.callback_query(F.data == CB_SHOW_INSTRUCTION)
@@ -840,13 +874,12 @@ async def show_instruction_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
-        await cb.message.answer(await get_instruction_with_policy_text(), parse_mode="HTML", disable_web_page_preview=True)
-
-
-@router.message(F.text == BTN_PROMO)
-async def promo_from_menu(message: types.Message):
-    await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    await _start_promo_input_flow(message, message.from_user)
+        await _send_or_edit_user_screen(
+            cb,
+            await get_instruction_with_policy_text(),
+            reply_markup=get_support_back_kb(),
+            disable_web_page_preview=True,
+        )
 
 
 @router.callback_query(F.data == CB_PROMO_INPUT_START)
