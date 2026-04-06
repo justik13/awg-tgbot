@@ -59,6 +59,7 @@ from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_e
 
 router = Router()
 purchase_rate_limit: dict[int, object] = {}
+pending_invoices: dict[int, dict[str, int | str]] = {}
 _checkout_readiness_cache = {"ok": True, "reason": "", "expires_at": None}
 CHECKOUT_READINESS_TTL_SECONDS = 12
 CRITICAL_ERRORS_LOG = Path("critical_errors.log")
@@ -104,8 +105,39 @@ async def is_purchase_rate_limited_persistent(user_id: int, action: str) -> tupl
     return False, 0
 
 
-async def _send_stars_invoice(bot: Bot, chat_id: int, payload: str, title: str, label: str, amount: int):
-    await bot.send_invoice(
+def remember_pending_invoice(user_id: int, chat_id: int, message_id: int, payload: str) -> None:
+    pending_invoices[user_id] = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "payload": payload,
+    }
+
+
+def get_pending_invoice(user_id: int) -> dict[str, int | str] | None:
+    return pending_invoices.get(user_id)
+
+
+def clear_pending_invoice_state(user_id: int) -> None:
+    pending_invoices.pop(user_id, None)
+
+
+async def clear_pending_invoice_for_user(bot: Bot, user_id: int) -> bool:
+    pending = pending_invoices.pop(user_id, None)
+    if not pending:
+        return False
+    chat_id = int(pending["chat_id"])
+    message_id = int(pending["message_id"])
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except TelegramBadRequest as error:
+        logger.debug("Pending invoice cleanup skipped for user=%s: %s", user_id, error)
+    except Exception as error:
+        logger.warning("Pending invoice cleanup failed for user=%s: %s", user_id, error)
+    return True
+
+
+async def _send_stars_invoice(bot: Bot, chat_id: int, payload: str, title: str, label: str, amount: int) -> types.Message:
+    return await bot.send_invoice(
         chat_id=chat_id,
         title=title,
         description=f"Доступ для {CONFIGS_PER_USER} устройств",
@@ -217,7 +249,9 @@ async def _send_invoice_from_confirm(cb: types.CallbackQuery, bot: Bot, *, callb
         await cb.answer(f"Подождите {wait_seconds} сек.", show_alert=True)
         return
     await cb.answer()
-    await _send_stars_invoice(bot, cb.message.chat.id, payload, title, label, amount)
+    await clear_pending_invoice_for_user(bot, cb.from_user.id)
+    invoice_message = await _send_stars_invoice(bot, cb.message.chat.id, payload, title, label, amount)
+    remember_pending_invoice(cb.from_user.id, cb.message.chat.id, invoice_message.message_id, payload)
 
 
 @router.callback_query(F.data == CB_BUY_PAY_7)
@@ -337,6 +371,7 @@ async def _send_user_active_config(message: types.Message, user_id: int) -> bool
 
 @router.message(F.successful_payment)
 async def success_pay(message: types.Message):
+    clear_pending_invoice_state(message.from_user.id)
     payment = message.successful_payment
     tariff = get_tariffs().get(payment.invoice_payload)
     if not tariff:
