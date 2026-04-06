@@ -86,6 +86,7 @@ from ui_constants import (
 from content_settings import get_setting, get_text
 from referrals import capture_referral_start, get_referral_screen_data
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
+from payments import clear_pending_invoice_for_user
 
 router = Router()
 USER_PROMO_INPUT_ACTION_KEY = "user_promo_input"
@@ -375,6 +376,10 @@ async def _clear_promo_input_pending(user_id: int) -> None:
     await clear_pending_admin_action(user_id, USER_PROMO_INPUT_ACTION_KEY)
 
 
+async def _cleanup_pending_invoice_for_navigation(bot, user_id: int) -> None:
+    await clear_pending_invoice_for_user(bot, user_id)
+
+
 async def _start_promo_input_flow(target, user: types.User) -> None:
     await _clear_promo_input_pending(user.id)
     await set_pending_admin_action(
@@ -564,6 +569,7 @@ async def promo_cmd(message: types.Message, command: CommandObject):
 @router.message(F.text == BTN_PROFILE)
 async def profile(message: types.Message):
     await _clear_promo_input_pending(message.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(message.bot, message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if message.from_user.id == ADMIN_ID:
         maybe_set_support_username(message.from_user.username)
@@ -574,6 +580,7 @@ async def profile(message: types.Message):
 @router.message(F.text == BTN_CONFIGS)
 async def my_keys(message: types.Message):
     await _clear_promo_input_pending(message.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(message.bot, message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if message.from_user.id == ADMIN_ID:
         maybe_set_support_username(message.from_user.username)
@@ -652,6 +659,7 @@ async def send_selected_device_conf(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_OPEN_CONFIGS)
 async def open_configs_from_profile(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     if cb.from_user.id == ADMIN_ID:
         maybe_set_support_username(cb.from_user.username)
@@ -666,6 +674,7 @@ async def open_configs_from_profile(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_OPEN_PROFILE)
 async def open_profile_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer()
     text, markup = await _render_profile_screen(cb.from_user)
@@ -675,6 +684,7 @@ async def open_profile_callback(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_OPEN_TRAFFIC_DEVICES)
 async def open_traffic_devices_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer()
     text, markup = await _render_traffic_devices_screen(cb.from_user.id)
@@ -776,6 +786,7 @@ async def check_activation_status(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_OPEN_SUPPORT)
 async def open_support_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await cb.answer()
     if cb.message:
         await _send_or_edit_user_screen(
@@ -817,6 +828,7 @@ async def support_terms_callback(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_SUPPORT_BACK)
 async def support_back_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await cb.answer()
     if cb.message:
         text, markup = await _render_profile_screen(cb.from_user)
@@ -826,6 +838,7 @@ async def support_back_callback(cb: types.CallbackQuery):
 @router.message(F.text == BTN_BUY)
 async def buy(message: types.Message):
     await _clear_promo_input_pending(message.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(message.bot, message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if message.from_user.id == ADMIN_ID:
         maybe_set_support_username(message.from_user.username)
@@ -835,6 +848,7 @@ async def buy(message: types.Message):
 @router.callback_query(F.data == CB_OPEN_REFERRALS)
 async def referrals_from_profile(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer()
     me = await cb.bot.get_me()
@@ -856,6 +870,7 @@ async def referrals_from_profile(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_SHOW_BUY_MENU)
 async def show_buy_menu_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
+    await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer()
     if not cb.message:

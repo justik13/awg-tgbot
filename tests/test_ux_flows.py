@@ -245,7 +245,7 @@ def test_buy_tariff_opens_confirm_screen_without_invoice(monkeypatch):
 
 def test_confirm_screen_pay_sends_invoice(monkeypatch):
     cb = DummyCallback(data=payments.CB_BUY_PAY_30)
-    bot = SimpleNamespace(send_invoice=AsyncMock())
+    bot = SimpleNamespace(send_invoice=AsyncMock(return_value=SimpleNamespace(message_id=101)), delete_message=AsyncMock())
     monkeypatch.setattr(payments, "is_purchase_maintenance_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(payments, "is_purchase_rate_limited", lambda *_: (False, 0))
     monkeypatch.setattr(payments, "is_purchase_rate_limited_persistent", AsyncMock(return_value=(False, 0)))
@@ -253,6 +253,72 @@ def test_confirm_screen_pay_sends_invoice(monkeypatch):
     asyncio.run(payments.buy_pay_30_days(cb, bot))
 
     bot.send_invoice.assert_awaited_once()
+
+
+def test_confirm_screen_pay_remembers_pending_invoice(monkeypatch):
+    payments.pending_invoices.clear()
+    cb = DummyCallback(data=payments.CB_BUY_PAY_30)
+    bot = SimpleNamespace(send_invoice=AsyncMock(return_value=SimpleNamespace(message_id=777)), delete_message=AsyncMock())
+    monkeypatch.setattr(payments, "is_purchase_maintenance_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(payments, "is_purchase_rate_limited", lambda *_: (False, 0))
+    monkeypatch.setattr(payments, "is_purchase_rate_limited_persistent", AsyncMock(return_value=(False, 0)))
+
+    asyncio.run(payments.buy_pay_30_days(cb, bot))
+
+    assert payments.get_pending_invoice(cb.from_user.id) == {"chat_id": 1, "message_id": 777, "payload": "sub_30"}
+
+
+def test_open_profile_cleans_pending_invoice_and_state(monkeypatch):
+    payments.pending_invoices.clear()
+    payments.remember_pending_invoice(42, 1, 333, "sub_30")
+    cb = DummyCallback(data=handlers_user.CB_OPEN_PROFILE)
+    cb.bot = SimpleNamespace(delete_message=AsyncMock())
+    monkeypatch.setattr(handlers_user, "_clear_promo_input_pending", AsyncMock())
+    monkeypatch.setattr(handlers_user, "ensure_user_exists", AsyncMock())
+    monkeypatch.setattr(handlers_user, "_render_profile_screen", AsyncMock(return_value=("profile", None)))
+
+    asyncio.run(handlers_user.open_profile_callback(cb))
+
+    cb.bot.delete_message.assert_awaited_once_with(chat_id=1, message_id=333)
+    assert payments.get_pending_invoice(42) is None
+
+
+def test_success_payment_clears_pending_invoice_state(monkeypatch):
+    payments.pending_invoices.clear()
+    payments.remember_pending_invoice(42, 1, 444, "sub_30")
+    payment_data = SimpleNamespace(
+        invoice_payload="bad_payload",
+        currency="XTR",
+        total_amount=30,
+        telegram_payment_charge_id="tg-1",
+        provider_payment_charge_id="pr-1",
+    )
+    message = SimpleNamespace(
+        successful_payment=payment_data,
+        from_user=SimpleNamespace(id=42, username="u", first_name="U"),
+        bot=SimpleNamespace(),
+        answer=AsyncMock(),
+    )
+    monkeypatch.setattr(payments, "get_text", AsyncMock(return_value="payload_error"))
+
+    asyncio.run(payments.success_pay(message))
+
+    assert payments.get_pending_invoice(42) is None
+
+
+def test_new_buy_attempt_replaces_old_pending_invoice(monkeypatch):
+    payments.pending_invoices.clear()
+    payments.remember_pending_invoice(42, 1, 500, "sub_7")
+    cb = DummyCallback(data=payments.CB_BUY_PAY_30)
+    bot = SimpleNamespace(send_invoice=AsyncMock(return_value=SimpleNamespace(message_id=501)), delete_message=AsyncMock())
+    monkeypatch.setattr(payments, "is_purchase_maintenance_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(payments, "is_purchase_rate_limited", lambda *_: (False, 0))
+    monkeypatch.setattr(payments, "is_purchase_rate_limited_persistent", AsyncMock(return_value=(False, 0)))
+
+    asyncio.run(payments.buy_pay_30_days(cb, bot))
+
+    bot.delete_message.assert_awaited_once_with(chat_id=1, message_id=500)
+    assert payments.get_pending_invoice(42) == {"chat_id": 1, "message_id": 501, "payload": "sub_30"}
 
 
 def test_user_send_or_edit_noop_does_not_fallback_to_new_message():
