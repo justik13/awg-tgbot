@@ -2,7 +2,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 
 import config
 from ui_constants import (
-    BTN_ADMIN, BTN_BUY, BTN_CONFIGS, BTN_PROFILE, BTN_PROMO, BTN_REFERRALS, BTN_SUPPORT,
+    BTN_ADMIN, BTN_BUY, BTN_CONFIGS, BTN_PROFILE, BTN_SUPPORT,
     CB_ADMIN_BACK_MAIN, CB_ADMIN_BROADCAST, CB_ADMIN_COMMANDS, CB_ADMIN_HEALTH, CB_ADMIN_LIST, CB_ADMIN_MAINTENANCE,
     CB_ADMIN_MAINTENANCE_OFF, CB_ADMIN_MAINTENANCE_ON, CB_ADMIN_MAINTENANCE_REFRESH, CB_ADMIN_PAYMENTS, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30,
     CB_ADMIN_PRICE_EDIT_7, CB_ADMIN_PRICE_EDIT_90, CB_ADMIN_PRICE_SAVE, CB_ADMIN_PRICES, CB_ADMIN_REFERRALS,
@@ -20,7 +20,7 @@ from ui_constants import (
     CB_ADMIN_FIND_CHARGE, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_OPEN_USER_CARD_PREFIX,
     CB_BROADCAST_CANCEL, CB_BROADCAST_CONFIRM, CB_BUY_30, CB_BUY_7, CB_BUY_90,
     CB_CHECK_ACTIVATION_STATUS,
-    CB_CONFIG_CONF_PREFIX, CB_CONFIG_DEVICE_PREFIX, CB_OPEN_CONFIGS,
+    CB_CONFIG_CONF_PREFIX, CB_CONFIG_DEVICE_PREFIX, CB_OPEN_CONFIGS, CB_OPEN_PROFILE, CB_OPEN_REFERRALS,
     CB_OPEN_SUPPORT,
     CB_PROMO_INPUT_CANCEL, CB_PROMO_INPUT_START,
     CB_SHOW_BUY_MENU, CB_SHOW_INSTRUCTION, CB_USER_REISSUE_CANCEL, CB_USER_REISSUE_CONFIRM,
@@ -33,7 +33,6 @@ def get_main_menu(user_id: int, admin_id: int) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text=BTN_PROFILE), KeyboardButton(text=BTN_BUY)],
         [KeyboardButton(text=BTN_CONFIGS), KeyboardButton(text=BTN_SUPPORT)],
-        [KeyboardButton(text=BTN_PROMO), KeyboardButton(text=BTN_REFERRALS)],
     ]
     if user_id == admin_id:
         rows.append([KeyboardButton(text=BTN_ADMIN)])
@@ -54,7 +53,7 @@ def get_buy_inline_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def get_profile_inline_kb(subscription_active: bool) -> InlineKeyboardMarkup:
+def get_profile_inline_kb(subscription_active: bool, *, referrals_enabled: bool = True) -> InlineKeyboardMarkup:
     rows = []
     if subscription_active:
         rows.append([InlineKeyboardButton(text="🔄 Продлить доступ", callback_data=CB_SHOW_BUY_MENU)])
@@ -62,6 +61,8 @@ def get_profile_inline_kb(subscription_active: bool) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="💳 Купить / Продлить", callback_data=CB_SHOW_BUY_MENU)])
     rows.append([InlineKeyboardButton(text="🔑 Подключение", callback_data=CB_OPEN_CONFIGS)])
     rows.append([InlineKeyboardButton(text="🎟 Ввести промокод", callback_data=CB_PROMO_INPUT_START)])
+    if referrals_enabled:
+        rows.append([InlineKeyboardButton(text="🎁 Рефералы", callback_data=CB_OPEN_REFERRALS)])
     rows.append([InlineKeyboardButton(text="⏱ Статус активации", callback_data=CB_CHECK_ACTIVATION_STATUS)])
     rows.append([InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)])
     rows.append([InlineKeyboardButton(text="📖 Как подключиться", callback_data=CB_SHOW_INSTRUCTION)])
@@ -86,6 +87,7 @@ def get_configs_devices_kb(configs: list[tuple[int, int, str, str]]) -> InlineKe
         for key_id, device_num, _, _ in configs
     ]
     rows.append(_guide_row())
+    rows.append([InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -95,6 +97,20 @@ def get_config_result_kb(key_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📄 Выдать .conf файл (для опытных)", callback_data=f"{CB_CONFIG_CONF_PREFIX}{key_id}")],
             [InlineKeyboardButton(text="♻️ Перевыпустить это устройство", callback_data=f"{CB_USER_REISSUE_DEVICE_PREFIX}{key_id}")],
             [InlineKeyboardButton(text="⬅️ Назад к устройствам", callback_data=CB_OPEN_CONFIGS)],
+            [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
+            [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
+            _guide_row(),
+        ]
+    )
+
+
+def get_config_post_conf_kb(key_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Отправить .conf ещё раз", callback_data=f"{CB_CONFIG_CONF_PREFIX}{key_id}")],
+            [InlineKeyboardButton(text="♻️ Перевыпустить это устройство", callback_data=f"{CB_USER_REISSUE_DEVICE_PREFIX}{key_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад к устройствам", callback_data=CB_OPEN_CONFIGS)],
+            [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
             [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
             _guide_row(),
         ]
@@ -118,7 +134,7 @@ def get_support_center_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💳 Помощь с оплатой", callback_data=CB_SUPPORT_PAYMENT)],
             [InlineKeyboardButton(text="🔌 Помощь с подключением", callback_data=CB_SUPPORT_CONNECTION)],
             [InlineKeyboardButton(text="📄 Краткие условия", callback_data=CB_SUPPORT_TERMS)],
-            [InlineKeyboardButton(text="⬅️ К разделу помощи", callback_data=CB_SUPPORT_BACK)],
+            [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
         ]
     )
 
@@ -127,6 +143,16 @@ def get_support_back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад в помощь", callback_data=CB_OPEN_SUPPORT)],
+            [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
+        ]
+    )
+
+
+def get_referrals_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
+            [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
         ]
     )
 
@@ -144,6 +170,7 @@ def get_configs_empty_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             _guide_row(),
             [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
+            [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
         ]
     )
 
@@ -151,13 +178,12 @@ def get_configs_empty_kb() -> InlineKeyboardMarkup:
 def get_admin_inline_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👥 Пользователи", callback_data=CB_ADMIN_LIST), InlineKeyboardButton(text="💳 Платежи", callback_data=CB_ADMIN_PAYMENTS)],
-            [InlineKeyboardButton(text="💸 Цены", callback_data=CB_ADMIN_PRICES), InlineKeyboardButton(text="📢 Рассылка", callback_data=CB_ADMIN_BROADCAST)],
-            [InlineKeyboardButton(text="🟠 Техработы", callback_data=CB_ADMIN_MAINTENANCE), InlineKeyboardButton(text="🩺 Состояние", callback_data=CB_ADMIN_HEALTH)],
-            [InlineKeyboardButton(text="🎁 Рефералы", callback_data=CB_ADMIN_REFERRALS), InlineKeyboardButton(text="🎟 Промокоды", callback_data=CB_ADMIN_PROMOCODES)],
-            [InlineKeyboardButton(text="⚙️ Настройки сервиса", callback_data=CB_ADMIN_SERVICE_SETTINGS)],
-            [InlineKeyboardButton(text="📊 Статистика", callback_data=CB_ADMIN_STATS), InlineKeyboardButton(text="🔄 Синхронизация", callback_data=CB_ADMIN_SYNC)],
-            [InlineKeyboardButton(text="🌐 Сеть", callback_data=CB_ADMIN_NETWORK_POLICY)],
+            [InlineKeyboardButton(text="👥 Users", callback_data=CB_ADMIN_LIST), InlineKeyboardButton(text="💳 Payments", callback_data=CB_ADMIN_PAYMENTS)],
+            [InlineKeyboardButton(text="⚙️ Настройки сервиса", callback_data=CB_ADMIN_SERVICE_SETTINGS), InlineKeyboardButton(text="🌐 Сеть", callback_data=CB_ADMIN_NETWORK_POLICY)],
+            [InlineKeyboardButton(text="📊 Stats", callback_data=CB_ADMIN_STATS), InlineKeyboardButton(text="🩺 Health", callback_data=CB_ADMIN_HEALTH)],
+            [InlineKeyboardButton(text="🔄 Sync", callback_data=CB_ADMIN_SYNC), InlineKeyboardButton(text="🟠 Maintenance", callback_data=CB_ADMIN_MAINTENANCE)],
+            [InlineKeyboardButton(text="💸 Цены", callback_data=CB_ADMIN_PRICES), InlineKeyboardButton(text="🎟 Промокоды", callback_data=CB_ADMIN_PROMOCODES)],
+            [InlineKeyboardButton(text="🎁 Рефералы", callback_data=CB_ADMIN_REFERRALS), InlineKeyboardButton(text="📢 Рассылка", callback_data=CB_ADMIN_BROADCAST)],
             [InlineKeyboardButton(text="📝 Тексты", callback_data=CB_ADMIN_TEXT_OVERRIDES)],
             [InlineKeyboardButton(text="⌨️ Команды", callback_data=CB_ADMIN_COMMANDS)],
         ]

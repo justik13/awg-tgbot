@@ -970,11 +970,18 @@ async def _render_users_page(target_message: types.Message, page: int) -> None:
         short_name = format_tg_username(tg_username)
         labels.append((uid, f"{uid} — {short_name}"))
         lines.append(f"• <code>{uid}</code> — {short_name} — {status_text} — {until_text}")
-    await target_message.answer(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=_users_page_kb(labels, page, total_pages),
-    )
+    try:
+        await target_message.edit_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=_users_page_kb(labels, page, total_pages),
+        )
+    except TelegramBadRequest:
+        await target_message.answer(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=_users_page_kb(labels, page, total_pages),
+        )
 
 
 def _payment_admin_details(payment_summary: dict | None) -> tuple[str, str, str]:
@@ -1031,8 +1038,7 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
     traffic_lines = await _build_admin_device_traffic_lines(uid)
     activity_text = "\n".join(activity_lines)
     traffic_text = "\n".join(traffic_lines)
-    await target_message.answer(
-        (
+    text = (
             "🛠 <b>Управление пользователем</b>\n\n"
             f"🆔 <code>{uid}</code>\n"
             f"👤 Имя: {escape_html(first_name)}\n"
@@ -1052,15 +1058,17 @@ async def _send_user_manage_card(target_message: types.Message, uid: int, page: 
             "📊 Трафик:\n"
             f"{traffic_text}"
             f"{retry_hint}"
-        ),
-        parse_mode="HTML",
-        reply_markup=_user_manage_kb(
-            uid,
-            page,
-            show_retry_activation=show_retry_activation,
-            device_nums=admin_device_nums,
-        ),
+        )
+    markup = _user_manage_kb(
+        uid,
+        page,
+        show_retry_activation=show_retry_activation,
+        device_nums=admin_device_nums,
     )
+    try:
+        await target_message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+    except TelegramBadRequest:
+        await target_message.answer(text, parse_mode="HTML", reply_markup=markup)
 
 
 def build_admin_manual_commands_text() -> str:
@@ -1957,10 +1965,10 @@ async def admin_referrals_summary(cb: types.CallbackQuery):
         return
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await cb.message.answer(
+    await _send_or_edit_admin_message(
+        cb,
         await build_ref_stats_text(),
-        parse_mode="HTML",
-        reply_markup=get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN, CB_ADMIN_REFRESH_REFERRALS),
+        get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN, CB_ADMIN_REFRESH_REFERRALS),
     )
     await cb.answer("Готово")
 
@@ -1973,10 +1981,10 @@ async def admin_service_settings_screen(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     referral_enabled = int(await get_setting("REFERRAL_ENABLED", int) or 0)
     torrent_enabled = int(await get_setting("TORRENT_POLICY_TEXT_ENABLED", int) or 0)
-    await cb.message.answer(
+    await _send_or_edit_admin_message(
+        cb,
         await _render_service_settings_text(),
-        parse_mode="HTML",
-        reply_markup=get_admin_service_settings_kb(referral_enabled, torrent_enabled),
+        get_admin_service_settings_kb(referral_enabled, torrent_enabled),
     )
     await cb.answer("Готово")
 
@@ -2065,10 +2073,10 @@ async def admin_text_overrides_screen(cb: types.CallbackQuery):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     overrides_count = len(await list_text_overrides())
-    await cb.message.answer(
+    await _send_or_edit_admin_message(
+        cb,
         f"📝 <b>Переопределения текстов</b>\nАктивных переопределений: <b>{overrides_count}</b>",
-        parse_mode="HTML",
-        reply_markup=get_admin_text_overrides_kb(),
+        get_admin_text_overrides_kb(),
     )
     await cb.answer()
 
@@ -2131,7 +2139,7 @@ async def admin_maintenance_screen(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
     status_line = "🟠 Техработы: ВКЛ" if enabled else "🟢 Техработы: ВЫКЛ"
-    await cb.message.answer(status_line, reply_markup=get_admin_maintenance_kb(enabled))
+    await _send_or_edit_admin_message(cb, status_line, get_admin_maintenance_kb(enabled))
     await cb.answer("Готово")
 
 
@@ -2141,7 +2149,7 @@ async def admin_maintenance_on_cb(cb: types.CallbackQuery):
         return
     await set_app_setting("MAINTENANCE_MODE", "1", updated_by=cb.from_user.id)
     await write_audit_log(cb.from_user.id, "maintenance_enabled", "purchase_flow=frozen")
-    await cb.message.answer("🟠 Техработы включены.", reply_markup=get_admin_maintenance_kb(True))
+    await _send_or_edit_admin_message(cb, "🟠 Техработы включены.", get_admin_maintenance_kb(True))
     await cb.answer("Включено")
 
 
@@ -2151,7 +2159,7 @@ async def admin_maintenance_off_cb(cb: types.CallbackQuery):
         return
     await set_app_setting("MAINTENANCE_MODE", "0", updated_by=cb.from_user.id)
     await write_audit_log(cb.from_user.id, "maintenance_disabled", "purchase_flow=active")
-    await cb.message.answer("🟢 Техработы выключены.", reply_markup=get_admin_maintenance_kb(False))
+    await _send_or_edit_admin_message(cb, "🟢 Техработы выключены.", get_admin_maintenance_kb(False))
     await cb.answer("Выключено")
 
 
@@ -2163,7 +2171,7 @@ async def admin_promocodes_screen(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
-    await cb.message.answer("🎟 <b>Промокоды</b>", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
+    await _send_or_edit_admin_message(cb, "🎟 <b>Промокоды</b>", get_admin_promocodes_kb())
     await cb.answer()
 
 
@@ -2173,7 +2181,7 @@ async def admin_promocodes_list(cb: types.CallbackQuery):
         return
     rows = await list_promo_codes(limit=20)
     if not rows:
-        await cb.message.answer("Промокодов пока нет.", reply_markup=get_admin_promocodes_kb())
+        await _send_or_edit_admin_message(cb, "Промокодов пока нет.", get_admin_promocodes_kb())
         await cb.answer()
         return
     lines = [f"🎟 <b>Промокоды ({len(rows)})</b>\n"]
@@ -2181,7 +2189,7 @@ async def admin_promocodes_list(cb: types.CallbackQuery):
         max_text = str(max_activations) if max_activations is not None else "∞"
         status = "on" if int(is_active) == 1 else "off"
         lines.append(f"• <code>{code}</code> | +{int(days)}д | {int(used_count)}/{max_text} | {status}")
-    await cb.message.answer("\n".join(lines), parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
+    await _send_or_edit_admin_message(cb, "\n".join(lines), get_admin_promocodes_kb())
     await cb.answer("Готово")
 
 

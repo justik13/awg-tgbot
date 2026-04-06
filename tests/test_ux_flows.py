@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / 'bot'))
 import handlers_user
 import handlers_admin
 import payments
+from keyboards import get_config_post_conf_kb, get_support_center_kb, get_configs_devices_kb
 from ui_constants import CB_CANCEL_ADD_DAYS, CB_CONFIRM_ADD_DAYS, is_admin_callback_data
 
 
@@ -40,9 +41,29 @@ def test_conf_delivery_has_explicit_back_navigation(monkeypatch):
 
     asyncio.run(handlers_user.send_selected_device_conf(cb))
 
-    cb.message.answer.assert_awaited_once()
-    kwargs = cb.message.answer.await_args.kwargs
-    assert kwargs['reply_markup'] is not None
+    cb.message.answer_document.assert_awaited_once()
+    cb.message.edit_text.assert_awaited_once()
+    assert cb.message.edit_text.await_args.args[0] == "sent"
+
+
+def test_post_conf_keyboard_does_not_repeat_issue_wording():
+    kb = get_config_post_conf_kb(1)
+    texts = [button.text for row in kb.inline_keyboard for button in row]
+    assert not any("Выдать .conf файл" in text for text in texts)
+    assert any("ещё раз" in text for text in texts)
+
+
+def test_support_center_has_no_self_loop_back_label():
+    kb = get_support_center_kb()
+    texts = [button.text for row in kb.inline_keyboard for button in row]
+    assert "⬅️ К разделу помощи" not in texts
+    assert "⬅️ В профиль" in texts
+
+
+def test_configs_screen_contains_profile_back():
+    kb = get_configs_devices_kb([(1, 1, "conf", "vpn://1")])
+    texts = [button.text for row in kb.inline_keyboard for button in row]
+    assert "⬅️ В профиль" in texts
 
 
 def test_support_back_returns_to_support_center(monkeypatch):

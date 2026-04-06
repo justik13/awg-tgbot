@@ -111,7 +111,8 @@ def test_top_level_flows_clear_stale_promo_pending(monkeypatch):
     monkeypatch.setattr(handlers_user, '_build_user_device_activity_lines', AsyncMock(return_value=['-']))
     monkeypatch.setattr(handlers_user, '_build_user_traffic_lines', AsyncMock(return_value=['-']))
     monkeypatch.setattr(handlers_user, 'get_support_short_text', AsyncMock(return_value='support'))
-    monkeypatch.setattr(handlers_user, 'get_profile_inline_kb', lambda *_: None)
+    monkeypatch.setattr(handlers_user, 'get_setting', AsyncMock(return_value=0))
+    monkeypatch.setattr(handlers_user, 'get_profile_inline_kb', lambda *_args, **_kwargs: None)
     asyncio.run(handlers_user.profile(message))
 
     assert handlers_user.clear_pending_admin_action.await_count >= 5
@@ -142,7 +143,8 @@ def test_navigation_callbacks_clear_stale_promo_pending(monkeypatch):
     monkeypatch.setattr(handlers_user, 'ensure_user_exists', AsyncMock())
     monkeypatch.setattr(handlers_user, '_send_configs_menu', AsyncMock())
     monkeypatch.setattr(handlers_user, '_send_support_center', AsyncMock())
-    monkeypatch.setattr(handlers_user, '_send_buy_menu', AsyncMock())
+    monkeypatch.setattr(handlers_user, 'is_purchase_maintenance_enabled', AsyncMock(return_value=False))
+    monkeypatch.setattr(handlers_user, 'get_setting', AsyncMock(return_value=3))
     monkeypatch.setattr(handlers_user, 'get_instruction_with_policy_text', AsyncMock(return_value='guide'))
     monkeypatch.setattr(handlers_user, 'get_support_short_text', AsyncMock(return_value='support'))
     monkeypatch.setattr(handlers_user, 'get_support_full_text', AsyncMock(return_value='support full'))
