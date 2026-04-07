@@ -132,25 +132,13 @@ async def process_one_broadcast_job(deps: RuntimeDeps) -> bool:
             await asyncio.sleep(deps.settings.broadcast_batch_delay_seconds)
 
         _, done_delivered, done_failed = await complete_broadcast_job(job_id, "finished")
-        await write_audit_log(
-            admin_id,
-            "broadcast",
-            f"job_id={job_id}; total={total}; delivered={done_delivered}; failed={done_failed}",
-        )
-        await deps.bot.send_message(
-            admin_id,
-            (
-                "📢 <b>Рассылка завершена</b>\n\n"
-                f"job_id=<code>{job_id}</code>\n"
-                f"✅ Доставлено: <b>{done_delivered}</b>\n"
-                f"❌ Ошибок: <b>{done_failed}</b>"
-            ),
-            parse_mode="HTML",
-        )
     except Exception as error:
         error_message = f"{type(error).__name__}: {error}"[:1000]
         logger.exception("Broadcast processing failed for job_id=%s: %s", job_id, error)
-        await complete_broadcast_job(job_id, "failed", error_message)
+        try:
+            await complete_broadcast_job(job_id, "failed", error_message)
+        except Exception as complete_error:
+            logger.exception("Failed to mark broadcast job_id=%s as failed: %s", job_id, complete_error)
         await write_audit_log(admin_id, "broadcast_failed", f"job_id={job_id}; error={error_message}")
         try:
             await deps.bot.send_message(
@@ -164,6 +152,29 @@ async def process_one_broadcast_job(deps: RuntimeDeps) -> bool:
             )
         except Exception as notify_error:
             logger.warning("Failed to notify admin about broadcast failure job_id=%s: %s", job_id, notify_error)
+        return True
+
+    try:
+        await write_audit_log(
+            admin_id,
+            "broadcast",
+            f"job_id={job_id}; total={total}; delivered={done_delivered}; failed={done_failed}",
+        )
+    except Exception as audit_error:
+        logger.warning("Broadcast finished but audit write failed job_id=%s: %s", job_id, audit_error)
+    try:
+        await deps.bot.send_message(
+            admin_id,
+            (
+                "📢 <b>Рассылка завершена</b>\n\n"
+                f"job_id=<code>{job_id}</code>\n"
+                f"✅ Доставлено: <b>{done_delivered}</b>\n"
+                f"❌ Ошибок: <b>{done_failed}</b>"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as notify_error:
+        logger.warning("Broadcast finished but admin notify failed job_id=%s: %s", job_id, notify_error)
     return True
 
 

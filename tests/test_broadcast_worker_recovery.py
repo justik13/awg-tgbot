@@ -123,3 +123,30 @@ def test_broadcast_happy_path_still_finishes(monkeypatch, tmp_path):
     assert row[1] == 2
     assert row[2] == 0
     assert bot.send_message.await_count == 3
+
+
+def test_broadcast_finished_state_survives_admin_notify_failure(monkeypatch, tmp_path):
+    _init_test_db(monkeypatch, tmp_path)
+    asyncio.run(database.execute("INSERT OR REPLACE INTO users (user_id, created_at) VALUES (?, ?)", (101, "2026-01-01T00:00:00")))
+    job_id = asyncio.run(database.create_broadcast_job(1, "hello"))
+
+    async def _send_message(uid, *_args, **_kwargs):
+        if uid == 1:
+            raise RuntimeError("admin notify failed")
+        return None
+
+    bot = SimpleNamespace(send_message=AsyncMock(side_effect=_send_message))
+
+    processed = asyncio.run(app.process_one_broadcast_job(_runtime_deps(bot)))
+
+    row = asyncio.run(
+        database.fetchone(
+            "SELECT status, delivered_count, failed_count, last_error FROM broadcast_jobs WHERE id = ?",
+            (job_id,),
+        )
+    )
+    assert processed is True
+    assert row[0] == "finished"
+    assert row[1] == 1
+    assert row[2] == 0
+    assert row[3] is None
