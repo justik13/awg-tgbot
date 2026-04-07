@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aiogram.exceptions import TelegramBadRequest
 
@@ -617,7 +617,7 @@ def test_admin_add_days_callbacks_are_in_admin_namespace():
 
 
 def test_admin_add_days_confirm_callback_still_works(monkeypatch):
-    cb = DummyCallback(data=CB_CONFIRM_ADD_DAYS)
+    cb = DummyCallback(data=f"{CB_CONFIRM_ADD_DAYS}:tok1")
     cb.from_user = SimpleNamespace(id=handlers_admin.ADMIN_ID)
     cb.bot = SimpleNamespace()
     monkeypatch.setattr(handlers_admin, "pop_pending_admin_action", AsyncMock(return_value={"uid": 77, "days": 30, "page": 0}))
@@ -633,11 +633,70 @@ def test_admin_add_days_confirm_callback_still_works(monkeypatch):
 
 
 def test_admin_add_days_cancel_callback_still_works(monkeypatch):
-    cb = DummyCallback(data=CB_CANCEL_ADD_DAYS)
+    cb = DummyCallback(data=f"{CB_CANCEL_ADD_DAYS}:tok1")
     cb.from_user = SimpleNamespace(id=handlers_admin.ADMIN_ID)
     monkeypatch.setattr(handlers_admin, "clear_pending_admin_action", AsyncMock())
 
     asyncio.run(handlers_admin.admin_add_days_cancel(cb))
 
-    handlers_admin.clear_pending_admin_action.assert_awaited_once()
+    handlers_admin.clear_pending_admin_action.assert_awaited_once_with(
+        handlers_admin.ADMIN_ID,
+        f"{handlers_admin.ADD_DAYS_CONFIRM_ACTION_KEY}:tok1",
+    )
     cb.message.answer.assert_awaited_once()
+
+
+def test_revoke_two_confirms_do_not_share_single_pending_payload(monkeypatch):
+    cb1 = DummyCallback(data=f"{handlers_admin.CB_ADMIN_REVOKE_PREFIX}100_0")
+    cb2 = DummyCallback(data=f"{handlers_admin.CB_ADMIN_REVOKE_PREFIX}200_0")
+    cb1.from_user = SimpleNamespace(id=handlers_admin.ADMIN_ID)
+    cb2.from_user = SimpleNamespace(id=handlers_admin.ADMIN_ID)
+    monkeypatch.setattr(handlers_admin, "_generate_admin_action_token", lambda: "tok1")
+    set_pending = AsyncMock()
+    monkeypatch.setattr(handlers_admin, "set_pending_admin_action", set_pending)
+
+    asyncio.run(handlers_admin.admin_revoke_btn(cb1))
+    monkeypatch.setattr(handlers_admin, "_generate_admin_action_token", lambda: "tok2")
+    asyncio.run(handlers_admin.admin_revoke_btn(cb2))
+
+    assert set_pending.await_count == 2
+    assert set_pending.await_args_list[0].args[1] == "revoke:tok1"
+    assert set_pending.await_args_list[1].args[1] == "revoke:tok2"
+
+
+def test_old_confirm_message_without_token_does_not_apply_new_payload(monkeypatch):
+    cb = DummyCallback(data=handlers_admin.CB_CONFIRM_REVOKE)
+    cb.from_user = SimpleNamespace(id=handlers_admin.ADMIN_ID)
+    monkeypatch.setattr(handlers_admin, "revoke_user_access", AsyncMock())
+
+    asyncio.run(handlers_admin.confirm_revoke(cb))
+
+    handlers_admin.revoke_user_access.assert_not_called()
+    cb.answer.assert_awaited()
+
+
+def test_cancel_revoke_clears_only_its_token(monkeypatch):
+    cb = DummyCallback(data=f"{handlers_admin.CB_CANCEL_REVOKE}:tok2")
+    cb.from_user = SimpleNamespace(id=handlers_admin.ADMIN_ID)
+    clear_pending = AsyncMock()
+    monkeypatch.setattr(handlers_admin, "clear_pending_admin_action", clear_pending)
+
+    asyncio.run(handlers_admin.cancel_revoke(cb))
+
+    clear_pending.assert_awaited_once_with(handlers_admin.ADMIN_ID, "revoke:tok2")
+
+
+def test_expired_token_does_not_run_destructive_delete(monkeypatch):
+    cb = DummyCallback(data=f"{handlers_admin.CB_CONFIRM_DELETE_USER}:tok3")
+    cb.from_user = SimpleNamespace(id=handlers_admin.ADMIN_ID)
+    old_issued_at = (handlers_admin.utc_now_naive() - timedelta(hours=2)).isoformat()
+    monkeypatch.setattr(
+        handlers_admin,
+        "pop_pending_admin_action",
+        AsyncMock(return_value={"action": "delete_user", "target": 77, "issued_at": old_issued_at}),
+    )
+    monkeypatch.setattr(handlers_admin, "delete_user_everywhere", AsyncMock())
+
+    asyncio.run(handlers_admin.confirm_delete_user(cb))
+
+    handlers_admin.delete_user_everywhere.assert_not_called()
