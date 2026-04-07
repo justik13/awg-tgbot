@@ -26,6 +26,7 @@ from config import (
     API_TOKEN,
     BROADCAST_BATCH_DELAY_SECONDS,
     BROADCAST_BATCH_SIZE,
+    BROADCAST_RUNNING_STALE_SECONDS,
     CLEANUP_INTERVAL_SECONDS,
     DB_PATH,
     DOCKER_CONTAINER,
@@ -43,6 +44,7 @@ from database import (
     complete_broadcast_job,
     db_health_info,
     ensure_db_ready,
+    fail_stale_running_broadcast_jobs,
     get_broadcast_recipients,
     get_shared_db,
     get_subscriptions_expiring_within,
@@ -69,6 +71,7 @@ class RuntimeSettings:
     reconciliation_interval_seconds: int
     broadcast_batch_delay_seconds: float
     broadcast_batch_size: int
+    broadcast_running_stale_seconds: int
 
 
 @dataclass(frozen=True)
@@ -107,42 +110,71 @@ async def process_one_broadcast_job(deps: RuntimeDeps) -> bool:
         return False
 
     job_id, admin_id, text, total = claimed
-    cursor = 0
-    while True:
-        recipients = await get_broadcast_recipients(job_id, cursor, deps.settings.broadcast_batch_size)
-        if not recipients:
-            break
+    try:
+        cursor = 0
+        while True:
+            recipients = await get_broadcast_recipients(job_id, cursor, deps.settings.broadcast_batch_size)
+            if not recipients:
+                break
 
-        batch_delivered = 0
-        batch_failed = 0
-        for uid in recipients:
-            try:
-                await deps.bot.send_message(uid, text, disable_web_page_preview=True)
-                batch_delivered += 1
-            except Exception as send_error:
-                batch_failed += 1
-                logger.warning("Broadcast job=%s user_id=%s error=%s", job_id, uid, send_error)
+            batch_delivered = 0
+            batch_failed = 0
+            for uid in recipients:
+                try:
+                    await deps.bot.send_message(uid, text, disable_web_page_preview=True)
+                    batch_delivered += 1
+                except Exception as send_error:
+                    batch_failed += 1
+                    logger.warning("Broadcast job=%s user_id=%s error=%s", job_id, uid, send_error)
 
-        cursor += len(recipients)
-        await update_broadcast_job_progress(job_id, batch_delivered, batch_failed, cursor)
-        await asyncio.sleep(deps.settings.broadcast_batch_delay_seconds)
+            cursor += len(recipients)
+            await update_broadcast_job_progress(job_id, batch_delivered, batch_failed, cursor)
+            await asyncio.sleep(deps.settings.broadcast_batch_delay_seconds)
 
-    _, done_delivered, done_failed = await complete_broadcast_job(job_id, "finished")
-    await write_audit_log(
-        admin_id,
-        "broadcast",
-        f"job_id={job_id}; total={total}; delivered={done_delivered}; failed={done_failed}",
-    )
-    await deps.bot.send_message(
-        admin_id,
-        (
-            "📢 <b>Рассылка завершена</b>\n\n"
-            f"job_id=<code>{job_id}</code>\n"
-            f"✅ Доставлено: <b>{done_delivered}</b>\n"
-            f"❌ Ошибок: <b>{done_failed}</b>"
-        ),
-        parse_mode="HTML",
-    )
+        _, done_delivered, done_failed = await complete_broadcast_job(job_id, "finished")
+    except Exception as error:
+        error_message = f"{type(error).__name__}: {error}"[:1000]
+        logger.exception("Broadcast processing failed for job_id=%s: %s", job_id, error)
+        try:
+            await complete_broadcast_job(job_id, "failed", error_message)
+        except Exception as complete_error:
+            logger.exception("Failed to mark broadcast job_id=%s as failed: %s", job_id, complete_error)
+        await write_audit_log(admin_id, "broadcast_failed", f"job_id={job_id}; error={error_message}")
+        try:
+            await deps.bot.send_message(
+                admin_id,
+                (
+                    "⚠️ <b>Рассылка завершилась с ошибкой</b>\n\n"
+                    f"job_id=<code>{job_id}</code>\n"
+                    f"Ошибка: <code>{error_message}</code>"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as notify_error:
+            logger.warning("Failed to notify admin about broadcast failure job_id=%s: %s", job_id, notify_error)
+        return True
+
+    try:
+        await write_audit_log(
+            admin_id,
+            "broadcast",
+            f"job_id={job_id}; total={total}; delivered={done_delivered}; failed={done_failed}",
+        )
+    except Exception as audit_error:
+        logger.warning("Broadcast finished but audit write failed job_id=%s: %s", job_id, audit_error)
+    try:
+        await deps.bot.send_message(
+            admin_id,
+            (
+                "📢 <b>Рассылка завершена</b>\n\n"
+                f"job_id=<code>{job_id}</code>\n"
+                f"✅ Доставлено: <b>{done_delivered}</b>\n"
+                f"❌ Ошибок: <b>{done_failed}</b>"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as notify_error:
+        logger.warning("Broadcast finished but admin notify failed job_id=%s: %s", job_id, notify_error)
     return True
 
 
@@ -193,6 +225,9 @@ async def _broadcast_worker(deps: RuntimeDeps) -> None:
     try:
         while True:
             try:
+                recovered = await fail_stale_running_broadcast_jobs(deps.settings.broadcast_running_stale_seconds)
+                if recovered:
+                    logger.warning("Broadcast recovery: marked stale running jobs as failed: %s", recovered)
                 processed = await process_one_broadcast_job(deps)
                 if not processed:
                     await asyncio.sleep(1)
@@ -332,6 +367,7 @@ async def main() -> None:
             reconciliation_interval_seconds=RECONCILIATION_INTERVAL_SECONDS,
             broadcast_batch_delay_seconds=BROADCAST_BATCH_DELAY_SECONDS,
             broadcast_batch_size=BROADCAST_BATCH_SIZE,
+            broadcast_running_stale_seconds=BROADCAST_RUNNING_STALE_SECONDS,
         ),
     )
     worker_pool = WorkerPool()
