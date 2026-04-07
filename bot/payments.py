@@ -1,5 +1,4 @@
 import json
-import io
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -62,12 +61,7 @@ purchase_rate_limit: dict[int, object] = {}
 pending_invoices: dict[int, dict[str, int | str]] = {}
 _checkout_readiness_cache = {"ok": True, "reason": "", "expires_at": None}
 CHECKOUT_READINESS_TTL_SECONDS = 12
-CRITICAL_ERRORS_LOG = Path("critical_errors.log")
-
-try:
-    import qrcode
-except Exception:  # pragma: no cover - optional dependency
-    qrcode = None
+CRITICAL_ERRORS_LOG = Path(config.DB_PATH).resolve().parent / "critical_errors.log"
 
 
 def get_tariffs() -> dict[str, dict[str, int | str]]:
@@ -343,9 +337,17 @@ async def pre_checkout(q: PreCheckoutQuery, bot: Bot):
 
 async def _log_critical_delivery_error(payment_id: str, user_id: int, error: str) -> None:
     line = f"{utc_now_naive().isoformat()} payment_id={payment_id} user_id={user_id} error={error}\n"
-    CRITICAL_ERRORS_LOG.parent.mkdir(parents=True, exist_ok=True)
-    with CRITICAL_ERRORS_LOG.open("a", encoding="utf-8") as fp:
-        fp.write(line)
+    try:
+        CRITICAL_ERRORS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with CRITICAL_ERRORS_LOG.open("a", encoding="utf-8") as fp:
+            fp.write(line)
+    except Exception as log_error:
+        logger.warning(
+            "critical delivery error log write failed payment_id=%s user_id=%s: %s",
+            payment_id,
+            user_id,
+            log_error,
+        )
 
 
 async def _send_user_active_config(message: types.Message, user_id: int) -> bool:
@@ -357,15 +359,6 @@ async def _send_user_active_config(message: types.Message, user_id: int) -> bool
     await message.answer_document(types.BufferedInputFile(cfg.encode("utf-8"), filename=filename))
     if vpn_key:
         await message.answer(f"<code>{vpn_key}</code>", parse_mode="HTML")
-        if qrcode is not None:
-            qr = qrcode.QRCode(border=1, box_size=8)
-            qr.add_data(vpn_key)
-            qr.make(fit=True)
-            image = qr.make_image(fill_color="black", back_color="white")
-            buffer = io.BytesIO()
-            image.save(buffer, format="PNG")
-            buffer.seek(0)
-            await message.answer_photo(types.BufferedInputFile(buffer.read(), filename=f"{filename}.png"), caption="QR для быстрого импорта")
     return True
 
 

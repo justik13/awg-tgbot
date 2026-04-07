@@ -230,6 +230,48 @@ def test_payment_success_uses_single_progress_message(monkeypatch):
     progress_message.edit_text.assert_awaited_once()
 
 
+def test_send_user_active_config_sends_conf_and_vpn_key_without_qr(monkeypatch):
+    message = SimpleNamespace(
+        answer_document=AsyncMock(),
+        answer=AsyncMock(),
+        answer_photo=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        payments,
+        "get_user_keys",
+        AsyncMock(return_value=[(11, 2, "[Interface]\nPrivateKey=test", "vpn://example")]),
+    )
+
+    sent = asyncio.run(payments._send_user_active_config(message, 42))
+
+    assert sent is True
+    message.answer_document.assert_awaited_once()
+    message.answer.assert_awaited_once_with("<code>vpn://example</code>", parse_mode="HTML")
+    message.answer_photo.assert_not_called()
+
+
+def test_send_user_active_config_returns_false_when_no_configs(monkeypatch):
+    message = SimpleNamespace(
+        answer_document=AsyncMock(),
+        answer=AsyncMock(),
+        answer_photo=AsyncMock(),
+    )
+    monkeypatch.setattr(payments, "get_user_keys", AsyncMock(return_value=[]))
+
+    sent = asyncio.run(payments._send_user_active_config(message, 42))
+
+    assert sent is False
+    message.answer_document.assert_not_called()
+    message.answer.assert_not_called()
+    message.answer_photo.assert_not_called()
+
+
+def test_log_critical_delivery_error_is_fail_safe(monkeypatch):
+    monkeypatch.setattr(payments, "CRITICAL_ERRORS_LOG", Path("/proc/1/critical_errors.log"))
+
+    asyncio.run(payments._log_critical_delivery_error("pay-1", 42, "boom"))
+
+
 def test_buy_tariff_opens_confirm_screen_without_invoice(monkeypatch):
     cb = DummyCallback(data=payments.CB_BUY_30)
     monkeypatch.setattr(payments, "is_purchase_maintenance_enabled", AsyncMock(return_value=False))
