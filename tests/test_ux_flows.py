@@ -218,7 +218,8 @@ def test_payment_success_uses_single_progress_message(monkeypatch):
     monkeypatch.setattr(payments, 'save_payment', AsyncMock())
     monkeypatch.setattr(payments, 'update_last_provision_status', AsyncMock())
     monkeypatch.setattr(payments, 'process_payment_provisioning', AsyncMock(return_value=True))
-    monkeypatch.setattr(payments, 'mark_ready_notification_sent', AsyncMock())
+    mark_ready = AsyncMock(return_value=True)
+    monkeypatch.setattr(payments, 'mark_ready_notification_sent', mark_ready)
     monkeypatch.setattr(payments, '_send_user_active_config', AsyncMock(return_value=True))
     monkeypatch.setattr(payments, 'get_text', AsyncMock(return_value='progress'))
     monkeypatch.setattr(payments, 'get_payment_result_text', AsyncMock(return_value='ready'))
@@ -226,6 +227,143 @@ def test_payment_success_uses_single_progress_message(monkeypatch):
 
     asyncio.run(payments.success_pay(message))
 
+    message.answer.assert_awaited_once_with('progress')
+    progress_message.edit_text.assert_awaited_once()
+    mark_ready.assert_awaited_once_with('tg-1')
+
+
+def test_success_payment_config_missing_sets_pending_without_ready_notice(monkeypatch):
+    payment_data = SimpleNamespace(
+        invoice_payload='sub_30',
+        currency='XTR',
+        total_amount=30,
+        telegram_payment_charge_id='tg-2',
+        provider_payment_charge_id='pr-2',
+    )
+    progress_message = SimpleNamespace(edit_text=AsyncMock())
+    message = SimpleNamespace(
+        successful_payment=payment_data,
+        from_user=SimpleNamespace(id=42, username='u', first_name='U'),
+        bot=SimpleNamespace(),
+        answer=AsyncMock(return_value=progress_message),
+    )
+
+    monkeypatch.setattr(payments.config, 'STARS_PRICE_30_DAYS', 30)
+    monkeypatch.setattr(payments, 'get_payment_status', AsyncMock(return_value=None))
+    monkeypatch.setattr(payments, 'payment_already_processed', AsyncMock(return_value=False))
+    monkeypatch.setattr(payments, 'ensure_user_exists', AsyncMock())
+    monkeypatch.setattr(payments, 'save_payment', AsyncMock())
+    update_status = AsyncMock()
+    monkeypatch.setattr(payments, 'update_last_provision_status', update_status)
+    monkeypatch.setattr(payments, 'process_payment_provisioning', AsyncMock(return_value=True))
+    mark_ready = AsyncMock(return_value=True)
+    monkeypatch.setattr(payments, 'mark_ready_notification_sent', mark_ready)
+    monkeypatch.setattr(payments, '_send_user_active_config', AsyncMock(return_value=False))
+    monkeypatch.setattr(payments, 'write_audit_log', AsyncMock())
+    monkeypatch.setattr(payments, 'get_text', AsyncMock(return_value='progress'))
+    monkeypatch.setattr(payments, 'get_payment_result_text', AsyncMock(return_value='pending'))
+    monkeypatch.setattr(payments, 'get_post_payment_kb', lambda: None)
+
+    asyncio.run(payments.success_pay(message))
+
+    mark_ready.assert_not_awaited()
+    update_status.assert_any_await('tg-2', 'ready_config_pending')
+
+
+def test_success_payment_delivery_exception_sets_pending_without_ready_notice(monkeypatch):
+    payment_data = SimpleNamespace(
+        invoice_payload='sub_30',
+        currency='XTR',
+        total_amount=30,
+        telegram_payment_charge_id='tg-3',
+        provider_payment_charge_id='pr-3',
+    )
+    progress_message = SimpleNamespace(edit_text=AsyncMock())
+    message = SimpleNamespace(
+        successful_payment=payment_data,
+        from_user=SimpleNamespace(id=42, username='u', first_name='U'),
+        bot=SimpleNamespace(),
+        answer=AsyncMock(return_value=progress_message),
+    )
+
+    monkeypatch.setattr(payments.config, 'STARS_PRICE_30_DAYS', 30)
+    monkeypatch.setattr(payments, 'get_payment_status', AsyncMock(return_value=None))
+    monkeypatch.setattr(payments, 'payment_already_processed', AsyncMock(return_value=False))
+    monkeypatch.setattr(payments, 'ensure_user_exists', AsyncMock())
+    monkeypatch.setattr(payments, 'save_payment', AsyncMock())
+    update_status = AsyncMock()
+    monkeypatch.setattr(payments, 'update_last_provision_status', update_status)
+    monkeypatch.setattr(payments, 'process_payment_provisioning', AsyncMock(return_value=True))
+    mark_ready = AsyncMock(return_value=True)
+    monkeypatch.setattr(payments, 'mark_ready_notification_sent', mark_ready)
+    monkeypatch.setattr(payments, '_send_user_active_config', AsyncMock(side_effect=RuntimeError('delivery down')))
+    monkeypatch.setattr(payments, 'write_audit_log', AsyncMock())
+    monkeypatch.setattr(payments, '_log_critical_delivery_error', AsyncMock())
+    monkeypatch.setattr(payments, 'get_text', AsyncMock(return_value='progress'))
+    monkeypatch.setattr(payments, 'get_payment_result_text', AsyncMock(return_value='pending'))
+    monkeypatch.setattr(payments, 'get_post_payment_kb', lambda: None)
+
+    asyncio.run(payments.success_pay(message))
+
+    mark_ready.assert_not_awaited()
+    update_status.assert_any_await('tg-3', 'ready_config_pending')
+
+
+def test_recovery_worker_delivery_pending_does_not_send_ready(monkeypatch):
+    bot = SimpleNamespace(send_message=AsyncMock())
+    monkeypatch.setattr(payments, 'get_repairable_payments', AsyncMock(return_value=[('tg-4', 77, 'sub_30')]))
+    monkeypatch.setattr(payments, 'get_provisioning_attempt_count', AsyncMock(return_value=0))
+    monkeypatch.setattr(payments, 'process_payment_provisioning', AsyncMock(return_value=True))
+    monkeypatch.setattr(payments.config, 'STARS_PRICE_30_DAYS', 30)
+    monkeypatch.setattr(payments, 'get_user_keys', AsyncMock(return_value=[]))
+    monkeypatch.setattr(payments, 'update_last_provision_status', AsyncMock())
+    monkeypatch.setattr(payments, 'mark_ready_notification_sent', AsyncMock(return_value=True))
+    write_audit = AsyncMock()
+    monkeypatch.setattr(payments, 'write_audit_log', write_audit)
+
+    repaired = asyncio.run(payments.payment_recovery_worker(bot))
+
+    assert repaired == 1
+    bot.send_message.assert_not_awaited()
+    payments.mark_ready_notification_sent.assert_not_awaited()
+    payments.update_last_provision_status.assert_any_await('tg-4', 'ready_config_pending')
+    write_audit.assert_any_await(77, 'payment_recovery_delivery_pending', 'payment_id=tg-4')
+
+
+def test_success_payment_bookkeeping_failure_after_delivery_is_not_fatal(monkeypatch):
+    payment_data = SimpleNamespace(
+        invoice_payload='sub_30',
+        currency='XTR',
+        total_amount=30,
+        telegram_payment_charge_id='tg-5',
+        provider_payment_charge_id='pr-5',
+    )
+    progress_message = SimpleNamespace(edit_text=AsyncMock())
+    message = SimpleNamespace(
+        successful_payment=payment_data,
+        from_user=SimpleNamespace(id=42, username='u', first_name='U'),
+        bot=SimpleNamespace(),
+        answer=AsyncMock(return_value=progress_message),
+    )
+
+    monkeypatch.setattr(payments.config, 'STARS_PRICE_30_DAYS', 30)
+    monkeypatch.setattr(payments, 'get_payment_status', AsyncMock(return_value=None))
+    monkeypatch.setattr(payments, 'payment_already_processed', AsyncMock(return_value=False))
+    monkeypatch.setattr(payments, 'ensure_user_exists', AsyncMock())
+    monkeypatch.setattr(payments, 'save_payment', AsyncMock())
+    monkeypatch.setattr(payments, 'process_payment_provisioning', AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, '_send_user_active_config', AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, 'update_last_provision_status', AsyncMock(side_effect=[None, None, RuntimeError('db down')]))
+    monkeypatch.setattr(payments, 'mark_ready_notification_sent', AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, 'write_audit_log', AsyncMock())
+    monkeypatch.setattr(payments, 'update_payment_status', AsyncMock())
+    monkeypatch.setattr(payments, 'get_text', AsyncMock(side_effect=['progress', 'payment_error']))
+    monkeypatch.setattr(payments, 'get_payment_result_text', AsyncMock(return_value='ready'))
+    monkeypatch.setattr(payments, 'get_post_payment_kb', lambda: None)
+
+    asyncio.run(payments.success_pay(message))
+
+    payments.update_payment_status.assert_not_awaited()
     message.answer.assert_awaited_once_with('progress')
     progress_message.edit_text.assert_awaited_once()
 

@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import timedelta
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
@@ -362,6 +363,63 @@ async def _send_user_active_config(message: types.Message, user_id: int) -> bool
     return True
 
 
+async def _finalize_post_payment_delivery(
+    *,
+    payment_id: str,
+    user_id: int,
+    deliver_ready: Callable[[], Awaitable[bool]],
+) -> str:
+    try:
+        delivered = await deliver_ready()
+    except Exception as delivery_error:
+        await update_last_provision_status(payment_id, "ready_config_pending")
+        await _log_critical_delivery_error(payment_id, user_id, str(delivery_error)[:500])
+        logger.error(
+            "Post-payment delivery failed after applied provisioning payment_id=%s user_id=%s",
+            payment_id,
+            user_id,
+            exc_info=delivery_error,
+        )
+        await write_audit_log(user_id, "payment_delivery_failed_after_apply", f"payment_id={payment_id}; error={str(delivery_error)[:300]}")
+        return "ready_config_pending"
+
+    if not delivered:
+        await update_last_provision_status(payment_id, "ready_config_pending")
+        logger.warning("Post-payment config missing after applied provisioning payment_id=%s user_id=%s", payment_id, user_id)
+        await write_audit_log(user_id, "payment_config_pending_after_apply", f"payment_id={payment_id}; reason=config_missing")
+        return "ready_config_pending"
+
+    try:
+        await update_last_provision_status(payment_id, "ready")
+    except Exception as bookkeeping_error:
+        logger.error(
+            "Post-payment bookkeeping failed (status=ready) payment_id=%s user_id=%s",
+            payment_id,
+            user_id,
+            exc_info=bookkeeping_error,
+        )
+        await write_audit_log(
+            user_id,
+            "payment_post_apply_bookkeeping_failed",
+            f"payment_id={payment_id}; step=update_last_provision_status; error={str(bookkeeping_error)[:300]}",
+        )
+    try:
+        await mark_ready_notification_sent(payment_id)
+    except Exception as bookkeeping_error:
+        logger.error(
+            "Post-payment bookkeeping failed (mark_ready_notification_sent) payment_id=%s user_id=%s",
+            payment_id,
+            user_id,
+            exc_info=bookkeeping_error,
+        )
+        await write_audit_log(
+            user_id,
+            "payment_post_apply_bookkeeping_failed",
+            f"payment_id={payment_id}; step=mark_ready_notification_sent; error={str(bookkeeping_error)[:300]}",
+        )
+    return "ready"
+
+
 @router.message(F.successful_payment)
 async def success_pay(message: types.Message):
     clear_pending_invoice_state(message.from_user.id)
@@ -416,24 +474,11 @@ async def success_pay(message: types.Message):
             bot=message.bot,
         )
         if applied:
-            result_status = "ready"
-            await update_last_provision_status(payment.telegram_payment_charge_id, "ready")
-            await mark_ready_notification_sent(payment.telegram_payment_charge_id)
-            try:
-                sent = await _send_user_active_config(message, message.from_user.id)
-                if not sent:
-                    result_status = "ready_config_pending"
-                    await update_last_provision_status(payment.telegram_payment_charge_id, "ready_config_pending")
-                    await write_audit_log(
-                        message.from_user.id,
-                        "payment_config_pending_after_apply",
-                        f"payment_id={payment.telegram_payment_charge_id}",
-                    )
-                    raise RuntimeError("active config not found after applied payment")
-            except Exception as delivery_error:
-                result_status = "ready_config_pending"
-                await _log_critical_delivery_error(payment.telegram_payment_charge_id, message.from_user.id, str(delivery_error)[:500])
-                logger.exception("Критическая ошибка отправки конфига после оплаты: %s", delivery_error)
+            result_status = await _finalize_post_payment_delivery(
+                payment_id=payment.telegram_payment_charge_id,
+                user_id=message.from_user.id,
+                deliver_ready=lambda: _send_user_active_config(message, message.from_user.id),
+            )
             final_text = await get_payment_result_text(result_status)
             try:
                 await progress_message.edit_text(
@@ -560,12 +605,30 @@ async def payment_recovery_worker(bot: Bot | None = None) -> int:
             done = await process_payment_provisioning(payment_id, user_id, payload, tariff["days"], bot=bot)
             repaired += int(done)
             if done:
-                await update_last_provision_status(payment_id, "ready")
-                if bot is not None and await mark_ready_notification_sent(payment_id):
+                async def _deliver_recovery_ready() -> bool:
+                    configs = await get_user_keys(user_id)
+                    if not configs:
+                        return False
+                    if bot is None:
+                        return False
                     await bot.send_message(
                         user_id,
                         await get_text("payment_recovery_ready"),
                     )
+                    return True
+
+                result_status = await _finalize_post_payment_delivery(
+                    payment_id=payment_id,
+                    user_id=user_id,
+                    deliver_ready=_deliver_recovery_ready,
+                )
+                if result_status == "ready_config_pending":
+                    logger.warning(
+                        "Recovery succeeded but delivery pending payment_id=%s user_id=%s",
+                        payment_id,
+                        user_id,
+                    )
+                    await write_audit_log(user_id, "payment_recovery_delivery_pending", f"payment_id={payment_id}")
         except Exception as e:
             logger.warning("Recovery failed for payment=%s: %s", payment_id, e)
             attempts = await get_provisioning_attempt_count(payment_id)
