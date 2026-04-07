@@ -669,7 +669,25 @@ async def manual_retry_activation(payment_id: str, bot: Bot | None = None) -> di
     try:
         done = await process_payment_provisioning(payment_id, user_id, payload, tariff["days"], bot=bot)
         if done:
-            await update_last_provision_status(payment_id, "ready")
+            async def _deliver_manual_retry_ready() -> bool:
+                configs = await get_user_keys(user_id)
+                if not configs:
+                    return False
+                if bot is None:
+                    return False
+                await bot.send_message(
+                    user_id,
+                    await get_text("payment_recovery_ready"),
+                )
+                return True
+
+            result_status = await _finalize_post_payment_delivery(
+                payment_id=payment_id,
+                user_id=user_id,
+                deliver_ready=_deliver_manual_retry_ready,
+            )
+            if result_status == "ready_config_pending":
+                return {"result": "succeeded", "message": "Retry выполнен: доступ применён, выдача конфигурации в ожидании."}
             return {"result": "succeeded", "message": "Retry выполнен успешно, доступ выдан."}
         current_status = await get_payment_status(payment_id)
         if current_status == "applied":
