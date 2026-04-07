@@ -368,6 +368,82 @@ def test_success_payment_bookkeeping_failure_after_delivery_is_not_fatal(monkeyp
     progress_message.edit_text.assert_awaited_once()
 
 
+def test_manual_retry_delivery_success_sets_ready(monkeypatch):
+    monkeypatch.setattr(payments, "fetchone", AsyncMock(return_value=(77, "sub_30", "needs_repair")))
+    monkeypatch.setattr(payments.config, "STARS_PRICE_30_DAYS", 30)
+    monkeypatch.setattr(payments, "process_payment_provisioning", AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, "get_user_keys", AsyncMock(return_value=[(1, 1, "conf", "vpn://1")]))
+    bot = SimpleNamespace(send_message=AsyncMock())
+    monkeypatch.setattr(payments, "update_last_provision_status", AsyncMock())
+    monkeypatch.setattr(payments, "mark_ready_notification_sent", AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, "write_audit_log", AsyncMock())
+    monkeypatch.setattr(payments, "get_text", AsyncMock(return_value="ok"))
+
+    result = asyncio.run(payments.manual_retry_activation("tg-manual-1", bot=bot))
+
+    assert result["result"] == "succeeded"
+    assert "успешно" in result["message"]
+    payments.update_last_provision_status.assert_awaited_with("tg-manual-1", "ready")
+    bot.send_message.assert_awaited_once_with(77, "ok")
+
+
+def test_manual_retry_config_missing_sets_ready_config_pending(monkeypatch):
+    monkeypatch.setattr(payments, "fetchone", AsyncMock(return_value=(77, "sub_30", "needs_repair")))
+    monkeypatch.setattr(payments.config, "STARS_PRICE_30_DAYS", 30)
+    monkeypatch.setattr(payments, "process_payment_provisioning", AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, "get_user_keys", AsyncMock(return_value=[]))
+    bot = SimpleNamespace(send_message=AsyncMock())
+    monkeypatch.setattr(payments, "update_last_provision_status", AsyncMock())
+    monkeypatch.setattr(payments, "mark_ready_notification_sent", AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, "write_audit_log", AsyncMock())
+
+    result = asyncio.run(payments.manual_retry_activation("tg-manual-2", bot=bot))
+
+    assert result["result"] == "succeeded"
+    assert "в ожидании" in result["message"]
+    payments.update_last_provision_status.assert_awaited_with("tg-manual-2", "ready_config_pending")
+    payments.mark_ready_notification_sent.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+
+
+def test_manual_retry_delivery_exception_sets_ready_config_pending(monkeypatch):
+    monkeypatch.setattr(payments, "fetchone", AsyncMock(return_value=(77, "sub_30", "needs_repair")))
+    monkeypatch.setattr(payments.config, "STARS_PRICE_30_DAYS", 30)
+    monkeypatch.setattr(payments, "process_payment_provisioning", AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, "get_user_keys", AsyncMock(return_value=[(1, 1, "conf", "vpn://1")]))
+    bot = SimpleNamespace(send_message=AsyncMock(side_effect=RuntimeError("send failed")))
+    monkeypatch.setattr(payments, "update_last_provision_status", AsyncMock())
+    monkeypatch.setattr(payments, "mark_ready_notification_sent", AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, "write_audit_log", AsyncMock())
+    monkeypatch.setattr(payments, "_log_critical_delivery_error", AsyncMock())
+    monkeypatch.setattr(payments, "get_text", AsyncMock(return_value="ok"))
+
+    result = asyncio.run(payments.manual_retry_activation("tg-manual-3", bot=bot))
+
+    assert result["result"] == "succeeded"
+    assert "в ожидании" in result["message"]
+    payments.update_last_provision_status.assert_awaited_with("tg-manual-3", "ready_config_pending")
+    payments.mark_ready_notification_sent.assert_not_awaited()
+
+
+def test_manual_retry_bookkeeping_failure_after_delivery_is_not_fatal(monkeypatch):
+    monkeypatch.setattr(payments, "fetchone", AsyncMock(return_value=(77, "sub_30", "needs_repair")))
+    monkeypatch.setattr(payments.config, "STARS_PRICE_30_DAYS", 30)
+    monkeypatch.setattr(payments, "process_payment_provisioning", AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, "get_user_keys", AsyncMock(return_value=[(1, 1, "conf", "vpn://1")]))
+    bot = SimpleNamespace(send_message=AsyncMock())
+    monkeypatch.setattr(payments, "update_last_provision_status", AsyncMock(side_effect=[RuntimeError("db down")]))
+    monkeypatch.setattr(payments, "mark_ready_notification_sent", AsyncMock(return_value=True))
+    monkeypatch.setattr(payments, "write_audit_log", AsyncMock())
+    monkeypatch.setattr(payments, "get_text", AsyncMock(return_value="ok"))
+
+    result = asyncio.run(payments.manual_retry_activation("tg-manual-4", bot=bot))
+
+    assert result["result"] == "succeeded"
+    assert "успешно" in result["message"]
+    payments.mark_ready_notification_sent.assert_awaited_once_with("tg-manual-4")
+
+
 def test_send_user_active_config_sends_conf_and_vpn_key_without_qr(monkeypatch):
     message = SimpleNamespace(
         answer_document=AsyncMock(),
