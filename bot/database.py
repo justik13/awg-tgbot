@@ -1751,6 +1751,51 @@ async def complete_broadcast_job(job_id: int, status: str, last_error: str | Non
         await db.close()
 
 
+async def fail_stale_running_broadcast_jobs(max_age_seconds: int) -> int:
+    if max_age_seconds <= 0:
+        return 0
+    now = utc_now_naive()
+    stale_before_iso = (now - timedelta(seconds=max_age_seconds)).isoformat()
+    now_iso = now.isoformat()
+    db = await open_db()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        async with db.execute(
+            """
+            SELECT id
+            FROM broadcast_jobs
+            WHERE status = 'running'
+              AND updated_at <= ?
+            """,
+            (stale_before_iso,),
+        ) as cursor:
+            stale_ids = [int(row[0]) for row in await cursor.fetchall()]
+        if not stale_ids:
+            await db.rollback()
+            return 0
+        error_message = f"stale_running_recovered_at={now_iso}"
+        placeholders = ",".join("?" for _ in stale_ids)
+        await db.execute(
+            f"""
+            UPDATE broadcast_jobs
+            SET status = 'failed',
+                last_error = ?,
+                finished_at = ?,
+                updated_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            (error_message, now_iso, now_iso, *stale_ids),
+        )
+        await db.execute(
+            f"DELETE FROM broadcast_job_targets WHERE job_id IN ({placeholders})",
+            tuple(stale_ids),
+        )
+        await db.commit()
+        return len(stale_ids)
+    finally:
+        await db.close()
+
+
 async def get_pending_jobs_stats() -> dict[str, int]:
     rows = await fetchall(
         """
