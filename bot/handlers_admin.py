@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import ipaddress
 import re
+import secrets
 
 import config
 
@@ -121,6 +122,7 @@ SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY = "service_invitee_bonus_input"
 SERVICE_INVITER_BONUS_INPUT_ACTION_KEY = "service_inviter_bonus_input"
 TEXT_OVERRIDE_INPUT_ACTION_KEY = "text_override_input"
 ADD_DAYS_CONFIRM_ACTION_KEY = "add_days_confirm"
+ADMIN_CONFIRM_TOKEN_TTL_SECONDS = 15 * 60
 TEXT_OVERRIDE_ALLOWED_KEYS = {"start", "buy_menu", "renew_menu", "support_contact"}
 TEXT_OVERRIDE_CALLBACK_KEY_MAP = {
     CB_ADMIN_TEXT_START: "start",
@@ -133,6 +135,39 @@ PRICE_TARGETS = {
     CB_ADMIN_PRICE_EDIT_30: ("STARS_PRICE_30_DAYS", "30 дней"),
     CB_ADMIN_PRICE_EDIT_90: ("STARS_PRICE_90_DAYS", "90 дней"),
 }
+
+
+def _generate_admin_action_token() -> str:
+    return secrets.token_hex(6)
+
+
+def _make_token_action_key(action_key: str, token: str) -> str:
+    return f"{action_key}:{token}"
+
+
+def _extract_action_token(callback_data: str | None, callback_prefix: str) -> str | None:
+    if not callback_data:
+        return None
+    if callback_data == callback_prefix:
+        return None
+    prefix = f"{callback_prefix}:"
+    if not callback_data.startswith(prefix):
+        return None
+    token = callback_data[len(prefix):].strip()
+    return token or None
+
+
+def _is_pending_action_expired(action: dict[str, object] | None) -> bool:
+    if not action:
+        return False
+    issued_at_raw = action.get("issued_at")
+    if not isinstance(issued_at_raw, str) or not issued_at_raw:
+        return False
+    try:
+        issued_at = datetime.fromisoformat(issued_at_raw)
+    except ValueError:
+        return True
+    return (utc_now_naive() - issued_at).total_seconds() > ADMIN_CONFIRM_TOKEN_TTL_SECONDS
 
 
 def _render_admin_prices_text() -> str:
@@ -1453,11 +1488,12 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
         days = int(days_raw)
         page = int(page_raw)
         if days >= 30:
-            await clear_pending_admin_action(ADMIN_ID, ADD_DAYS_CONFIRM_ACTION_KEY)
+            token = _generate_admin_action_token()
+            token_action_key = _make_token_action_key(ADD_DAYS_CONFIRM_ACTION_KEY, token)
             await set_pending_admin_action(
                 ADMIN_ID,
-                ADD_DAYS_CONFIRM_ACTION_KEY,
-                {"uid": uid, "days": days, "page": page},
+                token_action_key,
+                {"uid": uid, "days": days, "page": page, "issued_at": utc_now_naive().isoformat()},
             )
             await cb.message.answer(
                 (
@@ -1465,7 +1501,7 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
                     f"Выдать пользователю <code>{uid}</code> <b>+{days} дней</b>?"
                 ),
                 parse_mode="HTML",
-                reply_markup=get_admin_add_days_confirm_kb(),
+                reply_markup=get_admin_add_days_confirm_kb(token),
             )
             await cb.answer("Нужно подтверждение")
             return
@@ -1492,13 +1528,20 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
         await cb.answer("❌ Не удалось продлить доступ", show_alert=True)
 
 
-@router.callback_query(F.data == CB_CONFIRM_ADD_DAYS)
+@router.callback_query(F.data.startswith(CB_CONFIRM_ADD_DAYS))
 async def admin_add_days_confirm(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    action = await pop_pending_admin_action(ADMIN_ID, ADD_DAYS_CONFIRM_ACTION_KEY)
+    token = _extract_action_token(cb.data, CB_CONFIRM_ADD_DAYS)
+    if not token:
+        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=True)
+        return
+    action = await pop_pending_admin_action(ADMIN_ID, _make_token_action_key(ADD_DAYS_CONFIRM_ACTION_KEY, token))
     if not action:
-        await cb.answer("Нет ожидающего действия", show_alert=True)
+        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=True)
+        return
+    if _is_pending_action_expired(action):
+        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=True)
         return
     uid = int(action.get("uid", 0))
     days = int(action.get("days", 0))
@@ -1526,11 +1569,15 @@ async def admin_add_days_confirm(cb: types.CallbackQuery):
         await cb.message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.")
 
 
-@router.callback_query(F.data == CB_CANCEL_ADD_DAYS)
+@router.callback_query(F.data.startswith(CB_CANCEL_ADD_DAYS))
 async def admin_add_days_cancel(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await clear_pending_admin_action(ADMIN_ID, ADD_DAYS_CONFIRM_ACTION_KEY)
+    token = _extract_action_token(cb.data, CB_CANCEL_ADD_DAYS)
+    if not token:
+        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
+        return
+    await clear_pending_admin_action(ADMIN_ID, _make_token_action_key(ADD_DAYS_CONFIRM_ACTION_KEY, token))
     await cb.answer("Отменено")
     if cb.message:
         await cb.message.answer("❌ Выдача дней отменена.")
@@ -1606,10 +1653,11 @@ async def admin_device_delete_btn(cb: types.CallbackQuery):
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=True)
         return
+    token = _generate_admin_action_token()
     await set_pending_admin_action(
         ADMIN_ID,
-        "device_delete",
-        {"action": "device_delete", "target": uid, "device_num": device_num, "page": page},
+        _make_token_action_key("device_delete", token),
+        {"action": "device_delete", "target": uid, "device_num": device_num, "page": page, "issued_at": utc_now_naive().isoformat()},
     )
     await cb.message.answer(
         (
@@ -1621,21 +1669,28 @@ async def admin_device_delete_btn(cb: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text="✅ Подтвердить", callback_data=CB_CONFIRM_DEVICE_DELETE)],
-                [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_CANCEL_DEVICE_DELETE)],
+                [types.InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"{CB_CONFIRM_DEVICE_DELETE}:{token}")],
+                [types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"{CB_CANCEL_DEVICE_DELETE}:{token}")],
             ]
         ),
     )
     await cb.answer()
 
 
-@router.callback_query(F.data == CB_CONFIRM_DEVICE_DELETE)
+@router.callback_query(F.data.startswith(CB_CONFIRM_DEVICE_DELETE))
 async def confirm_device_delete(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    action = await pop_pending_admin_action(ADMIN_ID, "device_delete")
+    token = _extract_action_token(cb.data, CB_CONFIRM_DEVICE_DELETE)
+    if not token:
+        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=True)
+        return
+    action = await pop_pending_admin_action(ADMIN_ID, _make_token_action_key("device_delete", token))
     if not action or action.get("action") != "device_delete":
-        await cb.answer("Нет ожидающего действия", show_alert=True)
+        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=True)
+        return
+    if _is_pending_action_expired(action):
+        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=True)
         return
     uid = int(action["target"])
     device_num = int(action["device_num"])
@@ -1677,11 +1732,15 @@ async def confirm_device_delete(cb: types.CallbackQuery):
         await cb.answer("❌ Не удалось удалить устройство", show_alert=True)
 
 
-@router.callback_query(F.data == CB_CANCEL_DEVICE_DELETE)
+@router.callback_query(F.data.startswith(CB_CANCEL_DEVICE_DELETE))
 async def cancel_device_delete(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await clear_pending_admin_action(ADMIN_ID, "device_delete")
+    token = _extract_action_token(cb.data, CB_CANCEL_DEVICE_DELETE)
+    if not token:
+        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
+        return
+    await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("device_delete", token))
     await cb.message.answer("❌ Удаление устройства отменено")
     await cb.answer("Отменено")
 
@@ -1698,10 +1757,11 @@ async def admin_device_reissue_btn(cb: types.CallbackQuery):
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=True)
         return
+    token = _generate_admin_action_token()
     await set_pending_admin_action(
         ADMIN_ID,
-        "device_reissue",
-        {"action": "device_reissue", "target": uid, "device_num": device_num, "page": page},
+        _make_token_action_key("device_reissue", token),
+        {"action": "device_reissue", "target": uid, "device_num": device_num, "page": page, "issued_at": utc_now_naive().isoformat()},
     )
     await cb.message.answer(
         (
@@ -1713,21 +1773,28 @@ async def admin_device_reissue_btn(cb: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text="✅ Подтвердить", callback_data=CB_CONFIRM_DEVICE_REISSUE)],
-                [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_CANCEL_DEVICE_REISSUE)],
+                [types.InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"{CB_CONFIRM_DEVICE_REISSUE}:{token}")],
+                [types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"{CB_CANCEL_DEVICE_REISSUE}:{token}")],
             ]
         ),
     )
     await cb.answer()
 
 
-@router.callback_query(F.data == CB_CONFIRM_DEVICE_REISSUE)
+@router.callback_query(F.data.startswith(CB_CONFIRM_DEVICE_REISSUE))
 async def confirm_device_reissue(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    action = await pop_pending_admin_action(ADMIN_ID, "device_reissue")
+    token = _extract_action_token(cb.data, CB_CONFIRM_DEVICE_REISSUE)
+    if not token:
+        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=True)
+        return
+    action = await pop_pending_admin_action(ADMIN_ID, _make_token_action_key("device_reissue", token))
     if not action or action.get("action") != "device_reissue":
-        await cb.answer("Нет ожидающего действия", show_alert=True)
+        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=True)
+        return
+    if _is_pending_action_expired(action):
+        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=True)
         return
     uid = int(action["target"])
     device_num = int(action["device_num"])
@@ -1766,11 +1833,15 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
         await cb.answer("❌ Не удалось перевыпустить устройство", show_alert=True)
 
 
-@router.callback_query(F.data == CB_CANCEL_DEVICE_REISSUE)
+@router.callback_query(F.data.startswith(CB_CANCEL_DEVICE_REISSUE))
 async def cancel_device_reissue(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await clear_pending_admin_action(ADMIN_ID, "device_reissue")
+    token = _extract_action_token(cb.data, CB_CANCEL_DEVICE_REISSUE)
+    if not token:
+        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
+        return
+    await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("device_reissue", token))
     await cb.message.answer("❌ Перевыпуск устройства отменён")
     await cb.answer("Отменено")
 
@@ -1786,25 +1857,37 @@ async def admin_revoke_btn(cb: types.CallbackQuery):
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=True)
         return
-    await set_pending_admin_action(ADMIN_ID, "revoke", {"action": "revoke", "target": uid, "page": page})
+    token = _generate_admin_action_token()
+    await set_pending_admin_action(
+        ADMIN_ID,
+        _make_token_action_key("revoke", token),
+        {"action": "revoke", "target": uid, "page": page, "issued_at": utc_now_naive().isoformat()},
+    )
     await cb.message.answer(
         (
             "⚠️ <b>Подтвердите отключение доступа</b>\n\n"
             f"Пользователь: <code>{uid}</code>"
         ),
         parse_mode="HTML",
-        reply_markup=get_admin_confirm_kb("revoke"),
+        reply_markup=get_admin_confirm_kb("revoke", token),
     )
     await cb.answer()
 
 
-@router.callback_query(F.data == CB_CONFIRM_REVOKE)
+@router.callback_query(F.data.startswith(CB_CONFIRM_REVOKE))
 async def confirm_revoke(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    action = await pop_pending_admin_action(ADMIN_ID, "revoke")
+    token = _extract_action_token(cb.data, CB_CONFIRM_REVOKE)
+    if not token:
+        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=True)
+        return
+    action = await pop_pending_admin_action(ADMIN_ID, _make_token_action_key("revoke", token))
     if not action or action.get("action") != "revoke":
-        await cb.answer("Нет ожидающего действия", show_alert=True)
+        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=True)
+        return
+    if _is_pending_action_expired(action):
+        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=True)
         return
     uid = int(action["target"])
     page = int(action.get("page", 0))
@@ -1828,11 +1911,15 @@ async def confirm_revoke(cb: types.CallbackQuery):
         await cb.answer("❌ Не удалось отключить пользователя", show_alert=True)
 
 
-@router.callback_query(F.data == CB_CANCEL_REVOKE)
+@router.callback_query(F.data.startswith(CB_CANCEL_REVOKE))
 async def cancel_revoke(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await clear_pending_admin_action(ADMIN_ID, "revoke")
+    token = _extract_action_token(cb.data, CB_CANCEL_REVOKE)
+    if not token:
+        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
+        return
+    await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("revoke", token))
     await cb.message.answer("❌ Отключение отменено")
     await cb.answer("Отменено")
 
@@ -1848,25 +1935,37 @@ async def admin_del_user(cb: types.CallbackQuery):
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=True)
         return
-    await set_pending_admin_action(ADMIN_ID, "delete_user", {"action": "delete_user", "target": uid, "page": page})
+    token = _generate_admin_action_token()
+    await set_pending_admin_action(
+        ADMIN_ID,
+        _make_token_action_key("delete_user", token),
+        {"action": "delete_user", "target": uid, "page": page, "issued_at": utc_now_naive().isoformat()},
+    )
     await cb.message.answer(
         (
             "⚠️ <b>Подтвердите полное удаление пользователя</b>\n\n"
             f"Пользователь: <code>{uid}</code>"
         ),
         parse_mode="HTML",
-        reply_markup=get_admin_confirm_kb("delete_user"),
+        reply_markup=get_admin_confirm_kb("delete_user", token),
     )
     await cb.answer()
 
 
-@router.callback_query(F.data == CB_CONFIRM_DELETE_USER)
+@router.callback_query(F.data.startswith(CB_CONFIRM_DELETE_USER))
 async def confirm_delete_user(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    action = await pop_pending_admin_action(ADMIN_ID, "delete_user")
+    token = _extract_action_token(cb.data, CB_CONFIRM_DELETE_USER)
+    if not token:
+        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=True)
+        return
+    action = await pop_pending_admin_action(ADMIN_ID, _make_token_action_key("delete_user", token))
     if not action or action.get("action") != "delete_user":
-        await cb.answer("Нет ожидающего действия", show_alert=True)
+        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=True)
+        return
+    if _is_pending_action_expired(action):
+        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=True)
         return
     uid = int(action["target"])
     page = int(action.get("page", 0))
@@ -1890,11 +1989,15 @@ async def confirm_delete_user(cb: types.CallbackQuery):
         await cb.answer(f"❌ Не удалось удалить пользователя: {str(e)[:120]}", show_alert=True)
 
 
-@router.callback_query(F.data == CB_CANCEL_DELETE_USER)
+@router.callback_query(F.data.startswith(CB_CANCEL_DELETE_USER))
 async def cancel_delete_user(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await clear_pending_admin_action(ADMIN_ID, "delete_user")
+    token = _extract_action_token(cb.data, CB_CANCEL_DELETE_USER)
+    if not token:
+        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
+        return
+    await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("delete_user", token))
     await cb.message.answer("❌ Удаление отменено")
     await cb.answer("Отменено")
 
@@ -2534,11 +2637,16 @@ async def revoke_user_cmd(message: types.Message, command: CommandObject):
         return
     try:
         uid = int(command.args)
-        await set_pending_admin_action(ADMIN_ID, "revoke", {"action": "revoke", "target": uid})
+        token = _generate_admin_action_token()
+        await set_pending_admin_action(
+            ADMIN_ID,
+            _make_token_action_key("revoke", token),
+            {"action": "revoke", "target": uid, "issued_at": utc_now_naive().isoformat()},
+        )
         await message.answer(
             f"⚠️ Подтвердите отключение пользователя <code>{uid}</code>",
             parse_mode="HTML",
-            reply_markup=get_admin_confirm_kb("revoke"),
+            reply_markup=get_admin_confirm_kb("revoke", token),
         )
     except Exception as e:
         logger.exception("Ошибка /revoke: %s", e)

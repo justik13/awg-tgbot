@@ -254,11 +254,13 @@ def get_user_reissue_confirm_kb() -> InlineKeyboardMarkup:
     )
 
 
-def get_admin_confirm_kb(action_key: str) -> InlineKeyboardMarkup:
+def get_admin_confirm_kb(action_key: str, token: str | None = None) -> InlineKeyboardMarkup:
+    confirm_cb = f"confirm_{action_key}" if not token else f"confirm_{action_key}:{token}"
+    cancel_cb = f"cancel_{action_key}" if not token else f"cancel_{action_key}:{token}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_{action_key}")],
-            [InlineKeyboardButton(text="❌ Отменить", callback_data=f"cancel_{action_key}")],
+            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=confirm_cb)],
+            [InlineKeyboardButton(text="❌ Отменить", callback_data=cancel_cb)],
         ]
     )
 
@@ -353,11 +355,13 @@ def get_admin_service_settings_kb(ref_enabled: int, torrent_enabled: int) -> Inl
     )
 
 
-def get_admin_add_days_confirm_kb() -> InlineKeyboardMarkup:
+def get_admin_add_days_confirm_kb(token: str | None = None) -> InlineKeyboardMarkup:
+    confirm_cb = CB_CONFIRM_ADD_DAYS if not token else f"{CB_CONFIRM_ADD_DAYS}:{token}"
+    cancel_cb = CB_CANCEL_ADD_DAYS if not token else f"{CB_CANCEL_ADD_DAYS}:{token}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, выдать +30 дней", callback_data=CB_CONFIRM_ADD_DAYS)],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_CANCEL_ADD_DAYS)],
+            [InlineKeyboardButton(text="✅ Да, выдать +30 дней", callback_data=confirm_cb)],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=cancel_cb)],
         ]
     )
 
