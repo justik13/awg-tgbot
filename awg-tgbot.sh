@@ -1430,6 +1430,47 @@ restore_sqlite_runtime_bundle() {
   copy_sqlite_runtime_bundle "$snapshot_db" "$target_db"
 }
 
+sqlite_runtime_quick_check() {
+  local db_file="$1"
+  [[ -f "$db_file" ]] || return 1
+  "$PYTHON_BIN" - "$db_file" <<'PY'
+import sqlite3
+import sys
+
+path = sys.argv[1]
+conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+try:
+    row = conn.execute("PRAGMA quick_check;").fetchone()
+    value = (row[0] if row else "").strip().lower()
+    raise SystemExit(0 if value == "ok" else 1)
+finally:
+    conn.close()
+PY
+}
+
+validate_backup_archive_payload() {
+  local archive_file="$1" db_basename="$2"
+  local -a archive_entries=()
+  mapfile -t archive_entries < <(tar -tzf "$archive_file" 2>/dev/null || true)
+  [[ ${#archive_entries[@]} -gt 0 ]] || return 1
+  printf '%s\n' "${archive_entries[@]}" | grep -Fxq "$db_basename" || return 1
+  printf '%s\n' "${archive_entries[@]}" | grep -Fxq ".env" || return 1
+  printf '%s\n' "${archive_entries[@]}" | grep -Fxq "metadata.txt" || return 1
+  return 0
+}
+
+wait_for_service_stopped_state() {
+  local max_attempts="${1:-8}" delay_seconds="${2:-1}" attempt state
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    state="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+    if [[ "$state" == "inactive" || "$state" == "failed" ]]; then
+      return 0
+    fi
+    sleep "$delay_seconds"
+  done
+  return 1
+}
+
 collect_existing_sqlite_bundle_basenames() {
   local db_file="$1"
   local suffix candidate
@@ -2128,7 +2169,8 @@ rollback_failed_reinstall() {
 }
 
 create_local_backup() {
-  local db_file timestamp archive_file meta_dir meta_file local_sha
+  local db_file db_basename timestamp archive_file meta_dir meta_file local_sha
+  local snapshot_dir service_active_before service_was_active=0 service_state_after_start=""
   local -a db_bundle_names=()
   if ! has_residual_files || [[ ! -f "$ENV_FILE" || ! -d "$BOT_DIR" ]]; then
     warn "Бот не установлен полностью. Нечего архивировать."
@@ -2140,18 +2182,76 @@ create_local_backup() {
     warn "Файл БД не найден: ${db_file}"
     return 1
   fi
-  mapfile -t db_bundle_names < <(collect_existing_sqlite_bundle_basenames "$db_file")
-  if [[ ${#db_bundle_names[@]} -eq 0 ]]; then
-    warn "Не удалось собрать SQLite bundle для бэкапа: ${db_file}"
-    return 1
-  fi
+  db_basename="$(basename "$db_file")"
 
   timestamp="$(date -u +%Y%m%d_%H%M%S)"
   archive_file="${BACKUP_ROOT}/awg-tgbot-backup-${timestamp}.tar.gz"
   meta_dir="$(mktemp -d)"
+  snapshot_dir="$(mktemp -d)"
   meta_file="${meta_dir}/metadata.txt"
   mkdir -p "$BACKUP_ROOT"
   chmod 700 "$BACKUP_ROOT" || true
+
+  if require_command systemctl && service_exists; then
+    service_active_before="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+    if [[ "$service_active_before" == "active" ]]; then
+      warn "Локальный бэкап: временно останавливаю ${SERVICE_NAME} для консистентного snapshot SQLite."
+      if ! systemctl stop "$SERVICE_NAME" 2>/dev/null; then
+        rm -rf "$meta_dir" "$snapshot_dir"
+        warn "Не удалось остановить ${SERVICE_NAME}; бэкап отменён (fail-closed для active service)."
+        return 1
+      fi
+      if ! wait_for_service_stopped_state; then
+        service_active_before="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+        rm -rf "$meta_dir" "$snapshot_dir"
+        warn "Сервис ${SERVICE_NAME} не перешёл в безопасное stopped-state после stop (state=${service_active_before:-unknown}); бэкап отменён (fail-closed)."
+        return 1
+      fi
+      service_was_active=1
+    elif [[ "$service_active_before" != "inactive" && "$service_active_before" != "failed" ]]; then
+      rm -rf "$meta_dir" "$snapshot_dir"
+      warn "Бэкап отменён: ${SERVICE_NAME} в переходном/небезопасном состоянии (${service_active_before:-unknown}). Дождитесь stable inactive/failed или active."
+      return 1
+    fi
+  fi
+
+  if ! snapshot_sqlite_runtime_bundle "$db_file" "$snapshot_dir" "$db_basename"; then
+    rm -rf "$meta_dir" "$snapshot_dir"
+    warn "Не удалось подготовить консистентный snapshot SQLite для бэкапа: ${db_file}"
+    if [[ "$service_was_active" == "1" ]] && require_command systemctl && service_exists; then
+      if ! systemctl start "$SERVICE_NAME" 2>/dev/null; then
+        warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки snapshot."
+        warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
+        return 1
+      fi
+      service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+      if [[ "$service_state_after_start" != "active" ]]; then
+        warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки snapshot (state=${service_state_after_start:-unknown})."
+        warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
+        return 1
+      fi
+    fi
+    return 1
+  fi
+  mapfile -t db_bundle_names < <(collect_existing_sqlite_bundle_basenames "$snapshot_dir/$db_basename")
+  if [[ ${#db_bundle_names[@]} -eq 0 ]]; then
+    rm -rf "$meta_dir" "$snapshot_dir"
+    warn "Не удалось собрать SQLite bundle для бэкапа: ${db_file}"
+    if [[ "$service_was_active" == "1" ]] && require_command systemctl && service_exists; then
+      if ! systemctl start "$SERVICE_NAME" 2>/dev/null; then
+        warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки bundle-сборки."
+        warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
+        return 1
+      fi
+      service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+      if [[ "$service_state_after_start" != "active" ]]; then
+        warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки bundle-сборки (state=${service_state_after_start:-unknown})."
+        warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
+        return 1
+      fi
+    fi
+    return 1
+  fi
 
   local_sha="$(cat "$VERSION_FILE" 2>/dev/null | tr -d '\r\n' || true)"
   if [[ -z "$local_sha" && -d "$INSTALL_DIR/.git" ]]; then
@@ -2169,17 +2269,62 @@ env_file=.env
 EOF
 
   if ! tar -czf "$archive_file" \
-    -C "$(dirname "$db_file")" "${db_bundle_names[@]}" \
+    -C "$snapshot_dir" "${db_bundle_names[@]}" \
     -C "$INSTALL_DIR" ".env" \
     -C "$meta_dir" "metadata.txt"; then
-    rm -rf "$meta_dir"
+    rm -rf "$meta_dir" "$snapshot_dir"
     rm -f "$archive_file"
     warn "Не удалось создать архив бэкапа."
+    if [[ "$service_was_active" == "1" ]] && require_command systemctl && service_exists; then
+      if ! systemctl start "$SERVICE_NAME" 2>/dev/null; then
+        warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки архивации."
+        warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
+        return 1
+      fi
+      service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+      if [[ "$service_state_after_start" != "active" ]]; then
+        warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки архивации (state=${service_state_after_start:-unknown})."
+        warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
+        return 1
+      fi
+    fi
     return 1
   fi
 
-  rm -rf "$meta_dir"
+  rm -rf "$meta_dir" "$snapshot_dir"
   chmod 600 "$archive_file" || true
+  if ! validate_backup_archive_payload "$archive_file" "$db_basename"; then
+    rm -f "$archive_file"
+    warn "Архив бэкапа не прошёл валидацию payload (db/.env/metadata)."
+    if [[ "$service_was_active" == "1" ]] && require_command systemctl && service_exists; then
+      if ! systemctl start "$SERVICE_NAME" 2>/dev/null; then
+        warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки валидации архива."
+        warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
+        return 1
+      fi
+      service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+      if [[ "$service_state_after_start" != "active" ]]; then
+        warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки валидации архива (state=${service_state_after_start:-unknown})."
+        warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
+        return 1
+      fi
+    fi
+    return 1
+  fi
+
+  if [[ "$service_was_active" == "1" ]] && require_command systemctl && service_exists; then
+    if ! systemctl start "$SERVICE_NAME" 2>/dev/null; then
+      warn "Архив создан: ${archive_file}"
+      warn "Не удалось автоматически запустить ${SERVICE_NAME} после backup. Проверьте вручную: systemctl status ${SERVICE_NAME}"
+      return 1
+    fi
+    service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+    if [[ "$service_state_after_start" != "active" ]]; then
+      warn "Архив создан: ${archive_file}"
+      warn "Сервис ${SERVICE_NAME} не восстановлен автоматически (state=${service_state_after_start:-unknown}). Проверьте: systemctl status ${SERVICE_NAME}"
+      return 1
+    fi
+  fi
   ok "Бэкап сохранён: ${archive_file}"
   return 0
 }
@@ -2187,7 +2332,7 @@ EOF
 restore_from_backup() {
   local backup_root="${BACKUP_ROOT}"
   local selected_index="" selected_archive="" confirm_restore=""
-  local db_file db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before
+  local db_file db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before service_state_after_stop=""
   local -a archive_entries=() restore_members=()
   local restore_ok=0 rollback_ok=0 smokecheck_ok=0 helper_sync_ok=0 rollback_helper_sync_ok=0 rollback_smoke_ok=0
   mapfile -t archives < <(find "$backup_root" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' | sort -r)
@@ -2213,6 +2358,10 @@ restore_from_backup() {
   db_file="$(get_bot_db_file)"
   db_basename="$(basename "$db_file")"
   mapfile -t archive_entries < <(tar -tzf "$selected_archive" 2>/dev/null || true)
+  if [[ ${#archive_entries[@]} -eq 0 ]]; then
+    warn "Архив повреждён или пуст: $(basename "$selected_archive")"
+    return 1
+  fi
   restore_members=("$db_basename")
   if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-wal"; then
     restore_members+=("${db_basename}-wal")
@@ -2232,6 +2381,14 @@ restore_from_backup() {
       restore_members+=("${db_basename}-shm")
     fi
   fi
+  if ! printf '%s\n' "${archive_entries[@]}" | grep -Fxq ".env"; then
+    warn "Архив не содержит .env: $(basename "$selected_archive")"
+    return 1
+  fi
+  if ! printf '%s\n' "${archive_entries[@]}" | grep -Fxq "$db_basename"; then
+    warn "Архив не содержит основной SQLite файл ${db_basename}."
+    return 1
+  fi
 
   echo "Выбран архив: $(basename "$selected_archive")"
   echo "Будет восстановлено: ${db_basename} (+sidecars при наличии), .env"
@@ -2243,7 +2400,20 @@ restore_from_backup() {
   if require_command systemctl && service_exists; then
     service_active_before="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
     service_enabled_before="$(systemctl is-enabled "$SERVICE_NAME" 2>/dev/null || true)"
-    systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    if [[ "$service_active_before" == "active" ]]; then
+      if ! systemctl stop "$SERVICE_NAME" 2>/dev/null; then
+        warn "Restore отменён: не удалось остановить ${SERVICE_NAME} (fail-closed для active service)."
+        return 1
+      fi
+      if ! wait_for_service_stopped_state; then
+        service_state_after_stop="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+        warn "Restore отменён: ${SERVICE_NAME} не перешёл в безопасное stopped-state после stop (state=${service_state_after_stop:-unknown})."
+        return 1
+      fi
+    elif [[ "$service_active_before" != "inactive" && "$service_active_before" != "failed" ]]; then
+      warn "Restore отменён: ${SERVICE_NAME} в переходном/небезопасном состоянии (${service_active_before:-unknown}). Дождитесь stable inactive/failed или active."
+      return 1
+    fi
   fi
 
   snapshot_dir="$(mktemp -d "${backup_root}/pre-restore-$(date -u +%Y%m%d_%H%M%S)-XXXXXX")"
@@ -2254,7 +2424,9 @@ restore_from_backup() {
   tmp_restore="$(mktemp -d)"
   if tar -xzf "$selected_archive" -C "$tmp_restore" "${restore_members[@]}" ".env"; then
     mkdir -p "$(dirname "$db_file")" "$INSTALL_DIR"
-    if restore_sqlite_runtime_bundle "$tmp_restore/$db_basename" "$db_file"; then
+    if ! sqlite_runtime_quick_check "$tmp_restore/$db_basename"; then
+      warn "SQLite quick_check не пройден для ${db_basename} из архива."
+    elif restore_sqlite_runtime_bundle "$tmp_restore/$db_basename" "$db_file"; then
       install -m 600 "$tmp_restore/.env" "$ENV_FILE"
       repair_runtime_file_access "$ENV_FILE" 600
       restore_ok=1
