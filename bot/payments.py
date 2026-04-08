@@ -108,10 +108,6 @@ def remember_pending_invoice(user_id: int, chat_id: int, message_id: int, payloa
     }
 
 
-def get_pending_invoice(user_id: int) -> dict[str, int | str] | None:
-    return pending_invoices.get(user_id)
-
-
 def clear_pending_invoice_state(user_id: int) -> None:
     pending_invoices.pop(user_id, None)
 

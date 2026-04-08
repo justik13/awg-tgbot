@@ -1,14 +1,10 @@
 BTN_PROFILE = "👤 Профиль"
 BTN_CONFIGS = "🔑 Подключение"
 BTN_BUY = "💳 Купить / Продлить"
-BTN_GUIDE = "📖 Как подключиться"
 BTN_SUPPORT = "🆘 Поддержка"
-BTN_REFERRALS = "🎁 Рефералы"
-BTN_PROMO = "🎟 Промокод"
 BTN_ADMIN = "⚙️ Админка"
 
 ADMIN_CALLBACK_PREFIX = "a:"
-USER_CONFIG_CALLBACK_PREFIX = "config_"
 
 CB_BUY_7 = "buy_7"
 CB_BUY_30 = "buy_30"
@@ -34,7 +30,6 @@ CB_PROMO_INPUT_CANCEL = "promo_input_cancel"
 CB_SUPPORT_PAYMENT = "support_payment"
 CB_SUPPORT_CONNECTION = "support_connection"
 CB_SUPPORT_TERMS = "support_terms"
-CB_SUPPORT_BACK = "support_back"
 
 CB_ADMIN_LIST = "admin_list"
 CB_ADMIN_STATS = "admin_stats"
@@ -80,7 +75,6 @@ CB_ADMIN_NETWORK_POLICY = "a:np"
 CB_ADMIN_NET_DENYLIST = "a:np:d"
 CB_ADMIN_NET_SYNC_NOW = "a:np:s"
 CB_ADMIN_DENYLIST_TOGGLE = "a:np:d:t"
-CB_ADMIN_DENYLIST_MODE = "a:np:d:m"
 CB_ADMIN_DENYLIST_VIEW_DOMAINS = "a:np:d:vd"
 CB_ADMIN_DENYLIST_VIEW_CIDRS = "a:np:d:vc"
 CB_ADMIN_DENYLIST_REPLACE_DOMAINS = "a:np:d:rd"
@@ -88,8 +82,6 @@ CB_ADMIN_DENYLIST_REPLACE_CIDRS = "a:np:d:rc"
 CB_ADMIN_DENYLIST_SYNC = "a:np:d:sy"
 CB_ADMIN_DENYLIST_MODE_SOFT = "a:np:d:m:s"
 CB_ADMIN_DENYLIST_MODE_STRICT = "a:np:d:m:st"
-CB_ADMIN_DEVICE_SPEED_SET_PREFIX = "a:spd:set:"
-CB_ADMIN_DEVICE_SPEED_RESET_PREFIX = "a:spd:rst:"
 CB_ADMIN_BACK_MAIN = "a:bk:m"
 CB_ADMIN_REFRESH_REFERRALS = "a:rf:r"
 CB_ADMIN_REFRESH_HEALTH = "a:rf:h"
@@ -118,7 +110,3 @@ CB_CONFIRM_ADD_DAYS = "a:ud:c"
 CB_CANCEL_ADD_DAYS = "a:ud:x"
 def is_admin_callback_data(data: str | None) -> bool:
     return bool(data and data.startswith(ADMIN_CALLBACK_PREFIX))
-
-
-def is_user_config_callback_data(data: str | None) -> bool:
-    return bool(data and data.startswith(USER_CONFIG_CALLBACK_PREFIX))

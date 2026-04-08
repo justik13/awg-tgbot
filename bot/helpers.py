@@ -27,10 +27,6 @@ def parse_iso_utc_naive(dt_str: str) -> datetime:
     return datetime.fromisoformat(dt_str)
 
 
-def iso_to_moscow(dt_str: str) -> datetime:
-    return utc_naive_to_moscow(parse_iso_utc_naive(dt_str))
-
-
 def timestamp_to_moscow(ts: int | float) -> datetime:
     return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(MOSCOW_TZ)
 
