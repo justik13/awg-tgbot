@@ -106,18 +106,71 @@ def test_sqlite_bundle_helpers_are_shared_across_snapshot_restore_and_backup_flo
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "snapshot_sqlite_runtime_bundle()" in script
     assert "restore_sqlite_runtime_bundle()" in script
+    assert "sqlite_runtime_quick_check()" in script
+    assert "validate_backup_archive_payload()" in script
+    assert "wait_for_service_stopped_state()" in script
+    assert "wait_for_service_active_state()" in script
     assert "collect_existing_sqlite_bundle_basenames()" in script
     assert 'snapshot_sqlite_runtime_bundle "$db_file" "$snapshot_dir" "db.before"' in script
     assert 'restore_sqlite_runtime_bundle "$runtime_snapshot_dir/db.before" "$db_file"' in script
-    assert 'mapfile -t db_bundle_names < <(collect_existing_sqlite_bundle_basenames "$db_file")' in script
+    assert 'mapfile -t db_bundle_names < <(collect_existing_sqlite_bundle_basenames "$snapshot_dir/$db_basename")' in script
 
 
 def test_backup_and_restore_include_sqlite_wal_sidecars_when_present():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
-    assert '-C "$(dirname "$db_file")" "${db_bundle_names[@]}"' in script
+    assert '-C "$snapshot_dir" "${db_bundle_names[@]}"' in script
     assert 'restore_members+=("${db_basename}-wal")' in script
     assert 'restore_members+=("${db_basename}-shm")' in script
     assert 'restore_sqlite_runtime_bundle "$tmp_restore/$db_basename" "$db_file"' in script
+    assert 'if ! systemctl stop "$SERVICE_NAME" 2>/dev/null; then' in script
+    assert 'validate_backup_archive_payload "$archive_file" "$db_basename"' in script
+    assert 'sqlite_runtime_quick_check "$tmp_restore/$db_basename"' in script
+
+
+def test_backup_fail_closed_for_active_service_stop_and_restart_are_validated():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert 'if ! systemctl stop "$SERVICE_NAME" 2>/dev/null; then' in script
+    assert "бэкап отменён (fail-closed для active service)" in script
+    assert 'if [[ "$service_active_before" == "active" ]]; then' in script
+    assert "не перешёл в безопасное stopped-state после stop" in script
+    assert 'elif [[ "$service_active_before" != "inactive" && "$service_active_before" != "failed" ]]; then' in script
+    assert 'if ! systemctl start "$SERVICE_NAME" 2>/dev/null; then' in script
+    assert "if ! wait_for_service_active_state; then" in script
+    assert "Бот может остаться остановленным. Проверьте вручную: systemctl status" in script
+
+
+def test_backup_success_reporting_happens_after_restart_validation():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    create_backup_pos = script.find("create_local_backup()")
+    start_pos = script.find('if ! systemctl start "$SERVICE_NAME" 2>/dev/null; then', create_backup_pos)
+    active_check_pos = script.find("if ! wait_for_service_active_state; then", create_backup_pos)
+    success_pos = script.find('ok "Бэкап сохранён: ${archive_file}"', create_backup_pos)
+    assert start_pos != -1 and active_check_pos != -1 and success_pos != -1
+    assert start_pos < active_check_pos < success_pos
+
+
+def test_restore_fail_closed_when_stop_fails_or_service_stays_active():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "Restore отменён: не удалось остановить" in script
+    assert "Restore отменён: ${SERVICE_NAME} не перешёл в безопасное stopped-state после stop" in script
+    assert 'service_state_after_stop="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"' in script
+    assert 'elif [[ "$service_active_before" != "inactive" && "$service_active_before" != "failed" ]]; then' in script
+
+
+def test_service_stop_wait_poll_logic_requires_inactive_or_failed_states():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "wait_for_service_stopped_state()" in script
+    assert 'for ((attempt = 1; attempt <= max_attempts; attempt++)); do' in script
+    assert 'if [[ "$state" == "inactive" || "$state" == "failed" ]]; then' in script
+    assert 'sleep "$delay_seconds"' in script
+
+
+def test_service_start_wait_poll_logic_requires_active_state():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "wait_for_service_active_state()" in script
+    assert 'for ((attempt = 1; attempt <= max_attempts; attempt++)); do' in script
+    assert 'if [[ "$state" == "active" ]]; then' in script
+    assert 'sleep "$delay_seconds"' in script
 
 
 def test_remove_keep_db_and_env_preserves_sqlite_bundle_not_only_main_db():
