@@ -1156,7 +1156,8 @@ deploy_repo() {
     && { [[ ! -d "$src_dir/packaging" ]] || cp -a "$src_dir/packaging" "$INSTALL_DIR/packaging"; } \
     && chmod +x "$INSTALL_DIR/awg-tgbot.sh" \
     && { [[ ! -f "$AUTO_BACKUP_SCRIPT" ]] || chmod +x "$AUTO_BACKUP_SCRIPT"; } \
-    && ln -sfn "$INSTALL_DIR/awg-tgbot.sh" "$SELF_SYMLINK"; then
+    && ln -sfn "$INSTALL_DIR/awg-tgbot.sh" "$SELF_SYMLINK" \
+    && prune_selfhost_runtime_footprint; then
     [[ -n "$backup_dir" ]] && rm -rf "$backup_dir"
     return 0
   fi
@@ -1172,6 +1173,17 @@ deploy_repo() {
     rm -rf "$backup_dir"
   fi
   return 1
+}
+
+prune_selfhost_runtime_footprint() {
+  local target
+  for target in "$INSTALL_DIR/tests" "$INSTALL_DIR/.github"; do
+    [[ -e "$target" ]] || continue
+    if ! rm -rf "$target"; then
+      warn "Не удалось очистить dev-only путь из runtime: ${target}"
+    fi
+  done
+  return 0
 }
 
 ensure_env_file() {
@@ -2015,6 +2027,7 @@ restore_repo_snapshot_after_failed_reinstall() {
   [[ -f "$INSTALL_DIR/awg-tgbot.sh" ]] && chmod +x "$INSTALL_DIR/awg-tgbot.sh" || true
   [[ -f "$AUTO_BACKUP_SCRIPT" ]] && chmod +x "$AUTO_BACKUP_SCRIPT" || true
   ln -sfn "$INSTALL_DIR/awg-tgbot.sh" "$SELF_SYMLINK" || true
+  prune_selfhost_runtime_footprint
   return 0
 }
 

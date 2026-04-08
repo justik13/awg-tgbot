@@ -214,6 +214,32 @@ def test_reinstall_stops_service_before_runtime_snapshot():
     assert stop_pos < runtime_snapshot_pos
 
 
+def test_selfhost_deploy_prunes_dev_only_paths_from_runtime_install_dir():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert "prune_selfhost_runtime_footprint()" in script
+    assert 'for target in "$INSTALL_DIR/tests" "$INSTALL_DIR/.github"; do' in script
+    deploy_pos = script.find("deploy_repo()")
+    prune_call_pos = script.find("&& prune_selfhost_runtime_footprint; then", deploy_pos)
+    assert deploy_pos != -1 and prune_call_pos != -1
+    assert deploy_pos < prune_call_pos
+
+
+def test_reinstall_rollback_restore_reapplies_runtime_prune_contract():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    restore_repo_pos = script.find("restore_repo_snapshot_after_failed_reinstall()")
+    prune_call_pos = script.find("prune_selfhost_runtime_footprint", restore_repo_pos)
+    assert restore_repo_pos != -1 and prune_call_pos != -1
+    assert restore_repo_pos < prune_call_pos
+
+
+def test_pruning_targets_runtime_install_dir_only_not_repo_tree():
+    script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
+    assert '"$INSTALL_DIR/tests"' in script
+    assert '"$INSTALL_DIR/.github"' in script
+    assert '"$src_dir/tests"' not in script
+    assert '"$src_dir/.github"' not in script
+
+
 def test_prepare_bot_log_for_reinstall_returns_newline_terminated_read_payload():
     script = Path("awg-tgbot.sh").read_text(encoding="utf-8")
     assert "printf '%s\\t%s\\n' \"$pending_archive\" \"$final_archive\"" in script
