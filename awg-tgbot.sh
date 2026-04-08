@@ -1471,6 +1471,18 @@ wait_for_service_stopped_state() {
   return 1
 }
 
+wait_for_service_active_state() {
+  local max_attempts="${1:-8}" delay_seconds="${2:-1}" attempt state
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    state="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+    if [[ "$state" == "active" ]]; then
+      return 0
+    fi
+    sleep "$delay_seconds"
+  done
+  return 1
+}
+
 collect_existing_sqlite_bundle_basenames() {
   local db_file="$1"
   local suffix candidate
@@ -2224,8 +2236,8 @@ create_local_backup() {
         warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
         return 1
       fi
-      service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
-      if [[ "$service_state_after_start" != "active" ]]; then
+      if ! wait_for_service_active_state; then
+        service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
         warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки snapshot (state=${service_state_after_start:-unknown})."
         warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
         return 1
@@ -2243,8 +2255,8 @@ create_local_backup() {
         warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
         return 1
       fi
-      service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
-      if [[ "$service_state_after_start" != "active" ]]; then
+      if ! wait_for_service_active_state; then
+        service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
         warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки bundle-сборки (state=${service_state_after_start:-unknown})."
         warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
         return 1
@@ -2281,8 +2293,8 @@ EOF
         warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
         return 1
       fi
-      service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
-      if [[ "$service_state_after_start" != "active" ]]; then
+      if ! wait_for_service_active_state; then
+        service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
         warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки архивации (state=${service_state_after_start:-unknown})."
         warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
         return 1
@@ -2302,8 +2314,8 @@ EOF
         warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
         return 1
       fi
-      service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
-      if [[ "$service_state_after_start" != "active" ]]; then
+      if ! wait_for_service_active_state; then
+        service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
         warn "Не удалось автоматически вернуть ${SERVICE_NAME} после ошибки валидации архива (state=${service_state_after_start:-unknown})."
         warn "Бот может остаться остановленным. Проверьте вручную: systemctl status ${SERVICE_NAME}"
         return 1
@@ -2318,8 +2330,8 @@ EOF
       warn "Не удалось автоматически запустить ${SERVICE_NAME} после backup. Проверьте вручную: systemctl status ${SERVICE_NAME}"
       return 1
     fi
-    service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
-    if [[ "$service_state_after_start" != "active" ]]; then
+    if ! wait_for_service_active_state; then
+      service_state_after_start="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
       warn "Архив создан: ${archive_file}"
       warn "Сервис ${SERVICE_NAME} не восстановлен автоматически (state=${service_state_after_start:-unknown}). Проверьте: systemctl status ${SERVICE_NAME}"
       return 1
