@@ -83,7 +83,6 @@ from ui_constants import (
     CB_PROMO_INPUT_START,
     CB_SHOW_BUY_MENU,
     CB_SHOW_INSTRUCTION,
-    CB_SUPPORT_BACK,
     CB_SUPPORT_CONNECTION,
     CB_SUPPORT_PAYMENT,
     CB_SUPPORT_TERMS,
@@ -832,16 +831,6 @@ async def support_terms_callback(cb: types.CallbackQuery):
     await cb.answer()
     if cb.message:
         await _send_or_edit_user_screen(cb, _terms_text(), reply_markup=get_support_back_kb())
-
-
-@router.callback_query(F.data == CB_SUPPORT_BACK)
-async def support_back_callback(cb: types.CallbackQuery):
-    await _clear_promo_input_pending(cb.from_user.id)
-    await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
-    await cb.answer()
-    if cb.message:
-        text, markup = await _render_profile_screen(cb.from_user)
-        await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
 
 @router.message(F.text == BTN_BUY)
