@@ -60,7 +60,8 @@ from ui_constants import (
     CB_ADMIN_MAINTENANCE_REFRESH, CB_ADMIN_OPEN_USER_CARD_PREFIX, CB_ADMIN_PAYMENTS, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30, CB_ADMIN_PRICE_EDIT_7,
     CB_ADMIN_PRICE_EDIT_90, CB_ADMIN_PRICE_SAVE, CB_ADMIN_PRICES, CB_ADMIN_PROMOCODES, CB_ADMIN_PROMO_CREATE, CB_ADMIN_PROMO_DISABLE, CB_ADMIN_PROMO_LIST, CB_ADMIN_REFERRALS,
     CB_ADMIN_SERVICE_SETTINGS, CB_ADMIN_SERVICE_SUPPORT, CB_ADMIN_SERVICE_DOWNLOAD, CB_ADMIN_SERVICE_REFERRAL_TOGGLE,
-    CB_ADMIN_SERVICE_INVITEE_BONUS, CB_ADMIN_SERVICE_INVITER_BONUS, CB_ADMIN_SERVICE_TORRENT_TOGGLE,
+    CB_ADMIN_SERVICE_INVITEE_BONUS, CB_ADMIN_SERVICE_INVITER_BONUS, CB_ADMIN_SERVICE_REF_RECURRING_BONUS,
+    CB_ADMIN_SERVICE_REF_RECURRING_MIN, CB_ADMIN_SERVICE_TORRENT_TOGGLE,
     CB_ADMIN_TEXT_OVERRIDES, CB_ADMIN_TEXT_START, CB_ADMIN_TEXT_BUY_MENU, CB_ADMIN_TEXT_RENEW_MENU, CB_ADMIN_TEXT_SUPPORT,
     CB_ADMIN_TEXT_RESET_PREFIX, CB_ADMIN_TEXT_SET_PREFIX,
     CB_ADMIN_REFRESH_HEALTH, CB_ADMIN_REFRESH_REFERRALS, CB_ADMIN_STATS, CB_ADMIN_SYNC,
@@ -120,6 +121,8 @@ SERVICE_SUPPORT_INPUT_ACTION_KEY = "service_support_input"
 SERVICE_DOWNLOAD_INPUT_ACTION_KEY = "service_download_input"
 SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY = "service_invitee_bonus_input"
 SERVICE_INVITER_BONUS_INPUT_ACTION_KEY = "service_inviter_bonus_input"
+SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY = "service_ref_recurring_bonus_input"
+SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY = "service_ref_recurring_min_input"
 TEXT_OVERRIDE_INPUT_ACTION_KEY = "text_override_input"
 ADD_DAYS_CONFIRM_ACTION_KEY = "add_days_confirm"
 ADMIN_CONFIRM_TOKEN_TTL_SECONDS = 15 * 60
@@ -271,6 +274,8 @@ class HasPendingServiceSettingsInput(BaseFilter):
             SERVICE_DOWNLOAD_INPUT_ACTION_KEY,
             SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY,
             SERVICE_INVITER_BONUS_INPUT_ACTION_KEY,
+            SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY,
+            SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY,
         )
         for key in keys:
             if await get_pending_admin_action(ADMIN_ID, key):
@@ -297,6 +302,8 @@ async def _clear_service_settings_pending() -> None:
         SERVICE_DOWNLOAD_INPUT_ACTION_KEY,
         SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY,
         SERVICE_INVITER_BONUS_INPUT_ACTION_KEY,
+        SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY,
+        SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY,
     ):
         await clear_pending_admin_action(ADMIN_ID, key)
     await clear_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY)
@@ -809,6 +816,8 @@ async def _render_service_settings_text() -> str:
     referral_enabled = int(await get_setting("REFERRAL_ENABLED", int) or 0)
     invitee_bonus = int(await get_setting("REFERRAL_INVITEE_BONUS_DAYS", int) or 5)
     inviter_bonus = int(await get_setting("REFERRAL_INVITER_BONUS_DAYS", int) or 3)
+    recurring_bonus = int(await get_setting("REFERRAL_RECURRING_INVITER_BONUS_DAYS", int) or 2)
+    recurring_min_purchase = int(await get_setting("REFERRAL_RECURRING_MIN_PURCHASE_DAYS", int) or 30)
     torrent_enabled = int(await get_setting("TORRENT_POLICY_TEXT_ENABLED", int) or 0)
     support_username = str(getattr(config, "SUPPORT_USERNAME", "") or "").strip() or "не задан"
     download_url = str(getattr(config, "DOWNLOAD_URL", "") or "").strip() or "не задан"
@@ -819,6 +828,8 @@ async def _render_service_settings_text() -> str:
         f"🎁 Рефералы: <b>{_bool_on_off(referral_enabled)}</b>\n"
         f"🎁 Бонус другу: <b>{invitee_bonus} дн.</b>\n"
         f"🏅 Бонус пригласившему: <b>{inviter_bonus} дн.</b>\n"
+        f"🔁 Recurring бонус пригласившему: <b>{recurring_bonus} дн.</b>\n"
+        f"📏 Min дней для recurring: <b>{recurring_min_purchase} дн.</b>\n"
         f"⚠️ Предупреждение о торрентах: <b>{_bool_on_off(torrent_enabled)}</b>"
     )
 
@@ -2161,6 +2172,26 @@ async def admin_service_inviter_bonus_start(cb: types.CallbackQuery):
     await cb.answer()
 
 
+@router.callback_query(F.data == CB_ADMIN_SERVICE_REF_RECURRING_BONUS)
+async def admin_service_ref_recurring_bonus_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await _clear_service_settings_pending()
+    await set_pending_admin_action(ADMIN_ID, SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY})
+    await cb.message.answer("Введите recurring-бонус пригласившему в днях (целое > 0).")
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_SERVICE_REF_RECURRING_MIN)
+async def admin_service_ref_recurring_min_start(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await _clear_service_settings_pending()
+    await set_pending_admin_action(ADMIN_ID, SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY, {"action": SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY})
+    await cb.message.answer("Введите минимальную длительность покупки для recurring (целое > 0).")
+    await cb.answer()
+
+
 @router.callback_query(F.data == CB_ADMIN_SERVICE_TORRENT_TOGGLE)
 async def admin_service_torrent_toggle(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
@@ -2452,13 +2483,25 @@ async def admin_service_settings_capture_input(message: types.Message):
         return
     invitee_pending = await get_pending_admin_action(ADMIN_ID, SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY)
     inviter_pending = await get_pending_admin_action(ADMIN_ID, SERVICE_INVITER_BONUS_INPUT_ACTION_KEY)
-    if not invitee_pending and not inviter_pending:
+    recurring_bonus_pending = await get_pending_admin_action(ADMIN_ID, SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY)
+    recurring_min_pending = await get_pending_admin_action(ADMIN_ID, SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY)
+    if not invitee_pending and not inviter_pending and not recurring_bonus_pending and not recurring_min_pending:
         return
     if not raw.isdigit() or int(raw) <= 0:
         await message.answer("Нужно положительное целое число.")
         return
-    key = "REFERRAL_INVITEE_BONUS_DAYS" if invitee_pending else "REFERRAL_INVITER_BONUS_DAYS"
-    action_key = SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY if invitee_pending else SERVICE_INVITER_BONUS_INPUT_ACTION_KEY
+    if invitee_pending:
+        key = "REFERRAL_INVITEE_BONUS_DAYS"
+        action_key = SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY
+    elif inviter_pending:
+        key = "REFERRAL_INVITER_BONUS_DAYS"
+        action_key = SERVICE_INVITER_BONUS_INPUT_ACTION_KEY
+    elif recurring_bonus_pending:
+        key = "REFERRAL_RECURRING_INVITER_BONUS_DAYS"
+        action_key = SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY
+    else:
+        key = "REFERRAL_RECURRING_MIN_PURCHASE_DAYS"
+        action_key = SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY
     await set_app_setting(key, raw, updated_by=ADMIN_ID)
     await clear_pending_admin_action(ADMIN_ID, action_key)
     await write_audit_log(ADMIN_ID, "admin_referral_bonus_set", f"key={key};value={raw}")

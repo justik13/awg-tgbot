@@ -44,6 +44,8 @@ DEFAULT_ENV: dict[str, str] = {
     'REFERRAL_ENABLED': '1',
     'REFERRAL_INVITEE_BONUS_DAYS': '5',
     'REFERRAL_INVITER_BONUS_DAYS': '3',
+    'REFERRAL_RECURRING_INVITER_BONUS_DAYS': '2',
+    'REFERRAL_RECURRING_MIN_PURCHASE_DAYS': '30',
     'EGRESS_DENYLIST_ENABLED': '1',
     'EGRESS_DENYLIST_DOMAINS': (
         'gosuslugi.ru,www.gosuslugi.ru,esia.gosuslugi.ru,pos.gosuslugi.ru,gosweb.gosuslugi.ru,'

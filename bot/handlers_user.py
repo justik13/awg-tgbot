@@ -94,7 +94,7 @@ from ui_constants import (
     CB_USER_REISSUE_CONFIRM,
 )
 from content_settings import get_setting, get_text
-from referrals import capture_referral_start, get_referral_screen_data
+from referrals import build_referral_inviter_banner_text, capture_referral_start, get_referral_screen_data
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 from payments import clear_pending_invoice_for_user
 
@@ -516,10 +516,14 @@ async def noop_callback(cb: types.CallbackQuery):
 async def start(message: types.Message, command: CommandObject):
     await _clear_promo_input_pending(message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    referral_banner_text: str | None = None
     if command.args:
-        await capture_referral_start(message.from_user.id, command.args.strip())
+        capture_result = await capture_referral_start(message.from_user.id, command.args.strip())
+        referral_banner_text = await build_referral_inviter_banner_text(capture_result)
     if message.from_user.id == ADMIN_ID:
         maybe_set_support_username(message.from_user.username)
+    if referral_banner_text:
+        await message.answer(referral_banner_text, parse_mode="HTML")
     await message.answer(await get_text("start"), parse_mode="HTML", reply_markup=get_main_menu(message.from_user.id, ADMIN_ID))
 
 
@@ -864,6 +868,11 @@ async def referrals_from_profile(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
+    if int(await get_setting("REFERRAL_ENABLED", int) or 0) != 1:
+        await cb.answer()
+        if cb.message:
+            await _send_or_edit_user_screen(cb, await get_text("referral_unavailable"))
+        return
     await cb.answer()
     me = await cb.bot.get_me()
     bot_username = getattr(me, "username", "") or "bot"
@@ -885,6 +894,7 @@ async def referrals_from_profile(cb: types.CallbackQuery):
             rewarded_count=data["rewarded_count"],
             bonus_days=data["bonus_days"],
             invitee_bonus_days_total=data["invitee_bonus_days_total"],
+            recurring_min_purchase_days=int(await get_setting("REFERRAL_RECURRING_MIN_PURCHASE_DAYS", int) or 30),
         ),
         reply_markup=get_referrals_kb(),
     )

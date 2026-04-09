@@ -51,6 +51,7 @@ from content_settings import get_text
 from referrals import (
     apply_referral_recurring_inviter_reward,
     apply_referral_rewards_on_first_payment,
+    notify_inviter_about_referral_recurring_reward,
     notify_inviter_about_referral_reward,
 )
 from texts import get_payment_result_text
@@ -540,11 +541,13 @@ async def process_payment_provisioning(payment_id: str, user_id: int, payload: s
         if rewarded:
             await notify_inviter_about_referral_reward(bot, user_id)
         else:
-            await apply_referral_recurring_inviter_reward(
+            recurring_rewarded = await apply_referral_recurring_inviter_reward(
                 invitee_user_id=user_id,
                 payment_id=payment_id,
                 purchased_days=days,
             )
+            if recurring_rewarded:
+                await notify_inviter_about_referral_recurring_reward(bot, user_id, purchased_days=days)
         return True
     except Exception as e:
         retry_at = (utc_now_naive() + timedelta(seconds=PAYMENT_RETRY_DELAY_SECONDS)).isoformat()
