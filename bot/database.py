@@ -1445,27 +1445,39 @@ async def create_referral_recurring_reward_once(
 
 
 async def get_referral_summary(user_id: int) -> dict[str, int]:
-    invited = await fetchone("SELECT COUNT(*) FROM referral_attributions WHERE inviter_user_id = ?", (user_id,))
-    rewarded = await fetchone("SELECT COUNT(*) FROM referral_rewards WHERE inviter_user_id = ?", (user_id,))
     row = await fetchone(
         """
-        SELECT COALESCE(SUM(inviter_bonus_days), 0), COALESCE(SUM(invitee_bonus_days), 0)
-        FROM referral_rewards
-        WHERE inviter_user_id = ? OR invitee_user_id = ?
+        SELECT
+            (SELECT COUNT(*) FROM referral_attributions WHERE inviter_user_id = ?),
+            (SELECT COUNT(*) FROM referral_rewards WHERE inviter_user_id = ?),
+            (SELECT COALESCE(SUM(inviter_bonus_days), 0) FROM referral_rewards WHERE inviter_user_id = ?),
+            (SELECT COALESCE(SUM(inviter_bonus_days), 0) FROM referral_recurring_rewards WHERE inviter_user_id = ?),
+            (SELECT COALESCE(SUM(invitee_bonus_days), 0) FROM referral_rewards WHERE inviter_user_id = ?),
+            (SELECT COALESCE(SUM(invitee_bonus_days), 0) FROM referral_rewards WHERE invitee_user_id = ?)
         """,
-        (user_id, user_id),
+        (user_id, user_id, user_id, user_id, user_id, user_id),
     )
-    recurring = await fetchone(
-        "SELECT COALESCE(SUM(inviter_bonus_days), 0) FROM referral_recurring_rewards WHERE inviter_user_id = ?",
-        (user_id,),
-    )
-    inviter_bonus = (int(row[0]) if row else 0) + (int(recurring[0]) if recurring else 0)
-    invitee_bonus = int(row[1]) if row else 0
+    invited_count = int(row[0]) if row else 0
+    rewarded_count_first_payment = int(row[1]) if row else 0
+    inviter_first_payment_bonus_days_total = int(row[2]) if row else 0
+    inviter_recurring_bonus_days_total = int(row[3]) if row else 0
+    friends_bonus_days_total = int(row[4]) if row else 0
+    user_invitee_bonus_days_total = int(row[5]) if row else 0
+    inviter_bonus_days_total = inviter_first_payment_bonus_days_total + inviter_recurring_bonus_days_total
+    overall_bonus_days_total = inviter_bonus_days_total + friends_bonus_days_total + user_invitee_bonus_days_total
     return {
-        "invited_count": int(invited[0]) if invited else 0,
-        "rewarded_count": int(rewarded[0]) if rewarded else 0,
-        "inviter_bonus_days": inviter_bonus,
-        "invitee_bonus_days": invitee_bonus,
+        "invited_count": invited_count,
+        "rewarded_count_first_payment": rewarded_count_first_payment,
+        "inviter_first_payment_bonus_days_total": inviter_first_payment_bonus_days_total,
+        "inviter_recurring_bonus_days_total": inviter_recurring_bonus_days_total,
+        "inviter_bonus_days_total": inviter_bonus_days_total,
+        "friends_bonus_days_total": friends_bonus_days_total,
+        "user_invitee_bonus_days_total": user_invitee_bonus_days_total,
+        "overall_bonus_days_total": overall_bonus_days_total,
+        # Backward compatibility for existing handlers/admin summaries.
+        "rewarded_count": rewarded_count_first_payment,
+        "inviter_bonus_days": inviter_bonus_days_total,
+        "invitee_bonus_days": user_invitee_bonus_days_total,
     }
 
 
