@@ -13,6 +13,8 @@ from config import (
     REFERRAL_ENABLED,
     REFERRAL_INVITEE_BONUS_DAYS,
     REFERRAL_INVITER_BONUS_DAYS,
+    REFERRAL_RECURRING_INVITER_BONUS_DAYS,
+    REFERRAL_RECURRING_MIN_PURCHASE_DAYS,
     TORRENT_POLICY_TEXT_ENABLED,
     VPN_SUBNET_PREFIX,
     logger,
@@ -148,7 +150,18 @@ TEXT_DEFAULTS: dict[str, str] = {
         "Как работает:\n"
         "• Друг открывает бота по вашей ссылке.\n"
         "• При первой оплате бонус получают и друг, и вы.\n"
-        "• При последующих оплатах от 30 дней вы получаете дополнительный бонус."
+        "• При последующих оплатах от {recurring_min_purchase_days} дней вы получаете дополнительный бонус."
+    ),
+    "referral_inviter_banner": (
+        "🎁 Вас пригласил <b>{inviter_display_name}</b>\n"
+        "После первой оплаты бонус получите и вы, и пригласивший."
+    ),
+    "referral_unavailable": "Реферальная программа сейчас недоступна.",
+    "referral_recurring_reward_notification": (
+        "🔁 <b>Повторный реферальный бонус начислен</b>\n\n"
+        "Пользователь <b>{invitee_name}</b> (ID: <code>{invitee_user_id}</code>) совершил повторную оплату на "
+        "<b>{purchased_days} дн.</b>\n"
+        "Вам начислено <b>+{recurring_bonus_days} дн.</b> за повторный реферальный бонус."
     ),
     "policy_torrent": "⚠️ Не рекомендуется использовать торренты/P2P через сервис: это повышает риск abuse-жалоб.",
     "policy_sensitive": "ℹ️ Часть чувствительных сайтов/сервисов может быть недоступна через VPN по policy сервиса.",
@@ -161,6 +174,8 @@ TEXT_REQUIRED_PLACEHOLDERS: dict[str, set[str]] = {
     "support_contact": {"support_username"},
     "buy_menu": {"configs_per_user", "price_lines"},
     "renew_menu": {"remaining", "price_lines"},
+    "referral_inviter_banner": {"inviter_display_name"},
+    "referral_recurring_reward_notification": {"invitee_name", "invitee_user_id", "purchased_days", "recurring_bonus_days"},
 }
 
 SETTING_DEFAULTS: dict[str, Any] = {
@@ -168,6 +183,8 @@ SETTING_DEFAULTS: dict[str, Any] = {
     "REFERRAL_ENABLED": int(REFERRAL_ENABLED),
     "REFERRAL_INVITEE_BONUS_DAYS": REFERRAL_INVITEE_BONUS_DAYS,
     "REFERRAL_INVITER_BONUS_DAYS": REFERRAL_INVITER_BONUS_DAYS,
+    "REFERRAL_RECURRING_INVITER_BONUS_DAYS": REFERRAL_RECURRING_INVITER_BONUS_DAYS,
+    "REFERRAL_RECURRING_MIN_PURCHASE_DAYS": REFERRAL_RECURRING_MIN_PURCHASE_DAYS,
     "EGRESS_DENYLIST_ENABLED": int(EGRESS_DENYLIST_ENABLED),
     "EGRESS_DENYLIST_DOMAINS": EGRESS_DENYLIST_DOMAINS,
     "EGRESS_DENYLIST_CIDRS": EGRESS_DENYLIST_CIDRS,

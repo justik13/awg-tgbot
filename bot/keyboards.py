@@ -7,7 +7,8 @@ from ui_constants import (
     CB_ADMIN_MAINTENANCE_OFF, CB_ADMIN_MAINTENANCE_ON, CB_ADMIN_MAINTENANCE_REFRESH, CB_ADMIN_PAYMENTS, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30,
     CB_ADMIN_PRICE_EDIT_7, CB_ADMIN_PRICE_EDIT_90, CB_ADMIN_PRICE_SAVE, CB_ADMIN_PRICES, CB_ADMIN_REFERRALS,
     CB_ADMIN_SERVICE_SETTINGS, CB_ADMIN_SERVICE_SUPPORT, CB_ADMIN_SERVICE_DOWNLOAD, CB_ADMIN_SERVICE_REFERRAL_TOGGLE,
-    CB_ADMIN_SERVICE_INVITEE_BONUS, CB_ADMIN_SERVICE_INVITER_BONUS, CB_ADMIN_SERVICE_TORRENT_TOGGLE,
+    CB_ADMIN_SERVICE_INVITEE_BONUS, CB_ADMIN_SERVICE_INVITER_BONUS, CB_ADMIN_SERVICE_REF_RECURRING_BONUS,
+    CB_ADMIN_SERVICE_REF_RECURRING_MIN, CB_ADMIN_SERVICE_TORRENT_TOGGLE,
     CB_ADMIN_TEXT_OVERRIDES, CB_ADMIN_TEXT_START, CB_ADMIN_TEXT_BUY_MENU, CB_ADMIN_TEXT_RENEW_MENU, CB_ADMIN_TEXT_SUPPORT,
     CB_ADMIN_TEXT_SET_PREFIX,
     CB_ADMIN_TEXT_RESET_PREFIX,
@@ -358,6 +359,8 @@ def get_admin_service_settings_kb(ref_enabled: int, torrent_enabled: int) -> Inl
             [InlineKeyboardButton(text=f"🎁 Рефералы: {'ВКЛ' if ref_enabled == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_SERVICE_REFERRAL_TOGGLE)],
             [InlineKeyboardButton(text="🎁 Бонус другу", callback_data=CB_ADMIN_SERVICE_INVITEE_BONUS)],
             [InlineKeyboardButton(text="🏅 Бонус пригласившему", callback_data=CB_ADMIN_SERVICE_INVITER_BONUS)],
+            [InlineKeyboardButton(text="🔁 Recurring бонус пригласившему", callback_data=CB_ADMIN_SERVICE_REF_RECURRING_BONUS)],
+            [InlineKeyboardButton(text="📏 Min дней для recurring", callback_data=CB_ADMIN_SERVICE_REF_RECURRING_MIN)],
             [InlineKeyboardButton(text=f"⚠️ Предупреждение о торрентах: {'ВКЛ' if torrent_enabled == 1 else 'ВЫКЛ'}", callback_data=CB_ADMIN_SERVICE_TORRENT_TOGGLE)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
         ]

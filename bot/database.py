@@ -1375,12 +1375,48 @@ async def get_referral_attribution(invitee_user_id: int) -> tuple[int, str] | No
     return (int(row[0]), str(row[1])) if row else None
 
 
+async def get_referral_inviter_identity(user_id: int) -> tuple[str | None, str | None]:
+    row = await fetchone(
+        "SELECT tg_username, first_name FROM users WHERE user_id = ?",
+        (user_id,),
+    )
+    return (str(row[0]) if row and row[0] else None, str(row[1]) if row and row[1] else None)
+
+
 async def user_has_paid_subscription(user_id: int) -> bool:
     row = await fetchone(
         "SELECT 1 FROM payments WHERE user_id = ? AND status = 'applied' LIMIT 1",
         (user_id,),
     )
     return bool(row)
+
+
+async def has_user_received_service_access(user_id: int) -> bool:
+    row = await fetchone(
+        """
+        SELECT EXISTS(
+            SELECT 1
+            FROM users
+            WHERE user_id = ?
+              AND sub_until != '0'
+        )
+        OR EXISTS(
+            SELECT 1
+            FROM payments
+            WHERE user_id = ?
+              AND status = 'applied'
+            LIMIT 1
+        )
+        OR EXISTS(
+            SELECT 1
+            FROM keys
+            WHERE user_id = ?
+            LIMIT 1
+        )
+        """,
+        (user_id, user_id, user_id),
+    )
+    return bool(row and int(row[0]) == 1)
 
 
 async def create_referral_reward_once(
