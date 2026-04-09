@@ -2474,10 +2474,12 @@ EOF
 restore_from_backup() {
   local backup_root="${BACKUP_ROOT}"
   local selected_index="" selected_archive="" confirm_restore=""
-  local db_file db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before service_state_after_stop=""
-  local archive_env_file archive_db_path="" restored_db_file="" restored_db_basename=""
+  local original_db_file payload_db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before service_state_after_stop=""
+  local archive_env_file archive_db_path="" archive_db_file="" archive_db_basename=""
+  local restore_target_db_file="" rollback_target_db_file="" rollback_cleanup_db_file=""
   local -a archive_entries=() restore_members=()
   local restore_ok=0 rollback_ok=0 smokecheck_ok=0 helper_sync_ok=0 rollback_helper_sync_ok=0 rollback_smoke_ok=0 restore_blocked=0
+  local restored_bundle_written=0
   mapfile -t archives < <(find "$backup_root" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' | sort -r)
   if [[ ${#archives[@]} -eq 0 ]]; then
     warn "Локальные бэкапы не найдены: ${backup_root}"
@@ -2498,43 +2500,44 @@ restore_from_backup() {
     return 1
   fi
   selected_archive="${archives[$((selected_index - 1))]}"
-  db_file="$(get_bot_db_file)"
-  db_basename="$(basename "$db_file")"
+  original_db_file="$(get_bot_db_file)"
+  rollback_target_db_file="$original_db_file"
+  payload_db_basename="$(basename "$original_db_file")"
   mapfile -t archive_entries < <(tar -tzf "$selected_archive" 2>/dev/null || true)
   if [[ ${#archive_entries[@]} -eq 0 ]]; then
     warn "Архив повреждён или пуст: $(basename "$selected_archive")"
     return 1
   fi
-  restore_members=("$db_basename")
-  if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-wal"; then
-    restore_members+=("${db_basename}-wal")
+  restore_members=("$payload_db_basename")
+  if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-wal"; then
+    restore_members+=("${payload_db_basename}-wal")
   fi
-  if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-shm"; then
-    restore_members+=("${db_basename}-shm")
+  if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-shm"; then
+    restore_members+=("${payload_db_basename}-shm")
   fi
   meta_content="$(tar -xOf "$selected_archive" metadata.txt 2>/dev/null || true)"
   if [[ -n "$meta_content" ]]; then
-    db_basename="$(printf '%s\n' "$meta_content" | awk -F= '/^db_file=/{print $2}' | tail -n1)"
-    [[ -n "$db_basename" ]] || db_basename="$(basename "$db_file")"
-    restore_members=("$db_basename")
-    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-wal"; then
-      restore_members+=("${db_basename}-wal")
+    payload_db_basename="$(printf '%s\n' "$meta_content" | awk -F= '/^db_file=/{print $2}' | tail -n1)"
+    [[ -n "$payload_db_basename" ]] || payload_db_basename="$(basename "$original_db_file")"
+    restore_members=("$payload_db_basename")
+    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-wal"; then
+      restore_members+=("${payload_db_basename}-wal")
     fi
-    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-shm"; then
-      restore_members+=("${db_basename}-shm")
+    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-shm"; then
+      restore_members+=("${payload_db_basename}-shm")
     fi
   fi
   if ! printf '%s\n' "${archive_entries[@]}" | grep -Fxq ".env"; then
     warn "Архив не содержит .env: $(basename "$selected_archive")"
     return 1
   fi
-  if ! printf '%s\n' "${archive_entries[@]}" | grep -Fxq "$db_basename"; then
-    warn "Архив не содержит основной SQLite файл ${db_basename}."
+  if ! printf '%s\n' "${archive_entries[@]}" | grep -Fxq "$payload_db_basename"; then
+    warn "Архив не содержит основной SQLite файл ${payload_db_basename}."
     return 1
   fi
 
   echo "Выбран архив: $(basename "$selected_archive")"
-  echo "Будет восстановлено: ${db_basename} (+sidecars при наличии), .env"
+  echo "Будет восстановлено: ${payload_db_basename} (+sidecars при наличии), .env"
   if ! confirm_explicit "Продолжить восстановление?"; then
     warn "Восстановление отменено."
     return 1
@@ -2561,32 +2564,34 @@ restore_from_backup() {
 
   snapshot_dir="$(mktemp -d "${backup_root}/pre-restore-$(date -u +%Y%m%d_%H%M%S)-XXXXXX")"
   chmod 700 "$snapshot_dir" || true
-  if [[ -f "$db_file" ]]; then snapshot_sqlite_runtime_bundle "$db_file" "$snapshot_dir" "db.before" || true; fi
+  if [[ -f "$original_db_file" ]]; then snapshot_sqlite_runtime_bundle "$original_db_file" "$snapshot_dir" "db.before" || true; fi
   if [[ -f "$ENV_FILE" ]]; then cp -a "$ENV_FILE" "$snapshot_dir/.env.before"; fi
 
   tmp_restore="$(mktemp -d)"
   if tar -xzf "$selected_archive" -C "$tmp_restore" "${restore_members[@]}" ".env"; then
     archive_env_file="$tmp_restore/.env"
     archive_db_path="$(get_env_value_from_file "$archive_env_file" DB_PATH)"
-    restored_db_file="$(resolve_db_file_from_db_path "$archive_db_path")"
-    restored_db_basename="$(basename "$restored_db_file")"
-    if [[ "$restored_db_basename" != "$db_basename" ]]; then
-      warn "Restore: DB_PATH из .env указывает на другой basename (${restored_db_basename}), архив содержит ${db_basename}."
+    archive_db_file="$(resolve_db_file_from_db_path "$archive_db_path")"
+    archive_db_basename="$(basename "$archive_db_file")"
+    restore_target_db_file="$archive_db_file"
+    rollback_cleanup_db_file="$restore_target_db_file"
+    if [[ "$archive_db_basename" != "$payload_db_basename" ]]; then
+      warn "Restore: DB_PATH из .env указывает на другой basename (${archive_db_basename}), архив содержит ${payload_db_basename}."
       warn "Восстановление отменено, чтобы не разложить .env и SQLite в разные пути."
       restore_blocked=1
     else
-      mkdir -p "$(dirname "$restored_db_file")" "$INSTALL_DIR"
+      mkdir -p "$(dirname "$restore_target_db_file")" "$INSTALL_DIR"
     fi
     if [[ "$restore_blocked" == "1" ]]; then
       :
-    elif [[ ! -f "$tmp_restore/$db_basename" ]]; then
-      warn "Restore: основной SQLite файл не извлечён из архива (${db_basename})."
-    elif ! sqlite_runtime_quick_check "$tmp_restore/$db_basename"; then
-      warn "SQLite quick_check не пройден для ${db_basename} из архива."
-    elif restore_sqlite_runtime_bundle "$tmp_restore/$db_basename" "$restored_db_file"; then
+    elif [[ ! -f "$tmp_restore/$payload_db_basename" ]]; then
+      warn "Restore: основной SQLite файл не извлечён из архива (${payload_db_basename})."
+    elif ! sqlite_runtime_quick_check "$tmp_restore/$payload_db_basename"; then
+      warn "SQLite quick_check не пройден для ${payload_db_basename} из архива."
+    elif restore_sqlite_runtime_bundle "$tmp_restore/$payload_db_basename" "$restore_target_db_file"; then
       install -m 600 "$archive_env_file" "$ENV_FILE"
       repair_runtime_file_access "$ENV_FILE" 600
-      db_file="$restored_db_file"
+      restored_bundle_written=1
       restore_ok=1
     else
       warn "Ошибка восстановления SQLite bundle из архива."
@@ -2597,9 +2602,12 @@ restore_from_backup() {
   rm -rf "$tmp_restore"
 
   if [[ "$restore_ok" != "1" ]]; then
-    if [[ -f "$snapshot_dir/db.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/db.before" "$db_file" && rollback_ok=1; fi
+    if [[ -f "$snapshot_dir/db.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/db.before" "$rollback_target_db_file" && rollback_ok=1; fi
     if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
     repair_runtime_file_access "$ENV_FILE" 600
+    if [[ "$restored_bundle_written" == "1" && -n "$rollback_cleanup_db_file" && "$rollback_cleanup_db_file" != "$rollback_target_db_file" ]]; then
+      rm -f "$rollback_cleanup_db_file" "${rollback_cleanup_db_file}-wal" "${rollback_cleanup_db_file}-shm" || true
+    fi
     warn "Восстановление не завершено. Откат: $([[ "$rollback_ok" == "1" ]] && echo 'выполнен' || echo 'частично/не выполнен')."
     if [[ "$service_active_before" == "active" ]] && require_command systemctl && service_exists; then
       systemctl start "$SERVICE_NAME" 2>/dev/null || true
@@ -2624,9 +2632,12 @@ restore_from_backup() {
 
   if [[ "$restore_ok" != "1" || "$smokecheck_ok" != "1" ]]; then
     warn "Восстановление не прошло post-restore smokecheck. Запускаю rollback."
-    if [[ -f "$snapshot_dir/db.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/db.before" "$db_file" && rollback_ok=1; fi
+    if [[ -f "$snapshot_dir/db.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/db.before" "$rollback_target_db_file" && rollback_ok=1; fi
     if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
     repair_runtime_file_access "$ENV_FILE" 600
+    if [[ "$restored_bundle_written" == "1" && -n "$rollback_cleanup_db_file" && "$rollback_cleanup_db_file" != "$rollback_target_db_file" ]]; then
+      rm -f "$rollback_cleanup_db_file" "${rollback_cleanup_db_file}-wal" "${rollback_cleanup_db_file}-shm" || true
+    fi
     if sync_awg_helper_policy_from_env; then
       rollback_helper_sync_ok=1
     else
@@ -2647,7 +2658,7 @@ restore_from_backup() {
   fi
 
   echo "Восстановление завершено."
-  echo "Права файлов восстановлены для ${BOT_USER}: ${db_file}, ${ENV_FILE}"
+  echo "Права файлов восстановлены для ${BOT_USER}: ${restore_target_db_file}, ${ENV_FILE}"
   if [[ "$helper_sync_ok" == "1" ]]; then
     echo "Helper policy sync: успешно."
   fi
