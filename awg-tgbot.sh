@@ -108,13 +108,53 @@ UPDATE_CACHE_TTL=15
 UPDATE_CACHE_BRANCH=""
 REMOVE_BACKUPS_WERE_PRESENT=0
 REMOVE_BACKUPS_RESTORED=0
+REINSTALL_GUARD_ACTIVE=0
+REINSTALL_GUARD_ROLLING_BACK=0
+REINSTALL_GUARD_REPO_SNAPSHOT=""
+REINSTALL_GUARD_RUNTIME_SNAPSHOT=""
+REINSTALL_GUARD_PENDING_LOG=""
 
 print_line() { printf '%s\n' "------------------------------------------------------------"; }
 info() { printf '[*] %s\n' "$*" >&2; }
 ok() { printf '[+] %s\n' "$*" >&2; }
 warn() { printf '[!] %s\n' "$*" >&2; }
 die() { warn "$*"; exit 1; }
-trap 'printf "[!] Ошибка на строке %s. Подробности: %s\n" "$LINENO" "$INSTALL_LOG" >&2' ERR
+
+clear_reinstall_guard() {
+  REINSTALL_GUARD_ACTIVE=0
+  REINSTALL_GUARD_ROLLING_BACK=0
+  REINSTALL_GUARD_REPO_SNAPSHOT=""
+  REINSTALL_GUARD_RUNTIME_SNAPSHOT=""
+  REINSTALL_GUARD_PENDING_LOG=""
+}
+
+set_reinstall_guard() {
+  local repo_snapshot_dir="$1" runtime_snapshot_dir="$2"
+  REINSTALL_GUARD_ACTIVE=1
+  REINSTALL_GUARD_ROLLING_BACK=0
+  REINSTALL_GUARD_REPO_SNAPSHOT="$repo_snapshot_dir"
+  REINSTALL_GUARD_RUNTIME_SNAPSHOT="$runtime_snapshot_dir"
+  REINSTALL_GUARD_PENDING_LOG=""
+}
+
+register_reinstall_guard_pending_log() {
+  local pending_log_archive="${1:-}"
+  REINSTALL_GUARD_PENDING_LOG="$pending_log_archive"
+}
+
+on_error_trap() {
+  local line_no="${1:-unknown}" exit_code="${2:-1}"
+  if [[ "$REINSTALL_GUARD_ACTIVE" == "1" && "$REINSTALL_GUARD_ROLLING_BACK" != "1" ]]; then
+    REINSTALL_GUARD_ROLLING_BACK=1
+    warn "Сработал аварийный rollback-guard для reinstall (line=${line_no}, rc=${exit_code})."
+    set +e
+    rollback_failed_reinstall "$REINSTALL_GUARD_REPO_SNAPSHOT" "$REINSTALL_GUARD_RUNTIME_SNAPSHOT" "$REINSTALL_GUARD_PENDING_LOG"
+    set -e
+    clear_reinstall_guard
+  fi
+  printf "[!] Ошибка на строке %s (rc=%s). Подробности: %s\n" "$line_no" "$exit_code" "$INSTALL_LOG" >&2
+}
+trap 'on_error_trap "$LINENO" "$?"' ERR
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -268,6 +308,22 @@ get_env_value() {
   local key="$1"
   [[ -f "$ENV_FILE" ]] || return 0
   grep -m1 -E "^${key}=" "$ENV_FILE" | cut -d'=' -f2- || true
+}
+
+get_env_value_from_file() {
+  local env_file="$1" key="$2"
+  [[ -f "$env_file" ]] || return 0
+  grep -m1 -E "^${key}=" "$env_file" | cut -d'=' -f2- || true
+}
+
+resolve_db_file_from_db_path() {
+  local db_path="$1"
+  [[ -n "$db_path" ]] || db_path="$DEFAULT_DB_PATH"
+  if [[ "$db_path" = /* ]]; then
+    printf '%s' "$db_path"
+  else
+    printf '%s' "$INSTALL_DIR/$db_path"
+  fi
 }
 
 set_env_value() {
@@ -1095,6 +1151,16 @@ ${APP_LOG_FILE} {
   copytruncate
   su ${BOT_USER} ${BOT_USER}
 }
+${INSTALL_LOG} {
+  weekly
+  rotate 8
+  compress
+  delaycompress
+  missingok
+  notifempty
+  copytruncate
+  su root root
+}
 ROTATE
   chmod 644 /etc/logrotate.d/awg-tgbot
 }
@@ -1601,13 +1667,15 @@ configure_autobackup_timer() {
   return 0
 }
 
-persist_remote_sha() {
-  local sha
-  sha="$(fetch_remote_sha)"
+persist_release_sha() {
+  local sha="${1:-}"
+  mkdir -p "$STATE_DIR"
   if [[ -n "$sha" ]]; then
-    mkdir -p "$STATE_DIR"
     printf '%s\n' "$sha" > "$VERSION_FILE"
+    return 0
   fi
+  rm -f "$VERSION_FILE" || true
+  warn "release_sha не записан: точный commit развернутого кода не удалось подтвердить."
   return 0
 }
 
@@ -1795,8 +1863,9 @@ check_updates() {
 }
 
 install_or_reinstall_flow() {
-  local mode="$1" tmp_dir choice api_token admin_id server_name secret value default
+  local mode="$1" tmp_dir choice api_token admin_id server_name secret value default deploy_sha=""
   local pre_reinstall_runtime_snapshot="" pre_reinstall_repo_snapshot="" pre_reinstall_log_pending="" pre_reinstall_log_final="" pre_reinstall_log_archive=""
+  clear_reinstall_guard
   detect_install_state
   if [[ "$STATE_KERNEL_SUPPORTED" != "1" ]]; then
     die "Ядро Linux слишком старое для AWG (нужно >= 5.6)."
@@ -1849,11 +1918,19 @@ install_or_reinstall_flow() {
     ok "Создан snapshot файлов приложения перед переустановкой: ${pre_reinstall_repo_snapshot}"
   fi
 
-  tmp_dir="$(download_repo)" || die "Не удалось скачать код проекта из GitHub."
+  deploy_sha="$(fetch_remote_sha)"
+  if [[ -n "$deploy_sha" ]]; then
+    info "Целевой commit для развёртывания: ${deploy_sha}"
+    tmp_dir="$(download_repo "$deploy_sha")" || die "Не удалось скачать код проекта из GitHub (commit=${deploy_sha})."
+  else
+    warn "Не удалось определить remote SHA. Использую ветку ${REPO_BRANCH} без commit pinning."
+    tmp_dir="$(download_repo "$REPO_BRANCH")" || die "Не удалось скачать код проекта из GitHub (branch=${REPO_BRANCH})."
+  fi
   stop_service_if_exists
   if [[ "$mode" == "reinstall" ]]; then
     pre_reinstall_runtime_snapshot="$(create_runtime_snapshot_before_reinstall pre-reinstall)"
     ok "Создан snapshot runtime (DB/.env/state) после остановки сервиса: ${pre_reinstall_runtime_snapshot}"
+    set_reinstall_guard "$pre_reinstall_repo_snapshot" "$pre_reinstall_runtime_snapshot"
   fi
   deploy_repo "$tmp_dir" || { rm -rf "$tmp_dir"; die "Не удалось развернуть файлы проекта."; }
   rm -rf "$tmp_dir"
@@ -1922,9 +1999,10 @@ install_or_reinstall_flow() {
   write_service || die "Не удалось создать systemd сервис."
   configure_autobackup_timer || die "Не удалось настроить systemd timer autobackup."
   persist_repo_branch
-  persist_remote_sha
+  persist_release_sha "$deploy_sha"
   if [[ "$mode" == "reinstall" ]]; then
     IFS=$'\t' read -r pre_reinstall_log_pending pre_reinstall_log_final < <(prepare_bot_log_for_reinstall)
+    register_reinstall_guard_pending_log "$pre_reinstall_log_pending"
     if ! start_service; then
       restore_bot_log_after_failed_reinstall "$pre_reinstall_log_pending"
       die "Не удалось запустить сервис."
@@ -1932,16 +2010,24 @@ install_or_reinstall_flow() {
   else
     start_service || die "Не удалось запустить сервис."
   fi
-  if [[ "$mode" == "reinstall" ]]; then
-    if run_post_restart_smokecheck; then
+  if run_post_restart_smokecheck; then
+    if [[ "$mode" == "reinstall" ]]; then
+      clear_reinstall_guard
       pre_reinstall_log_archive="$(finalize_bot_log_reinstall_archive "$pre_reinstall_log_pending" "$pre_reinstall_log_final")"
       ok "Smokecheck после переустановки пройден."
       if [[ -n "$pre_reinstall_log_archive" ]]; then
         info "bot.log очищен для новой версии; предыдущий лог сохранён в ${pre_reinstall_log_archive}"
       fi
     else
+      ok "Smokecheck после установки пройден."
+    fi
+  else
+    if [[ "$mode" == "reinstall" ]]; then
+      clear_reinstall_guard
       rollback_failed_reinstall "$pre_reinstall_repo_snapshot" "$pre_reinstall_runtime_snapshot" "$pre_reinstall_log_pending"
       die "Переустановка не прошла smokecheck. Выполнен rollback к предыдущему рабочему состоянию."
+    else
+      die "Установка не прошла post-start smokecheck. Проверь логи и диагностику."
     fi
   fi
   ok "Готово. Бот установлен/переустановлен."
@@ -1952,15 +2038,9 @@ install_or_reinstall_flow() {
 }
 
 get_bot_db_file() {
-  local db_path db_file
+  local db_path
   db_path="$(get_env_value DB_PATH)"
-  [[ -n "$db_path" ]] || db_path="$DEFAULT_DB_PATH"
-  if [[ "$db_path" = /* ]]; then
-    db_file="$db_path"
-  else
-    db_file="$INSTALL_DIR/$db_path"
-  fi
-  printf '%s' "$db_file"
+  resolve_db_file_from_db_path "$db_path"
 }
 
 repair_runtime_file_access() {
@@ -1973,7 +2053,7 @@ repair_runtime_file_access() {
 
 create_runtime_snapshot_before_reinstall() {
   local snapshot_label="$1"
-  local db_file snapshot_dir
+  local db_file snapshot_dir service_active="unknown" service_enabled="unknown"
   db_file="$(get_bot_db_file)"
   snapshot_dir="$(mktemp -d "${SAFETY_SNAPSHOT_PREFIX}-${snapshot_label}-$(date -u +%Y%m%d_%H%M%S)-XXXXXX")"
   chmod 700 "$snapshot_dir" || true
@@ -1989,6 +2069,11 @@ create_runtime_snapshot_before_reinstall() {
   if [[ -f "$REPO_BRANCH_FILE" ]]; then
     cp -a "$REPO_BRANCH_FILE" "$snapshot_dir/repo_branch.before"
   fi
+  if service_exists && require_command systemctl; then
+    service_active="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+    service_enabled="$(systemctl is-enabled "$SERVICE_NAME" 2>/dev/null || true)"
+  fi
+  printf 'service_active=%s\nservice_enabled=%s\n' "${service_active:-unknown}" "${service_enabled:-unknown}" > "$snapshot_dir/service_state.before"
   printf '%s' "$snapshot_dir"
 }
 
@@ -2112,9 +2197,39 @@ PY
   [[ "$failed" == "0" ]]
 }
 
+restore_service_state_from_snapshot() {
+  local runtime_snapshot_dir="$1"
+  local state_file="${runtime_snapshot_dir}/service_state.before"
+  local service_active_before="" service_enabled_before=""
+  [[ -f "$state_file" ]] || return 0
+  service_active_before="$(get_env_value_from_file "$state_file" service_active)"
+  service_enabled_before="$(get_env_value_from_file "$state_file" service_enabled)"
+
+  if require_command systemctl && service_exists; then
+    if [[ "$service_enabled_before" == "enabled" ]]; then
+      systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    elif [[ "$service_enabled_before" == "disabled" ]]; then
+      systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    fi
+
+    case "$service_active_before" in
+      active)
+        start_service || true
+        ;;
+      inactive|failed)
+        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        ;;
+      *)
+        ;;
+    esac
+  fi
+  return 0
+}
+
 rollback_failed_reinstall() {
   local repo_snapshot_dir="$1" runtime_snapshot_dir="$2" pending_log_archive="$3"
-  local db_file restore_repo_ok=0 restore_runtime_ok=0 restore_meta_ok=0 deps_ok=0 helper_sync_ok=0 post_rollback_smoke_ok=0
+  local db_file restore_repo_ok=0 restore_runtime_ok=0 restore_db_ok=0 restore_env_ok=0 restore_meta_ok=0 deps_ok=0 helper_sync_ok=0 post_rollback_smoke_ok=0
+  local service_state_restore_ok=0
   db_file="$(get_bot_db_file)"
   warn "Переустановка завершилась с ошибкой smokecheck. Выполняю аварийный rollback."
   warn "Rollback: останавливаю текущий неудачный сервис перед восстановлением runtime."
@@ -2131,12 +2246,21 @@ rollback_failed_reinstall() {
   fi
 
   if [[ -f "$runtime_snapshot_dir/db.before" ]]; then
-    restore_sqlite_runtime_bundle "$runtime_snapshot_dir/db.before" "$db_file" || true
-    restore_runtime_ok=1
+    if restore_sqlite_runtime_bundle "$runtime_snapshot_dir/db.before" "$db_file"; then
+      restore_db_ok=1
+    fi
+  else
+    restore_db_ok=1
   fi
   if [[ -f "$runtime_snapshot_dir/.env.before" ]]; then
-    install -m 600 "$runtime_snapshot_dir/.env.before" "$ENV_FILE" || true
-    repair_runtime_file_access "$ENV_FILE" 600
+    if install -m 600 "$runtime_snapshot_dir/.env.before" "$ENV_FILE"; then
+      repair_runtime_file_access "$ENV_FILE" 600
+      restore_env_ok=1
+    fi
+  else
+    restore_env_ok=1
+  fi
+  if [[ "$restore_db_ok" == "1" && "$restore_env_ok" == "1" ]]; then
     restore_runtime_ok=1
   fi
 
@@ -2165,18 +2289,24 @@ rollback_failed_reinstall() {
   else
     warn "Rollback: не удалось синхронизировать helper policy из восстановленного .env."
   fi
-  start_service || true
-  if run_post_restart_smokecheck; then
-    post_rollback_smoke_ok=1
-    warn "Rollback выполнен: предыдущий runtime снова проходит проверку после перезапуска."
+  restore_service_state_from_snapshot "$runtime_snapshot_dir"
+  service_state_restore_ok=1
+  if require_command systemctl && service_exists && [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" == "active" ]]; then
+    if run_post_restart_smokecheck; then
+      post_rollback_smoke_ok=1
+      warn "Rollback выполнен: предыдущий runtime снова проходит проверку после перезапуска."
+    else
+      warn "Rollback выполнен частично: сервис после rollback всё ещё не проходит проверку после перезапуска."
+    fi
   else
-    warn "Rollback выполнен частично: сервис после rollback всё ещё не проходит проверку после перезапуска."
+    post_rollback_smoke_ok=1
+    warn "Rollback: сервис восстановлен в неактивное состояние (как до reinstall), post-rollback smokecheck пропущен."
   fi
 
-  if [[ "$restore_repo_ok" == "1" && "$restore_runtime_ok" == "1" && "$restore_meta_ok" == "1" && "$deps_ok" == "1" && "$helper_sync_ok" == "1" && "$post_rollback_smoke_ok" == "1" ]]; then
-    warn "Переустановка не удалась; rollback выполнен полностью (код+DB+.env+state+deps), helper policy: ok, post-rollback проверка: ok."
+  if [[ "$restore_repo_ok" == "1" && "$restore_runtime_ok" == "1" && "$restore_meta_ok" == "1" && "$deps_ok" == "1" && "$helper_sync_ok" == "1" && "$service_state_restore_ok" == "1" && "$post_rollback_smoke_ok" == "1" ]]; then
+    warn "Переустановка не удалась; rollback выполнен полностью (код+DB+.env+state+deps+service-state), helper policy: ok."
   else
-    warn "Переустановка не удалась; rollback выполнен частично (repo=${restore_repo_ok}, runtime=${restore_runtime_ok}, state=${restore_meta_ok}, deps=${deps_ok}, helper policy=${helper_sync_ok}, post-rollback проверка=${post_rollback_smoke_ok})."
+    warn "Переустановка не удалась; rollback выполнен частично (repo=${restore_repo_ok}, runtime=${restore_runtime_ok}, state=${restore_meta_ok}, deps=${deps_ok}, helper policy=${helper_sync_ok}, service_state=${service_state_restore_ok}, post-rollback проверка=${post_rollback_smoke_ok})."
   fi
 }
 
@@ -2344,9 +2474,12 @@ EOF
 restore_from_backup() {
   local backup_root="${BACKUP_ROOT}"
   local selected_index="" selected_archive="" confirm_restore=""
-  local db_file db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before service_state_after_stop=""
+  local original_db_file payload_db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before service_state_after_stop=""
+  local archive_env_file archive_db_path="" archive_db_file="" archive_db_basename=""
+  local restore_target_db_file="" rollback_target_db_file="" rollback_cleanup_db_file=""
   local -a archive_entries=() restore_members=()
-  local restore_ok=0 rollback_ok=0 smokecheck_ok=0 helper_sync_ok=0 rollback_helper_sync_ok=0 rollback_smoke_ok=0
+  local restore_ok=0 rollback_ok=0 smokecheck_ok=0 helper_sync_ok=0 rollback_helper_sync_ok=0 rollback_smoke_ok=0 restore_blocked=0
+  local restored_bundle_written=0
   mapfile -t archives < <(find "$backup_root" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' | sort -r)
   if [[ ${#archives[@]} -eq 0 ]]; then
     warn "Локальные бэкапы не найдены: ${backup_root}"
@@ -2367,43 +2500,44 @@ restore_from_backup() {
     return 1
   fi
   selected_archive="${archives[$((selected_index - 1))]}"
-  db_file="$(get_bot_db_file)"
-  db_basename="$(basename "$db_file")"
+  original_db_file="$(get_bot_db_file)"
+  rollback_target_db_file="$original_db_file"
+  payload_db_basename="$(basename "$original_db_file")"
   mapfile -t archive_entries < <(tar -tzf "$selected_archive" 2>/dev/null || true)
   if [[ ${#archive_entries[@]} -eq 0 ]]; then
     warn "Архив повреждён или пуст: $(basename "$selected_archive")"
     return 1
   fi
-  restore_members=("$db_basename")
-  if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-wal"; then
-    restore_members+=("${db_basename}-wal")
+  restore_members=("$payload_db_basename")
+  if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-wal"; then
+    restore_members+=("${payload_db_basename}-wal")
   fi
-  if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-shm"; then
-    restore_members+=("${db_basename}-shm")
+  if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-shm"; then
+    restore_members+=("${payload_db_basename}-shm")
   fi
   meta_content="$(tar -xOf "$selected_archive" metadata.txt 2>/dev/null || true)"
   if [[ -n "$meta_content" ]]; then
-    db_basename="$(printf '%s\n' "$meta_content" | awk -F= '/^db_file=/{print $2}' | tail -n1)"
-    [[ -n "$db_basename" ]] || db_basename="$(basename "$db_file")"
-    restore_members=("$db_basename")
-    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-wal"; then
-      restore_members+=("${db_basename}-wal")
+    payload_db_basename="$(printf '%s\n' "$meta_content" | awk -F= '/^db_file=/{print $2}' | tail -n1)"
+    [[ -n "$payload_db_basename" ]] || payload_db_basename="$(basename "$original_db_file")"
+    restore_members=("$payload_db_basename")
+    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-wal"; then
+      restore_members+=("${payload_db_basename}-wal")
     fi
-    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${db_basename}-shm"; then
-      restore_members+=("${db_basename}-shm")
+    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-shm"; then
+      restore_members+=("${payload_db_basename}-shm")
     fi
   fi
   if ! printf '%s\n' "${archive_entries[@]}" | grep -Fxq ".env"; then
     warn "Архив не содержит .env: $(basename "$selected_archive")"
     return 1
   fi
-  if ! printf '%s\n' "${archive_entries[@]}" | grep -Fxq "$db_basename"; then
-    warn "Архив не содержит основной SQLite файл ${db_basename}."
+  if ! printf '%s\n' "${archive_entries[@]}" | grep -Fxq "$payload_db_basename"; then
+    warn "Архив не содержит основной SQLite файл ${payload_db_basename}."
     return 1
   fi
 
   echo "Выбран архив: $(basename "$selected_archive")"
-  echo "Будет восстановлено: ${db_basename} (+sidecars при наличии), .env"
+  echo "Будет восстановлено: ${payload_db_basename} (+sidecars при наличии), .env"
   if ! confirm_explicit "Продолжить восстановление?"; then
     warn "Восстановление отменено."
     return 1
@@ -2430,17 +2564,34 @@ restore_from_backup() {
 
   snapshot_dir="$(mktemp -d "${backup_root}/pre-restore-$(date -u +%Y%m%d_%H%M%S)-XXXXXX")"
   chmod 700 "$snapshot_dir" || true
-  if [[ -f "$db_file" ]]; then snapshot_sqlite_runtime_bundle "$db_file" "$snapshot_dir" "${db_basename}.before" || true; fi
+  if [[ -f "$original_db_file" ]]; then snapshot_sqlite_runtime_bundle "$original_db_file" "$snapshot_dir" "db.before" || true; fi
   if [[ -f "$ENV_FILE" ]]; then cp -a "$ENV_FILE" "$snapshot_dir/.env.before"; fi
 
   tmp_restore="$(mktemp -d)"
   if tar -xzf "$selected_archive" -C "$tmp_restore" "${restore_members[@]}" ".env"; then
-    mkdir -p "$(dirname "$db_file")" "$INSTALL_DIR"
-    if ! sqlite_runtime_quick_check "$tmp_restore/$db_basename"; then
-      warn "SQLite quick_check не пройден для ${db_basename} из архива."
-    elif restore_sqlite_runtime_bundle "$tmp_restore/$db_basename" "$db_file"; then
-      install -m 600 "$tmp_restore/.env" "$ENV_FILE"
+    archive_env_file="$tmp_restore/.env"
+    archive_db_path="$(get_env_value_from_file "$archive_env_file" DB_PATH)"
+    archive_db_file="$(resolve_db_file_from_db_path "$archive_db_path")"
+    archive_db_basename="$(basename "$archive_db_file")"
+    restore_target_db_file="$archive_db_file"
+    rollback_cleanup_db_file="$restore_target_db_file"
+    if [[ "$archive_db_basename" != "$payload_db_basename" ]]; then
+      warn "Restore: DB_PATH из .env указывает на другой basename (${archive_db_basename}), архив содержит ${payload_db_basename}."
+      warn "Восстановление отменено, чтобы не разложить .env и SQLite в разные пути."
+      restore_blocked=1
+    else
+      mkdir -p "$(dirname "$restore_target_db_file")" "$INSTALL_DIR"
+    fi
+    if [[ "$restore_blocked" == "1" ]]; then
+      :
+    elif [[ ! -f "$tmp_restore/$payload_db_basename" ]]; then
+      warn "Restore: основной SQLite файл не извлечён из архива (${payload_db_basename})."
+    elif ! sqlite_runtime_quick_check "$tmp_restore/$payload_db_basename"; then
+      warn "SQLite quick_check не пройден для ${payload_db_basename} из архива."
+    elif restore_sqlite_runtime_bundle "$tmp_restore/$payload_db_basename" "$restore_target_db_file"; then
+      install -m 600 "$archive_env_file" "$ENV_FILE"
       repair_runtime_file_access "$ENV_FILE" 600
+      restored_bundle_written=1
       restore_ok=1
     else
       warn "Ошибка восстановления SQLite bundle из архива."
@@ -2451,9 +2602,12 @@ restore_from_backup() {
   rm -rf "$tmp_restore"
 
   if [[ "$restore_ok" != "1" ]]; then
-    if [[ -f "$snapshot_dir/${db_basename}.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/${db_basename}.before" "$db_file" && rollback_ok=1; fi
+    if [[ -f "$snapshot_dir/db.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/db.before" "$rollback_target_db_file" && rollback_ok=1; fi
     if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
     repair_runtime_file_access "$ENV_FILE" 600
+    if [[ "$restored_bundle_written" == "1" && -n "$rollback_cleanup_db_file" && "$rollback_cleanup_db_file" != "$rollback_target_db_file" ]]; then
+      rm -f "$rollback_cleanup_db_file" "${rollback_cleanup_db_file}-wal" "${rollback_cleanup_db_file}-shm" || true
+    fi
     warn "Восстановление не завершено. Откат: $([[ "$rollback_ok" == "1" ]] && echo 'выполнен' || echo 'частично/не выполнен')."
     if [[ "$service_active_before" == "active" ]] && require_command systemctl && service_exists; then
       systemctl start "$SERVICE_NAME" 2>/dev/null || true
@@ -2478,9 +2632,12 @@ restore_from_backup() {
 
   if [[ "$restore_ok" != "1" || "$smokecheck_ok" != "1" ]]; then
     warn "Восстановление не прошло post-restore smokecheck. Запускаю rollback."
-    if [[ -f "$snapshot_dir/${db_basename}.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/${db_basename}.before" "$db_file" && rollback_ok=1; fi
+    if [[ -f "$snapshot_dir/db.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/db.before" "$rollback_target_db_file" && rollback_ok=1; fi
     if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
     repair_runtime_file_access "$ENV_FILE" 600
+    if [[ "$restored_bundle_written" == "1" && -n "$rollback_cleanup_db_file" && "$rollback_cleanup_db_file" != "$rollback_target_db_file" ]]; then
+      rm -f "$rollback_cleanup_db_file" "${rollback_cleanup_db_file}-wal" "${rollback_cleanup_db_file}-shm" || true
+    fi
     if sync_awg_helper_policy_from_env; then
       rollback_helper_sync_ok=1
     else
@@ -2501,7 +2658,7 @@ restore_from_backup() {
   fi
 
   echo "Восстановление завершено."
-  echo "Права файлов восстановлены для ${BOT_USER}: ${db_file}, ${ENV_FILE}"
+  echo "Права файлов восстановлены для ${BOT_USER}: ${restore_target_db_file}, ${ENV_FILE}"
   if [[ "$helper_sync_ok" == "1" ]]; then
     echo "Helper policy sync: успешно."
   fi
@@ -2944,9 +3101,9 @@ run_log_snapshot() {
     install:last) print_file_tail_tty_safe "$INSTALL_LOG" 50 ;;
     paths:show)
       screen_echo "Пути логов:"
-      screen_echo "• bot.log: ${APP_LOG_FILE}"
-      screen_echo "• install log: ${INSTALL_LOG}"
-      screen_echo "• systemd service: ${SERVICE_NAME}"
+      screen_echo "• Runtime (bot.log): ${APP_LOG_FILE}"
+      screen_echo "• Installer (install log): ${INSTALL_LOG}"
+      screen_echo "• Service (systemd unit): ${SERVICE_NAME}"
       ;;
     *)
       screen_warn "Неизвестный режим логов: ${mode}:${variant}"
@@ -3058,6 +3215,11 @@ show_logs_doctor() {
     screen_warn "Файл не найден: $APP_LOG_FILE"
   fi
 
+  screen_line
+  screen_echo "Где искать проблему:"
+  screen_echo "• app-level: «Лог бота» (${APP_LOG_FILE})"
+  screen_echo "• service-level: «Лог сервиса» (journalctl -u ${SERVICE_NAME})"
+  screen_echo "• installer-level: «Дополнительно → install log» (${INSTALL_LOG})"
   screen_line
   screen_echo "Рекомендуемые действия:"
   if [[ "$STATE_DOCKER_DAEMON" != "1" ]]; then
