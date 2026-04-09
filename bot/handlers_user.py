@@ -10,6 +10,7 @@ from config import (
     ADMIN_ID,
     SERVER_NAME,
     USER_REISSUE_COOLDOWN_SECONDS,
+    get_download_url,
     logger,
     get_support_username,
     maybe_set_support_username,
@@ -501,7 +502,7 @@ def _help_clients_kb() -> types.InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="📱 iOS", url="https://apps.apple.com/app/amnezia-vpn/id1600529902")
     kb.button(text="🤖 Android", url="https://play.google.com/store/apps/details?id=org.amnezia.vpn")
-    kb.button(text="🪟 Windows", url="https://amnezia.org/downloads")
+    kb.button(text="🪟 Windows", url=get_download_url())
     kb.adjust(1)
     return kb.as_markup()
 
@@ -821,7 +822,7 @@ async def support_connection_callback(cb: types.CallbackQuery):
     if cb.message:
         await _send_or_edit_user_screen(
             cb,
-            f"{await get_instruction_with_policy_text()}\n\n{await get_support_short_text()}",
+            await get_instruction_with_policy_text(),
             reply_markup=get_support_subpage_back_kb(),
             disable_web_page_preview=True,
         )
@@ -842,7 +843,7 @@ async def support_useful_callback(cb: types.CallbackQuery):
     if cb.message:
         await _send_or_edit_user_screen(
             cb,
-            await get_text("support_useful"),
+            await get_text("support_useful", download_url=get_download_url()),
             reply_markup=get_support_subpage_back_kb(),
             disable_web_page_preview=True,
         )
