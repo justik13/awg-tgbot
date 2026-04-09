@@ -97,6 +97,19 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "saved")
         self.assertEqual(await get_referral_attribution(2003), (1001, "INVITER100"))
 
+    async def test_capture_referral_start_blocked_when_promo_led_to_real_access(self):
+        await ensure_user_exists(2004, "promo_live", "Promo Live")
+        await create_promo_code("PROMO2", bonus_days=7, max_activations=10, created_by=1)
+        promo_result = await database.activate_promo_code(2004, "PROMO2")
+        self.assertEqual(promo_result["status"], "reserved")
+        # Emulate successful promo access grant: user got real subscription access.
+        await execute("UPDATE users SET sub_until = '2035-02-01T00:00:00' WHERE user_id = ?", (2004,))
+
+        result = await capture_referral_start(2004, "ref_INVITER100")
+
+        self.assertEqual(result.status, "blocked_existing_access")
+        self.assertIsNone(await get_referral_attribution(2004))
+
     async def test_capture_referral_start_self_referral_blocked(self):
         result = await capture_referral_start(1001, "ref_INVITER100")
         self.assertEqual(result.status, "self_referral")

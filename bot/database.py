@@ -1392,6 +1392,11 @@ async def user_has_paid_subscription(user_id: int) -> bool:
 
 
 async def has_user_received_service_access(user_id: int) -> bool:
+    # Intentionally does NOT gate by promo_activations alone.
+    # Promo activation has a reservation step; reservation-only rows must not
+    # make a user permanently ineligible for referral attribution.
+    # We block only by factual service signals: active/historical subscription,
+    # applied payment, or issued keys.
     row = await fetchone(
         """
         SELECT EXISTS(
