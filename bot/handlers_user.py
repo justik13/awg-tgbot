@@ -874,8 +874,17 @@ async def referrals_from_profile(cb: types.CallbackQuery):
             "referral_screen",
             ref_link=data["link"],
             invited_count=data["invited_count"],
+            rewarded_count_first_payment=data["rewarded_count_first_payment"],
+            inviter_first_payment_bonus_days_total=data["inviter_first_payment_bonus_days_total"],
+            inviter_bonus_days_total=data["inviter_bonus_days_total"],
+            inviter_recurring_bonus_days_total=data["inviter_recurring_bonus_days_total"],
+            friends_bonus_days_total=data["friends_bonus_days_total"],
+            user_invitee_bonus_days_total=data["user_invitee_bonus_days_total"],
+            overall_bonus_days_total=data["overall_bonus_days_total"],
+            # Backward compatibility for custom text overrides.
             rewarded_count=data["rewarded_count"],
             bonus_days=data["bonus_days"],
+            invitee_bonus_days_total=data["invitee_bonus_days_total"],
         ),
         reply_markup=get_referrals_kb(),
     )
