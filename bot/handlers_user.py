@@ -58,6 +58,7 @@ from keyboards import (
     get_referrals_kb,
     get_support_back_kb,
     get_support_center_kb,
+    get_support_subpage_back_kb,
     get_user_reissue_confirm_kb,
 )
 from texts import (
@@ -86,6 +87,7 @@ from ui_constants import (
     CB_SUPPORT_CONNECTION,
     CB_SUPPORT_PAYMENT,
     CB_SUPPORT_TERMS,
+    CB_SUPPORT_USEFUL,
     CB_USER_REISSUE_DEVICE_PREFIX,
     CB_USER_REISSUE_CANCEL,
     CB_USER_REISSUE_CONFIRM,
@@ -809,7 +811,7 @@ async def support_payment_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
-        await _send_or_edit_user_screen(cb, _payment_support_text(), reply_markup=get_support_back_kb())
+        await _send_or_edit_user_screen(cb, _payment_support_text(), reply_markup=get_support_subpage_back_kb())
 
 
 @router.callback_query(F.data == CB_SUPPORT_CONNECTION)
@@ -820,7 +822,7 @@ async def support_connection_callback(cb: types.CallbackQuery):
         await _send_or_edit_user_screen(
             cb,
             f"{await get_instruction_with_policy_text()}\n\n{await get_support_short_text()}",
-            reply_markup=get_support_back_kb(),
+            reply_markup=get_support_subpage_back_kb(),
             disable_web_page_preview=True,
         )
 
@@ -830,7 +832,20 @@ async def support_terms_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer()
     if cb.message:
-        await _send_or_edit_user_screen(cb, _terms_text(), reply_markup=get_support_back_kb())
+        await _send_or_edit_user_screen(cb, _terms_text(), reply_markup=get_support_subpage_back_kb())
+
+
+@router.callback_query(F.data == CB_SUPPORT_USEFUL)
+async def support_useful_callback(cb: types.CallbackQuery):
+    await _clear_promo_input_pending(cb.from_user.id)
+    await cb.answer()
+    if cb.message:
+        await _send_or_edit_user_screen(
+            cb,
+            await get_text("support_useful"),
+            reply_markup=get_support_subpage_back_kb(),
+            disable_web_page_preview=True,
+        )
 
 
 @router.message(F.text == BTN_BUY)

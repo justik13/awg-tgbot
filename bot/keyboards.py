@@ -25,7 +25,7 @@ from ui_constants import (
     CB_OPEN_SUPPORT, CB_OPEN_TRAFFIC_DEVICES,
     CB_PROMO_INPUT_CANCEL, CB_PROMO_INPUT_START,
     CB_SHOW_BUY_MENU, CB_SHOW_INSTRUCTION, CB_USER_REISSUE_CANCEL, CB_USER_REISSUE_CONFIRM,
-    CB_SUPPORT_CONNECTION, CB_SUPPORT_PAYMENT, CB_SUPPORT_TERMS, CB_USER_REISSUE_DEVICE_PREFIX,
+    CB_SUPPORT_CONNECTION, CB_SUPPORT_PAYMENT, CB_SUPPORT_TERMS, CB_SUPPORT_USEFUL, CB_USER_REISSUE_DEVICE_PREFIX,
     CB_CONFIRM_ADD_DAYS, CB_CANCEL_ADD_DAYS,
 )
 
@@ -151,6 +151,7 @@ def get_support_center_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="💳 Помощь с оплатой", callback_data=CB_SUPPORT_PAYMENT)],
             [InlineKeyboardButton(text="🔌 Помощь с подключением", callback_data=CB_SUPPORT_CONNECTION)],
+            [InlineKeyboardButton(text="📚 Полезное", callback_data=CB_SUPPORT_USEFUL)],
             [InlineKeyboardButton(text="📄 Краткие условия", callback_data=CB_SUPPORT_TERMS)],
             [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
         ]
@@ -161,6 +162,14 @@ def get_support_back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
+        ]
+    )
+
+
+def get_support_subpage_back_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад в поддержку", callback_data=CB_OPEN_SUPPORT)],
         ]
     )
 
