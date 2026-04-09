@@ -30,6 +30,7 @@ CB_PROMO_INPUT_CANCEL = "promo_input_cancel"
 CB_SUPPORT_PAYMENT = "support_payment"
 CB_SUPPORT_CONNECTION = "support_connection"
 CB_SUPPORT_TERMS = "support_terms"
+CB_SUPPORT_USEFUL = "support_useful"
 
 CB_ADMIN_LIST = "admin_list"
 CB_ADMIN_STATS = "admin_stats"
