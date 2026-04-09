@@ -56,7 +56,7 @@ TEXT_DEFAULTS: dict[str, str] = {
         "https://m-docs-3w5hsuiikq-ez.a.run.app/ru/\n\n"
         "• Скачать Amnezia\n"
         "Официальная страница загрузки приложений:\n"
-        "https://m-1-14-3w5hsuiikq-ez.a.run.app/ru/downloads\n\n"
+        "{download_url}\n\n"
         "• IP-списки для России\n"
         "Готовые списки российских IP-адресов для ручной настройки исключений / split tunneling:\n"
         "https://russia.iplist.opencck.org/ru/\n\n"

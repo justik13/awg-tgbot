@@ -12,6 +12,7 @@ os.environ.setdefault("SERVER_IP", "1.1.1.1:51820")
 os.environ.setdefault("ENCRYPTION_SECRET", "test-secret")
 
 from content_settings import TEXT_DEFAULTS
+from config import get_download_url
 from keyboards import get_support_center_kb, get_support_subpage_back_kb
 from ui_constants import CB_OPEN_SUPPORT, CB_SUPPORT_USEFUL
 
@@ -22,27 +23,18 @@ class SupportUsefulTests(unittest.TestCase):
         buttons = [button for row in kb.inline_keyboard for button in row]
         self.assertTrue(any(button.text == "📚 Полезное" and button.callback_data == CB_SUPPORT_USEFUL for button in buttons))
 
-    def test_support_useful_text_matches_expected(self):
-        self.assertEqual(
-            TEXT_DEFAULTS["support_useful"],
-            "📚 Полезное\n\n"
-            "• Документация Amnezia\n"
-            "Официальная документация по установке, подключению, настройке приложения и раздельному туннелированию:\n"
-            "https://docs.amnezia.org/ru/documentation/\n\n"
-            "• Зеркало документации\n"
-            "Если основной сайт не открывается:\n"
-            "https://m-docs-3w5hsuiikq-ez.a.run.app/ru/\n\n"
-            "• Скачать Amnezia\n"
-            "Официальная страница загрузки приложений:\n"
-            "https://m-1-14-3w5hsuiikq-ez.a.run.app/ru/downloads\n\n"
-            "• IP-списки для России\n"
-            "Готовые списки российских IP-адресов для ручной настройки исключений / split tunneling:\n"
-            "https://russia.iplist.opencck.org/ru/\n\n"
-            "• Полные IP-списки\n"
-            "Расширенные списки IP-адресов и сетей для более гибкой ручной маршрутизации:\n"
-            "https://iplist.opencck.org/ru/\n\n"
-            "Важно: это дополнительные материалы для ручной настройки. Базовое подключение к сервису работает и без них.",
-        )
+    def test_support_useful_text_uses_download_url_placeholder(self):
+        self.assertIn("{download_url}", TEXT_DEFAULTS["support_useful"])
+
+    def test_support_useful_renders_with_centralized_download_url(self):
+        rendered = TEXT_DEFAULTS["support_useful"].format(download_url=get_download_url())
+        self.assertIn(get_download_url(), rendered)
+        self.assertIn("• Документация Amnezia", rendered)
+        self.assertIn("• Зеркало документации", rendered)
+        self.assertIn("• Скачать Amnezia", rendered)
+        self.assertIn("https://docs.amnezia.org/ru/documentation/", rendered)
+        self.assertIn("https://russia.iplist.opencck.org/ru/", rendered)
+        self.assertIn("https://iplist.opencck.org/ru/", rendered)
 
     def test_support_subpage_back_keyboard(self):
         kb = get_support_subpage_back_kb()
@@ -59,6 +51,19 @@ class SupportUsefulTests(unittest.TestCase):
         self.assertIn("support_terms_callback", handlers_source)
         self.assertIn("support_useful_callback", handlers_source)
         self.assertEqual(handlers_source.count("reply_markup=get_support_subpage_back_kb()"), 4)
+
+    def test_support_connection_does_not_append_support_short_manually(self):
+        handlers_source = (ROOT / "bot" / "handlers_user.py").read_text(encoding="utf-8")
+        self.assertIn("await get_instruction_with_policy_text()", handlers_source)
+        self.assertNotIn(
+            'f"{await get_instruction_with_policy_text()}\\n\\n{await get_support_short_text()}"',
+            handlers_source,
+        )
+
+    def test_help_windows_link_uses_centralized_download_url(self):
+        handlers_source = (ROOT / "bot" / "handlers_user.py").read_text(encoding="utf-8")
+        self.assertIn('kb.button(text="🪟 Windows", url=get_download_url())', handlers_source)
+        self.assertNotIn("https://amnezia.org/downloads", handlers_source)
 
 
 if __name__ == "__main__":
