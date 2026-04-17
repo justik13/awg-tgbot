@@ -173,16 +173,19 @@ async def init_db() -> None:
             CREATE TABLE IF NOT EXISTS pending_broadcasts (
                 admin_id INTEGER PRIMARY KEY,
                 text TEXT NOT NULL,
+                segment TEXT NOT NULL DEFAULT 'all',
                 created_at TEXT NOT NULL
             )
             """
         )
+        await ensure_column(db, "pending_broadcasts", "segment", "TEXT NOT NULL DEFAULT 'all'")
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS broadcast_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 admin_id INTEGER NOT NULL,
                 text TEXT NOT NULL,
+                segment TEXT NOT NULL DEFAULT 'all',
                 status TEXT NOT NULL DEFAULT 'queued',
                 total_count INTEGER NOT NULL DEFAULT 0,
                 delivered_count INTEGER NOT NULL DEFAULT 0,
@@ -196,6 +199,7 @@ async def init_db() -> None:
             )
             """
         )
+        await ensure_column(db, "broadcast_jobs", "segment", "TEXT NOT NULL DEFAULT 'all'")
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS broadcast_job_targets (
@@ -474,24 +478,29 @@ async def get_pending_admin_action(admin_id: int, action_key: str) -> dict[str, 
     return _safe_load_json(row[0])
 
 
-async def set_pending_broadcast(admin_id: int, text: str) -> None:
+async def set_pending_broadcast(admin_id: int, text: str, segment: str = "all") -> None:
     await execute(
         """
-        INSERT INTO pending_broadcasts (admin_id, text, created_at)
-        VALUES (?, ?, ?)
+        INSERT INTO pending_broadcasts (admin_id, text, segment, created_at)
+        VALUES (?, ?, ?, ?)
         ON CONFLICT(admin_id)
-        DO UPDATE SET text = excluded.text, created_at = excluded.created_at
+        DO UPDATE SET
+            text = excluded.text,
+            segment = excluded.segment,
+            created_at = excluded.created_at
         """,
-        (admin_id, text, utc_now_naive().isoformat()),
+        (admin_id, text, segment, utc_now_naive().isoformat()),
     )
 
 
-async def get_pending_broadcast(admin_id: int) -> str | None:
+async def get_pending_broadcast(admin_id: int) -> dict[str, str] | None:
     row = await fetchone(
-        "SELECT text FROM pending_broadcasts WHERE admin_id = ?",
+        "SELECT text, segment FROM pending_broadcasts WHERE admin_id = ?",
         (admin_id,),
     )
-    return row[0] if row else None
+    if not row:
+        return None
+    return {"text": str(row[0]), "segment": str(row[1] or "all")}
 
 
 async def clear_pending_broadcast(admin_id: int) -> None:
@@ -1690,33 +1699,73 @@ async def rollback_promo_activation_reservation(user_id: int, code: str) -> None
         await db.close()
 
 
-async def create_broadcast_job(admin_id: int, text: str) -> int:
+async def create_broadcast_job(admin_id: int, text: str, segment: str = "all") -> int:
     now_iso = utc_now_naive().isoformat()
     db = await open_db()
     try:
         await db.execute("BEGIN IMMEDIATE")
         cur = await db.execute(
             """
-            INSERT INTO broadcast_jobs (admin_id, text, status, created_at, updated_at)
-            VALUES (?, ?, 'queued', ?, ?)
+            INSERT INTO broadcast_jobs (admin_id, text, segment, status, created_at, updated_at)
+            VALUES (?, ?, ?, 'queued', ?, ?)
             """,
-            (admin_id, text, now_iso, now_iso),
+            (admin_id, text, segment, now_iso, now_iso),
         )
-        await db.execute("UPDATE pending_broadcasts SET text = ? WHERE admin_id = ?", (text, admin_id))
+        await db.execute(
+            "UPDATE pending_broadcasts SET text = ?, segment = ? WHERE admin_id = ?",
+            (text, segment, admin_id),
+        )
         await db.commit()
         return int(cur.lastrowid)
     finally:
         await db.close()
 
 
-async def claim_next_broadcast_job() -> tuple[int, int, str, int] | None:
+def _broadcast_segment_sql_where(segment: str) -> tuple[str, tuple[object, ...]]:
+    normalized = (segment or "all").strip()
+    if normalized == "all":
+        return ("1=1", ())
+    if normalized == "active_subscription":
+        return ("u.sub_until != '0' AND u.sub_until > ?", (utc_now_naive().isoformat(),))
+    if normalized == "no_active_subscription":
+        return ("u.sub_until = '0' OR u.sub_until <= ?", (utc_now_naive().isoformat(),))
+    if normalized == "with_any_payment":
+        return ("EXISTS (SELECT 1 FROM payments p WHERE p.user_id = u.user_id)", ())
+    if normalized == "problematic_activation":
+        return (
+            """
+            EXISTS (
+                SELECT 1 FROM payments p
+                WHERE p.user_id = u.user_id
+                  AND (
+                    p.status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
+                    OR p.last_provision_status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
+                  )
+            )
+            """,
+            (),
+        )
+    if normalized == "without_keys":
+        return ("NOT EXISTS (SELECT 1 FROM keys k WHERE k.user_id = u.user_id AND k.state != 'deleted')", ())
+    if normalized == "with_referral_attribution":
+        return ("EXISTS (SELECT 1 FROM referral_attributions ra WHERE ra.invitee_user_id = u.user_id)", ())
+    return ("1=1", ())
+
+
+async def get_broadcast_segment_user_count(segment: str) -> int:
+    where_sql, where_params = _broadcast_segment_sql_where(segment)
+    row = await fetchone(f"SELECT COUNT(*) FROM users u WHERE {where_sql}", where_params)
+    return int(row[0]) if row else 0
+
+
+async def claim_next_broadcast_job() -> tuple[int, int, str, int, str] | None:
     now_iso = utc_now_naive().isoformat()
     db = await open_db()
     try:
         await db.execute("BEGIN IMMEDIATE")
         async with db.execute(
             """
-            SELECT id, admin_id, text
+            SELECT id, admin_id, text, segment
             FROM broadcast_jobs
             WHERE status = 'queued'
             ORDER BY created_at ASC
@@ -1727,14 +1776,16 @@ async def claim_next_broadcast_job() -> tuple[int, int, str, int] | None:
         if not row:
             await db.rollback()
             return None
-        job_id, admin_id, text = int(row[0]), int(row[1]), str(row[2])
+        job_id, admin_id, text, segment = int(row[0]), int(row[1]), str(row[2]), str(row[3] or "all")
+        where_sql, where_params = _broadcast_segment_sql_where(segment)
         await db.execute("DELETE FROM broadcast_job_targets WHERE job_id = ?", (job_id,))
         await db.execute(
-            """
+            f"""
             INSERT INTO broadcast_job_targets (job_id, user_id, created_at)
-            SELECT ?, user_id, ? FROM users
+            SELECT ?, u.user_id, ? FROM users u
+            WHERE {where_sql}
             """,
-            (job_id, now_iso),
+            (job_id, now_iso, *where_params),
         )
         async with db.execute("SELECT COUNT(*) FROM broadcast_job_targets WHERE job_id = ?", (job_id,)) as cursor:
             total = int((await cursor.fetchone())[0])
@@ -1750,7 +1801,7 @@ async def claim_next_broadcast_job() -> tuple[int, int, str, int] | None:
             (now_iso, total, now_iso, job_id),
         )
         await db.commit()
-        return job_id, admin_id, text, total
+        return job_id, admin_id, text, total, segment
     finally:
         await db.close()
 
@@ -1847,6 +1898,90 @@ async def fail_stale_running_broadcast_jobs(max_age_seconds: int) -> int:
         return len(stale_ids)
     finally:
         await db.close()
+
+
+async def count_problematic_activations() -> int:
+    row = await fetchone(
+        """
+        WITH latest AS (
+            SELECT
+                p.user_id,
+                p.telegram_payment_charge_id,
+                p.status,
+                p.last_provision_status,
+                ROW_NUMBER() OVER (
+                    PARTITION BY p.user_id
+                    ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.created_at DESC, p.telegram_payment_charge_id DESC
+                ) AS rn
+            FROM payments p
+        )
+        SELECT COUNT(*)
+        FROM latest
+        WHERE rn = 1
+          AND (
+            status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
+            OR last_provision_status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
+          )
+        """
+    )
+    return int(row[0]) if row else 0
+
+
+async def list_problematic_activations(limit: int, offset: int) -> list[dict[str, Any]]:
+    rows = await fetchall(
+        """
+        WITH latest AS (
+            SELECT
+                p.user_id,
+                p.telegram_payment_charge_id,
+                p.status,
+                p.last_provision_status,
+                p.created_at,
+                p.updated_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY p.user_id
+                    ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.created_at DESC, p.telegram_payment_charge_id DESC
+                ) AS rn
+            FROM payments p
+        )
+        SELECT
+            user_id,
+            telegram_payment_charge_id,
+            status,
+            last_provision_status,
+            created_at,
+            updated_at
+        FROM latest
+        WHERE rn = 1
+          AND (
+            status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
+            OR last_provision_status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
+          )
+        ORDER BY
+            CASE
+                WHEN status = 'stuck_manual' OR last_provision_status = 'stuck_manual' THEN 0
+                WHEN status = 'failed' OR last_provision_status = 'failed' THEN 1
+                WHEN status = 'needs_repair' OR last_provision_status = 'needs_repair' THEN 2
+                WHEN status = 'ready_config_pending' OR last_provision_status = 'ready_config_pending' THEN 3
+                ELSE 9
+            END ASC,
+            COALESCE(updated_at, created_at) DESC,
+            created_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        (limit, offset),
+    )
+    return [
+        {
+            "user_id": int(row[0]),
+            "payment_id": str(row[1]),
+            "status": str(row[2] or ""),
+            "last_provision_status": str(row[3] or ""),
+            "created_at": str(row[4] or ""),
+            "updated_at": str(row[5] or ""),
+        }
+        for row in rows
+    ]
 
 
 async def get_pending_jobs_stats() -> dict[str, int]:

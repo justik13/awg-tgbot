@@ -66,6 +66,8 @@ CB_ADMIN_TEXT_SET_PREFIX = "a:to:set:"
 CB_ADMIN_TEXT_RESET_PREFIX = "a:to:reset:"
 CB_ADMIN_FIND_CHARGE = "a:pm:fc"
 CB_ADMIN_LAST_PAYMENT = "a:pm:lp"
+CB_ADMIN_PROBLEM_ACTIVATIONS = "a:pm:pa"
+CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX = "a:pm:pa:p:"
 CB_ADMIN_MAINTENANCE_ON = "a:mt:on"
 CB_ADMIN_MAINTENANCE_OFF = "a:mt:off"
 CB_ADMIN_MAINTENANCE_REFRESH = "a:mt:r"
@@ -91,6 +93,7 @@ CB_ADMIN_REFRESH_HEALTH = "a:rf:h"
 
 CB_BROADCAST_CONFIRM = "broadcast_confirm"
 CB_BROADCAST_CANCEL = "broadcast_cancel"
+CB_BROADCAST_SEGMENT_PREFIX = "broadcast_segment:"
 
 CB_ADMIN_USERS_PAGE_PREFIX = "admin_users_page_"
 CB_ADMIN_MANAGE_USER_PREFIX = "admin_manage_user_"
@@ -111,5 +114,6 @@ CB_CONFIRM_DEVICE_REISSUE = "confirm_device_reissue"
 CB_CANCEL_DEVICE_REISSUE = "cancel_device_reissue"
 CB_CONFIRM_ADD_DAYS = "a:ud:c"
 CB_CANCEL_ADD_DAYS = "a:ud:x"
+CB_ADMIN_TEXT_VIEW_PREFIX = "a:to:view:"
 def is_admin_callback_data(data: str | None) -> bool:
     return bool(data and data.startswith(ADMIN_CALLBACK_PREFIX))

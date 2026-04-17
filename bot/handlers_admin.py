@@ -27,14 +27,15 @@ from config import (
     set_stars_price,
 )
 from database import (
-    clear_pending_admin_action, clear_pending_broadcast, create_broadcast_job, create_promo_code, db_health_info, disable_promo_code, fetchall, fetchone, fetchval,
+    clear_pending_admin_action, clear_pending_broadcast, count_problematic_activations, create_broadcast_job, create_promo_code, db_health_info, disable_promo_code, fetchall, fetchone, fetchval,
+    get_broadcast_segment_user_count,
     get_payment_summary_by_charge_id,
     get_latest_user_payment_summary,
     get_user_device_traffic_summary,
     get_user_total_traffic_bytes,
     list_promo_codes, list_text_overrides,
     get_metric, get_pending_jobs_stats, get_recovery_lag_seconds,
-    get_pending_admin_action, get_pending_broadcast, get_recent_audit, get_referral_admin_stats, get_referral_summary, get_user_keys, get_user_meta, normalize_promo_code, pop_pending_admin_action,
+    get_pending_admin_action, get_pending_broadcast, get_recent_audit, get_referral_admin_stats, get_referral_summary, get_user_keys, get_user_meta, list_problematic_activations, normalize_promo_code, pop_pending_admin_action,
     reset_text_override, set_app_setting, set_pending_admin_action, set_pending_broadcast, set_text_override, write_audit_log,
 )
 from helpers import (
@@ -50,7 +51,7 @@ from device_activity import render_device_activity_line
 from traffic import format_bytes_compact, render_device_traffic_line
 from keyboards import (
     get_admin_confirm_kb, get_admin_inline_kb, get_admin_maintenance_kb, get_admin_payments_kb, get_admin_price_confirm_kb, get_admin_prices_kb, get_admin_promocodes_kb,
-    get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb, get_open_user_card_kb,
+    get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb, get_broadcast_segment_kb, get_open_user_card_kb, get_problem_activations_kb,
     get_admin_network_policy_kb, get_admin_denylist_kb,
     get_admin_service_settings_kb, get_admin_text_override_item_kb, get_admin_text_overrides_kb, get_admin_add_days_confirm_kb,
 )
@@ -58,17 +59,18 @@ from ui_constants import (
     BTN_ADMIN, CB_ADMIN_BACK_MAIN, CB_ADMIN_BROADCAST,
     CB_ADMIN_COMMANDS, CB_ADMIN_FIND_CHARGE, CB_ADMIN_HEALTH, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_LIST, CB_ADMIN_MAINTENANCE, CB_ADMIN_MAINTENANCE_OFF, CB_ADMIN_MAINTENANCE_ON,
     CB_ADMIN_MAINTENANCE_REFRESH, CB_ADMIN_OPEN_USER_CARD_PREFIX, CB_ADMIN_PAYMENTS, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30, CB_ADMIN_PRICE_EDIT_7,
+    CB_ADMIN_PROBLEM_ACTIVATIONS, CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX,
     CB_ADMIN_PRICE_EDIT_90, CB_ADMIN_PRICE_SAVE, CB_ADMIN_PRICES, CB_ADMIN_PROMOCODES, CB_ADMIN_PROMO_CREATE, CB_ADMIN_PROMO_DISABLE, CB_ADMIN_PROMO_LIST, CB_ADMIN_REFERRALS,
     CB_ADMIN_SERVICE_SETTINGS, CB_ADMIN_SERVICE_SUPPORT, CB_ADMIN_SERVICE_DOWNLOAD, CB_ADMIN_SERVICE_REFERRAL_TOGGLE,
     CB_ADMIN_SERVICE_INVITEE_BONUS, CB_ADMIN_SERVICE_INVITER_BONUS, CB_ADMIN_SERVICE_REF_RECURRING_BONUS,
     CB_ADMIN_SERVICE_REF_RECURRING_MIN, CB_ADMIN_SERVICE_TORRENT_TOGGLE,
-    CB_ADMIN_TEXT_OVERRIDES, CB_ADMIN_TEXT_START, CB_ADMIN_TEXT_BUY_MENU, CB_ADMIN_TEXT_RENEW_MENU, CB_ADMIN_TEXT_SUPPORT,
+    CB_ADMIN_TEXT_OVERRIDES, CB_ADMIN_TEXT_START, CB_ADMIN_TEXT_BUY_MENU, CB_ADMIN_TEXT_RENEW_MENU, CB_ADMIN_TEXT_SUPPORT, CB_ADMIN_TEXT_VIEW_PREFIX,
     CB_ADMIN_TEXT_RESET_PREFIX, CB_ADMIN_TEXT_SET_PREFIX,
     CB_ADMIN_REFRESH_HEALTH, CB_ADMIN_REFRESH_REFERRALS, CB_ADMIN_STATS, CB_ADMIN_SYNC,
     CB_ADMIN_NETWORK_POLICY, CB_ADMIN_NET_DENYLIST, CB_ADMIN_NET_SYNC_NOW,
     CB_ADMIN_DENYLIST_TOGGLE, CB_ADMIN_DENYLIST_MODE_SOFT, CB_ADMIN_DENYLIST_MODE_STRICT,
     CB_ADMIN_DENYLIST_VIEW_DOMAINS, CB_ADMIN_DENYLIST_VIEW_CIDRS, CB_ADMIN_DENYLIST_REPLACE_DOMAINS, CB_ADMIN_DENYLIST_REPLACE_CIDRS, CB_ADMIN_DENYLIST_SYNC,
-    CB_BROADCAST_CANCEL, CB_BROADCAST_CONFIRM,
+    CB_BROADCAST_CANCEL, CB_BROADCAST_CONFIRM, CB_BROADCAST_SEGMENT_PREFIX,
     CB_ADMIN_USERS_PAGE_PREFIX, CB_ADMIN_MANAGE_USER_PREFIX, CB_ADMIN_ADD_DAYS_PREFIX,
     CB_ADMIN_RETRY_ACTIVATION_PREFIX,
     CB_ADMIN_DEVICE_DELETE_PREFIX, CB_ADMIN_DEVICE_REISSUE_PREFIX,
@@ -126,13 +128,44 @@ SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY = "service_ref_recurring_min_input"
 TEXT_OVERRIDE_INPUT_ACTION_KEY = "text_override_input"
 ADD_DAYS_CONFIRM_ACTION_KEY = "add_days_confirm"
 ADMIN_CONFIRM_TOKEN_TTL_SECONDS = 15 * 60
-TEXT_OVERRIDE_ALLOWED_KEYS = {"start", "buy_menu", "renew_menu", "support_contact"}
+TEXT_OVERRIDE_ALLOWED_KEYS = {
+    "start",
+    "instruction_body",
+    "support_contact",
+    "support_useful",
+    "profile_screen",
+    "buy_menu",
+    "renew_menu",
+    "payment_success",
+    "payment_pending",
+    "payment_error",
+    "payment_next_step",
+    "activation_status_no_payments",
+    "activation_status_ready",
+    "activation_status_ready_config_pending",
+    "activation_status_pending",
+    "activation_status_problem",
+    "activation_status_delayed",
+    "referral_screen",
+}
 TEXT_OVERRIDE_CALLBACK_KEY_MAP = {
     CB_ADMIN_TEXT_START: "start",
     CB_ADMIN_TEXT_BUY_MENU: "buy_menu",
     CB_ADMIN_TEXT_RENEW_MENU: "renew_menu",
     CB_ADMIN_TEXT_SUPPORT: "support_contact",
 }
+BROADCAST_SEGMENTS: list[tuple[str, str]] = [
+    ("all", "Все пользователи"),
+    ("active_subscription", "Только с активной подпиской"),
+    ("no_active_subscription", "Без активной подписки"),
+    ("with_any_payment", "С любым платежом"),
+    ("problematic_activation", "Проблемные активации"),
+    ("without_keys", "Без ключей"),
+    ("with_referral_attribution", "С реферальной привязкой"),
+]
+BROADCAST_SEGMENT_LABELS = {key: label for key, label in BROADCAST_SEGMENTS}
+BROADCAST_SEGMENT_SELECTION_ACTION_KEY = "broadcast_segment_selection"
+ADMIN_PROBLEM_ACTIVATIONS_PAGE_SIZE = 8
 PRICE_TARGETS = {
     CB_ADMIN_PRICE_EDIT_7: ("STARS_PRICE_7_DAYS", "7 дней"),
     CB_ADMIN_PRICE_EDIT_30: ("STARS_PRICE_30_DAYS", "30 дней"),
@@ -197,6 +230,28 @@ def _build_broadcast_preview(raw_text: str) -> str:
     if len(preview) > 500:
         preview = f"{preview[:500]}…"
     return escape_html(preview)
+
+
+def _broadcast_segment_label(segment: str) -> str:
+    return BROADCAST_SEGMENT_LABELS.get(segment, BROADCAST_SEGMENT_LABELS["all"])
+
+
+def _problem_activation_age_label(updated_at: str, created_at: str) -> str:
+    base_raw = (updated_at or "").strip() or (created_at or "").strip()
+    if not base_raw:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(base_raw)
+    except ValueError:
+        return _format_optional_iso_moscow(base_raw)
+    age_seconds = max(0, int((utc_now_naive() - dt).total_seconds()))
+    if age_seconds < 60:
+        return f"{age_seconds}с назад"
+    if age_seconds < 3600:
+        return f"{age_seconds // 60}м назад"
+    if age_seconds < 86400:
+        return f"{age_seconds // 3600}ч назад"
+    return f"{age_seconds // 86400}д назад"
 
 
 async def _guard_admin_callback(cb: types.CallbackQuery, *, require_message: bool = False) -> bool:
@@ -1192,6 +1247,69 @@ async def admin_payments_screen(cb: types.CallbackQuery):
     await cb.answer()
 
 
+async def _render_problem_activations_screen(target_message: types.Message, page: int) -> None:
+    total = await count_problematic_activations()
+    total_pages = max(1, (total + ADMIN_PROBLEM_ACTIVATIONS_PAGE_SIZE - 1) // ADMIN_PROBLEM_ACTIVATIONS_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    offset = page * ADMIN_PROBLEM_ACTIVATIONS_PAGE_SIZE
+    items = await list_problematic_activations(ADMIN_PROBLEM_ACTIVATIONS_PAGE_SIZE, offset)
+    if not items:
+        text = "🚨 <b>Проблемные активации</b>\n\nСейчас проблемных активаций нет."
+        markup = get_admin_simple_back_kb(CB_ADMIN_PAYMENTS, refresh_cb=CB_ADMIN_PROBLEM_ACTIVATIONS)
+    else:
+        current = items[0]
+        retry_enabled = current["status"] in {"needs_repair", "stuck_manual", "failed"} or current["last_provision_status"] in {
+            "needs_repair",
+            "stuck_manual",
+            "failed",
+            "ready_config_pending",
+        }
+        lines = [
+            "🚨 <b>Проблемные активации</b>",
+            f"Всего пользователей в проблеме: <b>{total}</b>",
+            f"Позиция: <b>{page + 1}/{total_pages}</b>",
+            "",
+            f"🆔 user_id: <code>{current['user_id']}</code>",
+            f"💳 charge_id: <code>{escape_html(current['payment_id'])}</code>",
+            f"📌 payment.status: <b>{escape_html(current['status'])}</b>",
+            f"🚦 provision: <b>{escape_html(current['last_provision_status'])}</b>",
+            f"⏱ Возраст: <b>{escape_html(_problem_activation_age_label(current['updated_at'], current['created_at']))}</b>",
+            f"🕒 Обновлён: <b>{escape_html(_format_optional_iso_moscow(current['updated_at']))}</b>",
+        ]
+        text = "\n".join(lines)
+        markup = get_problem_activations_kb(
+            page=page,
+            total_pages=total_pages,
+            user_id=int(current["user_id"]),
+            retry_enabled=retry_enabled,
+        )
+    try:
+        await target_message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+    except TelegramBadRequest:
+        await target_message.answer(text, parse_mode="HTML", reply_markup=markup)
+
+
+@router.callback_query(F.data == CB_ADMIN_PROBLEM_ACTIVATIONS)
+async def admin_problem_activations(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    await _render_problem_activations_screen(cb.message, 0)
+    await cb.answer("Готово")
+
+
+@router.callback_query(F.data.startswith(CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX))
+async def admin_problem_activations_page(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    try:
+        page = int(cb.data.removeprefix(CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX))
+    except Exception:
+        await cb.answer("Некорректная страница", show_alert=True)
+        return
+    await _render_problem_activations_screen(cb.message, page)
+    await cb.answer("Готово")
+
+
 @router.callback_query(F.data == CB_ADMIN_FIND_CHARGE)
 async def admin_payments_find_charge_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
@@ -2019,35 +2137,71 @@ async def admin_broadcast_btn(cb: types.CallbackQuery):
         return
     await cb.answer()
     await clear_pending_broadcast(ADMIN_ID)
-    await set_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY, {"action": BROADCAST_INPUT_ACTION_KEY})
-    users_total = int(await fetchval("SELECT COUNT(*) FROM users"))
+    await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
+    await set_pending_admin_action(
+        ADMIN_ID,
+        BROADCAST_SEGMENT_SELECTION_ACTION_KEY,
+        {"action": BROADCAST_SEGMENT_SELECTION_ACTION_KEY},
+    )
     await cb.message.answer(
         (
             "📢 <b>Рассылка</b>\n\n"
-            f"Сейчас в базе: <b>{users_total}</b> пользователей.\n\n"
-            "Отправьте текст рассылки одним сообщением.\n"
-            "Перед отправкой будет обязательное подтверждение."
+            "Сначала выберите сегмент получателей.\n"
+            "Снимок получателей фиксируется воркером при запуске задачи."
+        ),
+        parse_mode="HTML",
+        reply_markup=get_broadcast_segment_kb(BROADCAST_SEGMENTS),
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BROADCAST_SEGMENT_PREFIX))
+async def broadcast_select_segment(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    segment = cb.data.removeprefix(CB_BROADCAST_SEGMENT_PREFIX).strip()
+    if segment not in BROADCAST_SEGMENT_LABELS:
+        await cb.answer("Неизвестный сегмент", show_alert=True)
+        return
+    await clear_pending_admin_action(ADMIN_ID, BROADCAST_SEGMENT_SELECTION_ACTION_KEY)
+    await set_pending_admin_action(
+        ADMIN_ID,
+        BROADCAST_INPUT_ACTION_KEY,
+        {"action": BROADCAST_INPUT_ACTION_KEY, "segment": segment},
+    )
+    recipients_count = await get_broadcast_segment_user_count(segment)
+    await cb.message.answer(
+        (
+            "📢 <b>Рассылка</b>\n\n"
+            f"Сегмент: <b>{escape_html(_broadcast_segment_label(segment))}</b>\n"
+            f"Ожидаемо получателей на сейчас: <b>{recipients_count}</b>\n\n"
+            "Теперь отправьте текст рассылки одним сообщением."
         ),
         parse_mode="HTML",
         reply_markup=get_broadcast_cancel_kb(),
     )
+    await cb.answer("Сегмент выбран")
 
 
 @router.callback_query(F.data == CB_BROADCAST_CONFIRM)
 async def broadcast_confirm(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    text = await get_pending_broadcast(ADMIN_ID)
-    if not text:
+    pending = await get_pending_broadcast(ADMIN_ID)
+    if not pending:
         await cb.answer("Нет ожидающей рассылки", show_alert=True)
         return
-    job_id = await create_broadcast_job(ADMIN_ID, text)
+    text = pending["text"]
+    segment = pending["segment"]
+    expected_total = await get_broadcast_segment_user_count(segment)
+    job_id = await create_broadcast_job(ADMIN_ID, text, segment=segment)
     await clear_pending_broadcast(ADMIN_ID)
     await write_audit_log(ADMIN_ID, "broadcast_queued", f"job_id={job_id}")
     await cb.message.answer(
         (
             "📢 <b>Рассылка поставлена в очередь</b>\n\n"
             f"job_id: <code>{job_id}</code>\n"
+            f"Сегмент: <b>{escape_html(_broadcast_segment_label(segment))}</b>\n"
+            f"Текущая оценка получателей: <b>{expected_total}</b>\n"
             "Отправка идёт в фоне; итог придёт отдельным сообщением.\n"
             "Снимок получателей будет зафиксирован воркером при старте задачи."
         ),
@@ -2062,6 +2216,7 @@ async def broadcast_cancel(cb: types.CallbackQuery):
         return
     await clear_pending_broadcast(ADMIN_ID)
     await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
+    await clear_pending_admin_action(ADMIN_ID, BROADCAST_SEGMENT_SELECTION_ACTION_KEY)
     await write_audit_log(ADMIN_ID, "broadcast_cancel", "")
     await cb.message.answer("❌ Рассылка отменена")
     await cb.answer("Отменено")
@@ -2076,12 +2231,15 @@ async def broadcast_capture_text(message: types.Message):
         await message.answer("Текст пустой. Отправьте сообщение для рассылки или нажмите «Отменить».", reply_markup=get_broadcast_cancel_kb())
         return
 
-    await set_pending_broadcast(ADMIN_ID, text)
+    action = await get_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
+    segment = str((action or {}).get("segment") or "all")
+    await set_pending_broadcast(ADMIN_ID, text, segment=segment)
     await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
-    users_total = int(await fetchval("SELECT COUNT(*) FROM users"))
+    users_total = await get_broadcast_segment_user_count(segment)
     await message.answer(
         (
             "📢 <b>Подтвердите рассылку</b>\n\n"
+            f"Сегмент: <b>{escape_html(_broadcast_segment_label(segment))}</b>\n"
             f"Получателей (по текущей базе): <b>{users_total}</b>\n\n"
             f"Текст:\n{_build_broadcast_preview(text)}"
         ),
@@ -2240,6 +2398,23 @@ async def admin_text_override_view_key(cb: types.CallbackQuery):
     key = TEXT_OVERRIDE_CALLBACK_KEY_MAP.get(cb.data)
     if not key:
         await cb.answer("Неизвестный ключ", show_alert=True)
+        return
+    text = await get_text(key)
+    await cb.message.answer(
+        f"📝 <b>Шаблон: {key}</b>\n\n{text}",
+        parse_mode="HTML",
+        reply_markup=get_admin_text_override_item_kb(key),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith(CB_ADMIN_TEXT_VIEW_PREFIX))
+async def admin_text_override_view_key_prefixed(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    key = cb.data.removeprefix(CB_ADMIN_TEXT_VIEW_PREFIX).strip()
+    if key not in TEXT_OVERRIDE_ALLOWED_KEYS:
+        await cb.answer("Ключ недоступен", show_alert=True)
         return
     text = await get_text(key)
     await cb.message.answer(
@@ -2862,9 +3037,10 @@ async def broadcast_prepare(message: types.Message, command: CommandObject):
         return
     if not command.args:
         await clear_pending_broadcast(ADMIN_ID)
+        await clear_pending_admin_action(ADMIN_ID, BROADCAST_SEGMENT_SELECTION_ACTION_KEY)
         await set_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY, {"action": BROADCAST_INPUT_ACTION_KEY})
         await message.answer(
-            "Отправьте текст рассылки одним сообщением.",
+            "Отправьте текст рассылки одним сообщением. Сегмент по умолчанию: все пользователи.",
             reply_markup=get_broadcast_cancel_kb(),
         )
         return
@@ -2872,12 +3048,14 @@ async def broadcast_prepare(message: types.Message, command: CommandObject):
     if not text:
         await message.answer("Текст пустой. Отправьте сообщение после <code>/send</code>.", parse_mode="HTML")
         return
-    await set_pending_broadcast(ADMIN_ID, text)
+    segment = "all"
+    await set_pending_broadcast(ADMIN_ID, text, segment=segment)
     await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
-    users_total = int(await fetchval("SELECT COUNT(*) FROM users"))
+    users_total = await get_broadcast_segment_user_count(segment)
     await message.answer(
         (
             "📢 <b>Подтвердите рассылку</b>\n\n"
+            f"Сегмент: <b>{escape_html(_broadcast_segment_label(segment))}</b>\n"
             f"Получателей (по текущей базе): <b>{users_total}</b>\n\n"
             f"Текст:\n{_build_broadcast_preview(text)}"
         ),
