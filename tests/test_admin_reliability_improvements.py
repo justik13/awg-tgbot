@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -18,6 +19,7 @@ from awg_backend import reissue_user_device
 from config import ADMIN_ID, CONFIGS_PER_USER
 from content_settings import validate_text_template
 from database import (
+    InvalidBroadcastSegmentError,
     claim_next_broadcast_job,
     close_shared_db,
     count_problematic_activations,
@@ -26,6 +28,7 @@ from database import (
     execute,
     get_pending_broadcast,
     get_broadcast_recipients,
+    get_broadcast_segment_user_count,
     get_protected_public_keys,
     init_db,
     list_problematic_activations,
@@ -38,6 +41,7 @@ from content_settings import get_text
 from texts import get_payment_result_text
 from keyboards import get_problem_activations_kb
 from handlers_admin import _user_manage_kb, admin_noop, admin_retry_activation_from_problem, broadcast_confirm
+from handlers_admin import admin_add_days_confirm, confirm_device_delete, confirm_revoke
 from ui_constants import (
     CB_ADMIN_NOOP,
     CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX,
@@ -161,6 +165,28 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await recipients_for("problematic_activation"), [2003])
         self.assertEqual(await recipients_for("without_keys"), [2002, 2003, 2004])
         self.assertEqual(await recipients_for("with_referral_attribution"), [2004])
+
+    async def test_unknown_broadcast_segment_fails_closed(self):
+        await ensure_user_exists(2101)
+        await ensure_user_exists(2102)
+        with self.assertRaises(InvalidBroadcastSegmentError):
+            await get_broadcast_segment_user_count("totally_unknown")
+
+        with self.assertRaises(InvalidBroadcastSegmentError):
+            await create_broadcast_job(ADMIN_ID, "hello", segment="totally_unknown")
+
+        await execute(
+            """
+            INSERT INTO broadcast_jobs (admin_id, text, segment, status, created_at, updated_at)
+            VALUES (?, 'broken segment', 'totally_unknown', 'queued', '2026-01-01T00:00:00', '2026-01-01T00:00:00')
+            """,
+            (ADMIN_ID,),
+        )
+        claimed = await claim_next_broadcast_job()
+        self.assertIsNone(claimed)
+        status_row = await database.fetchone("SELECT status, last_error FROM broadcast_jobs ORDER BY id DESC LIMIT 1")
+        self.assertEqual(status_row[0], "failed")
+        self.assertIn("Unknown broadcast segment", status_row[1])
 
     async def test_problematic_activation_keyboard_has_actions_for_every_visible_item(self):
         items = [
@@ -363,7 +389,150 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Текущая оценка получателей: <b>17</b>", answer_text)
         self.assertEqual(cb.message.answer.await_args.kwargs["parse_mode"], "HTML")
         cb.answer.assert_awaited_once_with("Поставлено в очередь")
-        audit_mock.assert_awaited_once_with(ADMIN_ID, "broadcast_queued", "job_id=9001")
+        audit_mock.assert_awaited_once_with(
+            ADMIN_ID,
+            "broadcast_queued",
+            "job_id=9001; segment=problematic_activation; expected_total=17; text_len=11",
+        )
+
+    async def test_problem_context_confirm_paths_keep_problem_navigation(self):
+        class DummyUser:
+            id = ADMIN_ID
+
+        class DummyMessage:
+            def __init__(self):
+                self.answer = AsyncMock()
+
+        class DummyCb:
+            def __init__(self):
+                self.from_user = DummyUser()
+                self.message = DummyMessage()
+                self.answer = AsyncMock()
+                self.data = "unused"
+                self.bot = object()
+
+        cb_add = DummyCb()
+        cb_add.data = "confirm_add_days:token123"
+        with (
+            patch("handlers_admin._guard_admin_callback", new=AsyncMock(return_value=True)),
+            patch("handlers_admin._extract_action_token", return_value="token123"),
+            patch(
+                "handlers_admin.pop_pending_admin_action",
+                new=AsyncMock(return_value={"uid": 777, "days": 30, "page": 2, "source": "problem_activations"}),
+            ),
+            patch("handlers_admin._is_pending_action_expired", return_value=False),
+            patch("handlers_admin.admin_command_limited", return_value=False),
+            patch("handlers_admin.issue_subscription", new=AsyncMock(return_value=database.utc_now_naive())),
+            patch("handlers_admin.notify_user_subscription_granted", new=AsyncMock(return_value=True)),
+            patch("handlers_admin.write_audit_log", new=AsyncMock()),
+        ):
+            await admin_add_days_confirm(cb_add)
+        add_callbacks = [button.callback_data for row in cb_add.message.answer.await_args.kwargs["reply_markup"].inline_keyboard for button in row]
+        self.assertIn(f"{CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX}777_2", add_callbacks)
+        self.assertIn("a:pm:pa:p:2", add_callbacks)
+
+        cb_device_delete = DummyCb()
+        cb_device_delete.data = "confirm_device_delete:token456"
+        with (
+            patch("handlers_admin._guard_admin_callback", new=AsyncMock(return_value=True)),
+            patch("handlers_admin._extract_action_token", return_value="token456"),
+            patch(
+                "handlers_admin.pop_pending_admin_action",
+                new=AsyncMock(return_value={"action": "device_delete", "target": 888, "device_num": 1, "page": 3, "source": "problem_activations"}),
+            ),
+            patch("handlers_admin._is_pending_action_expired", return_value=False),
+            patch("handlers_admin.delete_user_device", new=AsyncMock(return_value={"status": "removed", "removed_runtime": True})),
+            patch("handlers_admin.write_audit_log", new=AsyncMock()),
+        ):
+            await confirm_device_delete(cb_device_delete)
+        delete_callbacks = [button.callback_data for row in cb_device_delete.message.answer.await_args.kwargs["reply_markup"].inline_keyboard for button in row]
+        self.assertIn(f"{CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX}888_3", delete_callbacks)
+        self.assertIn("a:pm:pa:p:3", delete_callbacks)
+
+        cb_revoke = DummyCb()
+        cb_revoke.data = "confirm_revoke:token789"
+        with (
+            patch("handlers_admin._guard_admin_callback", new=AsyncMock(return_value=True)),
+            patch("handlers_admin._extract_action_token", return_value="token789"),
+            patch(
+                "handlers_admin.pop_pending_admin_action",
+                new=AsyncMock(return_value={"action": "revoke", "target": 999, "page": 4, "source": "problem_activations"}),
+            ),
+            patch("handlers_admin._is_pending_action_expired", return_value=False),
+            patch("handlers_admin.revoke_user_access", new=AsyncMock(return_value=1)),
+            patch("handlers_admin.write_audit_log", new=AsyncMock()),
+        ):
+            await confirm_revoke(cb_revoke)
+        revoke_callbacks = [button.callback_data for row in cb_revoke.message.answer.await_args.kwargs["reply_markup"].inline_keyboard for button in row]
+        self.assertIn("a:pm:pa:p:4", revoke_callbacks)
+
+    async def test_init_db_migrates_legacy_broadcast_segment_columns(self):
+        await close_shared_db()
+        legacy_db_path = Path(self._db_path)
+        if legacy_db_path.exists():
+            legacy_db_path.unlink()
+        conn = sqlite3.connect(str(legacy_db_path))
+        try:
+            conn.execute(
+                """
+                CREATE TABLE pending_broadcasts (
+                    admin_id INTEGER PRIMARY KEY,
+                    text TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE broadcast_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    admin_id INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    total_count INTEGER NOT NULL DEFAULT 0,
+                    delivered_count INTEGER NOT NULL DEFAULT 0,
+                    failed_count INTEGER NOT NULL DEFAULT 0,
+                    offset_cursor INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE users (
+                    user_id INTEGER PRIMARY KEY,
+                    first_name TEXT,
+                    username TEXT,
+                    sub_until TEXT NOT NULL DEFAULT '0',
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("INSERT INTO users (user_id, first_name, username, sub_until, created_at) VALUES (1, 'A', 'u1', '0', '2026-01-01T00:00:00')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        await init_db()
+        pending_columns = await database.fetchall("PRAGMA table_info(pending_broadcasts)")
+        jobs_columns = await database.fetchall("PRAGMA table_info(broadcast_jobs)")
+        self.assertIn("segment", {row[1] for row in pending_columns})
+        self.assertIn("segment", {row[1] for row in jobs_columns})
+
+        await set_pending_broadcast(ADMIN_ID, "legacy ok", segment="with_any_payment")
+        self.assertEqual(
+            await get_pending_broadcast(ADMIN_ID),
+            {"text": "legacy ok", "segment": "with_any_payment"},
+        )
+        job_id = await create_broadcast_job(ADMIN_ID, "legacy ok", segment="all")
+        claimed = await claim_next_broadcast_job()
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed[0], job_id)
+        self.assertEqual(claimed[4], "all")
 
     async def test_post_payment_result_text_clarifies_device_choice(self):
         text = await get_payment_result_text("ready")

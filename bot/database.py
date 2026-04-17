@@ -13,6 +13,34 @@ from security_utils import decrypt_text
 
 _shared_db: aiosqlite.Connection | None = None
 SAFE_TG_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{1,32}$")
+class InvalidBroadcastSegmentError(ValueError):
+    """Raised when an unknown broadcast segment is requested."""
+
+
+def _problematic_payment_predicate(payment_alias: str = "p") -> str:
+    return f"""
+        (
+            {payment_alias}.status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
+            OR {payment_alias}.last_provision_status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM payments p2
+            WHERE p2.user_id = {payment_alias}.user_id
+              AND (
+                COALESCE(p2.updated_at, p2.created_at) > COALESCE({payment_alias}.updated_at, {payment_alias}.created_at)
+                OR (
+                    COALESCE(p2.updated_at, p2.created_at) = COALESCE({payment_alias}.updated_at, {payment_alias}.created_at)
+                    AND p2.created_at > {payment_alias}.created_at
+                )
+                OR (
+                    COALESCE(p2.updated_at, p2.created_at) = COALESCE({payment_alias}.updated_at, {payment_alias}.created_at)
+                    AND p2.created_at = {payment_alias}.created_at
+                    AND p2.telegram_payment_charge_id > {payment_alias}.telegram_payment_charge_id
+                )
+              )
+        )
+    """
 
 
 async def _apply_pragmas(db: aiosqlite.Connection) -> None:
@@ -1700,6 +1728,8 @@ async def rollback_promo_activation_reservation(user_id: int, code: str) -> None
 
 
 async def create_broadcast_job(admin_id: int, text: str, segment: str = "all") -> int:
+    normalized_segment = (segment or "all").strip()
+    _broadcast_segment_sql_where(normalized_segment)
     now_iso = utc_now_naive().isoformat()
     db = await open_db()
     try:
@@ -1709,11 +1739,11 @@ async def create_broadcast_job(admin_id: int, text: str, segment: str = "all") -
             INSERT INTO broadcast_jobs (admin_id, text, segment, status, created_at, updated_at)
             VALUES (?, ?, ?, 'queued', ?, ?)
             """,
-            (admin_id, text, segment, now_iso, now_iso),
+            (admin_id, text, normalized_segment, now_iso, now_iso),
         )
         await db.execute(
             "UPDATE pending_broadcasts SET text = ?, segment = ? WHERE admin_id = ?",
-            (text, segment, admin_id),
+            (text, normalized_segment, admin_id),
         )
         await db.commit()
         return int(cur.lastrowid)
@@ -1733,26 +1763,11 @@ def _broadcast_segment_sql_where(segment: str) -> tuple[str, tuple[object, ...]]
         return ("EXISTS (SELECT 1 FROM payments p WHERE p.user_id = u.user_id)", ())
     if normalized == "problematic_activation":
         return (
-            """
+            f"""
             EXISTS (
-                SELECT 1
-                FROM (
-                    SELECT
-                        p.user_id,
-                        p.status,
-                        p.last_provision_status,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY p.user_id
-                            ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.created_at DESC, p.telegram_payment_charge_id DESC
-                        ) AS rn
-                    FROM payments p
-                ) latest
-                WHERE latest.user_id = u.user_id
-                  AND latest.rn = 1
-                  AND (
-                    latest.status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
-                    OR latest.last_provision_status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
-                  )
+                SELECT 1 FROM payments p
+                WHERE p.user_id = u.user_id
+                  AND {_problematic_payment_predicate("p")}
             )
             """,
             (),
@@ -1761,7 +1776,7 @@ def _broadcast_segment_sql_where(segment: str) -> tuple[str, tuple[object, ...]]
         return ("NOT EXISTS (SELECT 1 FROM keys k WHERE k.user_id = u.user_id AND k.state != 'deleted')", ())
     if normalized == "with_referral_attribution":
         return ("EXISTS (SELECT 1 FROM referral_attributions ra WHERE ra.invitee_user_id = u.user_id)", ())
-    return ("1=1", ())
+    raise InvalidBroadcastSegmentError(f"Unknown broadcast segment: {normalized}")
 
 
 async def get_broadcast_segment_user_count(segment: str) -> int:
@@ -1789,7 +1804,23 @@ async def claim_next_broadcast_job() -> tuple[int, int, str, int, str] | None:
             await db.rollback()
             return None
         job_id, admin_id, text, segment = int(row[0]), int(row[1]), str(row[2]), str(row[3] or "all")
-        where_sql, where_params = _broadcast_segment_sql_where(segment)
+        try:
+            where_sql, where_params = _broadcast_segment_sql_where(segment)
+        except InvalidBroadcastSegmentError as segment_error:
+            await db.execute(
+                """
+                UPDATE broadcast_jobs
+                SET status='failed',
+                    last_error=?,
+                    finished_at=?,
+                    updated_at=?
+                WHERE id = ?
+                """,
+                (str(segment_error), now_iso, now_iso, job_id),
+            )
+            await db.commit()
+            logger.warning("Broadcast job %s failed: %s", job_id, segment_error)
+            return None
         await db.execute("DELETE FROM broadcast_job_targets WHERE job_id = ?", (job_id,))
         await db.execute(
             f"""
@@ -1914,26 +1945,10 @@ async def fail_stale_running_broadcast_jobs(max_age_seconds: int) -> int:
 
 async def count_problematic_activations() -> int:
     row = await fetchone(
-        """
-        WITH latest AS (
-            SELECT
-                p.user_id,
-                p.telegram_payment_charge_id,
-                p.status,
-                p.last_provision_status,
-                ROW_NUMBER() OVER (
-                    PARTITION BY p.user_id
-                    ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.created_at DESC, p.telegram_payment_charge_id DESC
-                ) AS rn
-            FROM payments p
-        )
+        f"""
         SELECT COUNT(*)
-        FROM latest
-        WHERE rn = 1
-          AND (
-            status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
-            OR last_provision_status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
-          )
+        FROM payments p
+        WHERE {_problematic_payment_predicate("p")}
         """
     )
     return int(row[0]) if row else 0
@@ -1941,44 +1956,26 @@ async def count_problematic_activations() -> int:
 
 async def list_problematic_activations(limit: int, offset: int) -> list[dict[str, Any]]:
     rows = await fetchall(
-        """
-        WITH latest AS (
-            SELECT
-                p.user_id,
-                p.telegram_payment_charge_id,
-                p.status,
-                p.last_provision_status,
-                p.created_at,
-                p.updated_at,
-                ROW_NUMBER() OVER (
-                    PARTITION BY p.user_id
-                    ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.created_at DESC, p.telegram_payment_charge_id DESC
-                ) AS rn
-            FROM payments p
-        )
+        f"""
         SELECT
-            user_id,
-            telegram_payment_charge_id,
-            status,
-            last_provision_status,
-            created_at,
-            updated_at
-        FROM latest
-        WHERE rn = 1
-          AND (
-            status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
-            OR last_provision_status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
-          )
+            p.user_id,
+            p.telegram_payment_charge_id,
+            p.status,
+            p.last_provision_status,
+            p.created_at,
+            p.updated_at
+        FROM payments p
+        WHERE {_problematic_payment_predicate("p")}
         ORDER BY
             CASE
-                WHEN status = 'stuck_manual' OR last_provision_status = 'stuck_manual' THEN 0
-                WHEN status = 'failed' OR last_provision_status = 'failed' THEN 1
-                WHEN status = 'needs_repair' OR last_provision_status = 'needs_repair' THEN 2
-                WHEN status = 'ready_config_pending' OR last_provision_status = 'ready_config_pending' THEN 3
+                WHEN p.status = 'stuck_manual' OR p.last_provision_status = 'stuck_manual' THEN 0
+                WHEN p.status = 'failed' OR p.last_provision_status = 'failed' THEN 1
+                WHEN p.status = 'needs_repair' OR p.last_provision_status = 'needs_repair' THEN 2
+                WHEN p.status = 'ready_config_pending' OR p.last_provision_status = 'ready_config_pending' THEN 3
                 ELSE 9
             END ASC,
-            COALESCE(updated_at, created_at) DESC,
-            created_at DESC
+            COALESCE(p.updated_at, p.created_at) DESC,
+            p.created_at DESC
         LIMIT ? OFFSET ?
         """,
         (limit, offset),

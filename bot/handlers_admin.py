@@ -28,6 +28,7 @@ from config import (
 )
 from database import (
     clear_pending_admin_action, clear_pending_broadcast, count_problematic_activations, create_broadcast_job, create_promo_code, db_health_info, disable_promo_code, fetchall, fetchone, fetchval,
+    InvalidBroadcastSegmentError,
     get_broadcast_segment_user_count,
     get_payment_summary_by_charge_id,
     get_latest_user_payment_summary,
@@ -1000,6 +1001,24 @@ def _user_manage_kb(
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _infer_user_manage_source(cb: types.CallbackQuery) -> str:
+    markup = cb.message.reply_markup if cb.message else None
+    if not markup:
+        return "users"
+    for row in markup.inline_keyboard:
+        for button in row:
+            callback_data = str(button.callback_data or "")
+            if callback_data.startswith(CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX) or callback_data.startswith(CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX):
+                return "problem_activations"
+    return "users"
+
+
+def _user_manage_result_markup(uid: int, page: int, source: str) -> types.InlineKeyboardMarkup:
+    if source == "problem_activations":
+        return _user_manage_kb(uid, page, source="problem_activations")
+    return _user_manage_kb(uid, page)
+
+
 def _is_retry_activation_relevant(payment_summary: dict | None, has_keys: bool) -> bool:
     if not payment_summary or has_keys:
         return False
@@ -1681,13 +1700,14 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
         uid = int(uid_raw)
         days = int(days_raw)
         page = int(page_raw)
+        source = _infer_user_manage_source(cb)
         if days >= 30:
             token = _generate_admin_action_token()
             token_action_key = _make_token_action_key(ADD_DAYS_CONFIRM_ACTION_KEY, token)
             await set_pending_admin_action(
                 ADMIN_ID,
                 token_action_key,
-                {"uid": uid, "days": days, "page": page, "issued_at": utc_now_naive().isoformat()},
+                {"uid": uid, "days": days, "page": page, "source": source, "issued_at": utc_now_naive().isoformat()},
             )
             await cb.message.answer(
                 (
@@ -1713,7 +1733,7 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
                 f"📅 До: <b>{format_moscow_datetime(new_until)}</b>"
             ),
             parse_mode="HTML",
-            reply_markup=_user_manage_kb(uid, page),
+            reply_markup=_user_manage_result_markup(uid, page, source),
         )
         if not notified:
             await cb.message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.")
@@ -1740,6 +1760,7 @@ async def admin_add_days_confirm(cb: types.CallbackQuery):
     uid = int(action.get("uid", 0))
     days = int(action.get("days", 0))
     page = int(action.get("page", 0))
+    source = str(action.get("source") or "users")
     if uid <= 0 or days <= 0:
         await cb.answer("Некорректные параметры", show_alert=True)
         return
@@ -1757,7 +1778,7 @@ async def admin_add_days_confirm(cb: types.CallbackQuery):
             f"📅 До: <b>{format_moscow_datetime(new_until)}</b>"
         ),
         parse_mode="HTML",
-        reply_markup=_user_manage_kb(uid, page),
+        reply_markup=_user_manage_result_markup(uid, page, source),
     )
     if not notified:
         await cb.message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.")
@@ -1915,6 +1936,7 @@ async def admin_device_delete_btn(cb: types.CallbackQuery):
         uid = int(uid_raw)
         device_num = int(device_num_raw)
         page = int(page_raw)
+        source = _infer_user_manage_source(cb)
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=True)
         return
@@ -1922,7 +1944,7 @@ async def admin_device_delete_btn(cb: types.CallbackQuery):
     await set_pending_admin_action(
         ADMIN_ID,
         _make_token_action_key("device_delete", token),
-        {"action": "device_delete", "target": uid, "device_num": device_num, "page": page, "issued_at": utc_now_naive().isoformat()},
+        {"action": "device_delete", "target": uid, "device_num": device_num, "page": page, "source": source, "issued_at": utc_now_naive().isoformat()},
     )
     await cb.message.answer(
         (
@@ -1960,6 +1982,7 @@ async def confirm_device_delete(cb: types.CallbackQuery):
     uid = int(action["target"])
     device_num = int(action["device_num"])
     page = int(action.get("page", 0))
+    source = str(action.get("source") or "users")
     try:
         result = await delete_user_device(uid, device_num)
         await write_audit_log(
@@ -1976,7 +1999,7 @@ async def confirm_device_delete(cb: types.CallbackQuery):
                     "Обновите карточку пользователя и проверьте активность/состояние."
                 ),
                 parse_mode="HTML",
-                reply_markup=_user_manage_kb(uid, page),
+                reply_markup=_user_manage_result_markup(uid, page, source),
             )
             await cb.answer("Нечего удалять")
             return
@@ -1988,7 +2011,7 @@ async def confirm_device_delete(cb: types.CallbackQuery):
                 "Дальше: обновите карточку; если не помогло — проверьте активность/состояние."
             ),
             parse_mode="HTML",
-            reply_markup=_user_manage_kb(uid, page),
+            reply_markup=_user_manage_result_markup(uid, page, source),
         )
         await cb.answer("Готово")
     except Exception as e:
@@ -2019,6 +2042,7 @@ async def admin_device_reissue_btn(cb: types.CallbackQuery):
         uid = int(uid_raw)
         device_num = int(device_num_raw)
         page = int(page_raw)
+        source = _infer_user_manage_source(cb)
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=True)
         return
@@ -2026,7 +2050,7 @@ async def admin_device_reissue_btn(cb: types.CallbackQuery):
     await set_pending_admin_action(
         ADMIN_ID,
         _make_token_action_key("device_reissue", token),
-        {"action": "device_reissue", "target": uid, "device_num": device_num, "page": page, "issued_at": utc_now_naive().isoformat()},
+        {"action": "device_reissue", "target": uid, "device_num": device_num, "page": page, "source": source, "issued_at": utc_now_naive().isoformat()},
     )
     await cb.message.answer(
         (
@@ -2064,6 +2088,7 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
     uid = int(action["target"])
     device_num = int(action["device_num"])
     page = int(action.get("page", 0))
+    source = str(action.get("source") or "users")
     try:
         result = await reissue_user_device(uid, device_num)
         await write_audit_log(ADMIN_ID, "admin_device_reissue", f"target={uid}; device_num={device_num}; status={result['status']}")
@@ -2076,7 +2101,7 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
                     "Устройство уже отсутствует. Обновите карточку пользователя."
                 ),
                 parse_mode="HTML",
-                reply_markup=_user_manage_kb(uid, page),
+                reply_markup=_user_manage_result_markup(uid, page, source),
             )
             await cb.answer("Нечего перевыпускать")
             return
@@ -2089,7 +2114,7 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
                 "Если не помогло — проверьте активность/состояние."
             ),
             parse_mode="HTML",
-            reply_markup=_user_manage_kb(uid, page),
+            reply_markup=_user_manage_result_markup(uid, page, source),
         )
         await cb.answer("Готово")
     except Exception as e:
@@ -2119,6 +2144,7 @@ async def admin_revoke_btn(cb: types.CallbackQuery):
         _, _, uid_raw, page_raw = cb.data.split("_", 3)
         uid = int(uid_raw)
         page = int(page_raw)
+        source = _infer_user_manage_source(cb)
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=True)
         return
@@ -2126,7 +2152,7 @@ async def admin_revoke_btn(cb: types.CallbackQuery):
     await set_pending_admin_action(
         ADMIN_ID,
         _make_token_action_key("revoke", token),
-        {"action": "revoke", "target": uid, "page": page, "issued_at": utc_now_naive().isoformat()},
+        {"action": "revoke", "target": uid, "page": page, "source": source, "issued_at": utc_now_naive().isoformat()},
     )
     await cb.message.answer(
         (
@@ -2156,6 +2182,12 @@ async def confirm_revoke(cb: types.CallbackQuery):
         return
     uid = int(action["target"])
     page = int(action.get("page", 0))
+    source = str(action.get("source") or "users")
+    back_callback = (
+        f"{CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX}{page}"
+        if source == "problem_activations"
+        else f"{CB_ADMIN_USERS_PAGE_PREFIX}{page}"
+    )
     try:
         removed = await revoke_user_access(uid)
         await write_audit_log(ADMIN_ID, "admin_revoke", f"target={uid}; removed={removed}")
@@ -2167,7 +2199,7 @@ async def confirm_revoke(cb: types.CallbackQuery):
             ),
             parse_mode="HTML",
             reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ К списку", callback_data=f"{CB_ADMIN_USERS_PAGE_PREFIX}{page}")]]
+                inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ К списку", callback_data=back_callback)]]
             ),
         )
         await cb.answer("Готово")
@@ -2197,6 +2229,7 @@ async def admin_del_user(cb: types.CallbackQuery):
         _, _, uid_raw, page_raw = cb.data.split("_", 3)
         uid = int(uid_raw)
         page = int(page_raw)
+        source = _infer_user_manage_source(cb)
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=True)
         return
@@ -2204,7 +2237,7 @@ async def admin_del_user(cb: types.CallbackQuery):
     await set_pending_admin_action(
         ADMIN_ID,
         _make_token_action_key("delete_user", token),
-        {"action": "delete_user", "target": uid, "page": page, "issued_at": utc_now_naive().isoformat()},
+        {"action": "delete_user", "target": uid, "page": page, "source": source, "issued_at": utc_now_naive().isoformat()},
     )
     await cb.message.answer(
         (
@@ -2234,6 +2267,12 @@ async def confirm_delete_user(cb: types.CallbackQuery):
         return
     uid = int(action["target"])
     page = int(action.get("page", 0))
+    source = str(action.get("source") or "users")
+    back_callback = (
+        f"{CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX}{page}"
+        if source == "problem_activations"
+        else f"{CB_ADMIN_USERS_PAGE_PREFIX}{page}"
+    )
     try:
         peers_count, _ = await delete_user_everywhere(uid)
         await write_audit_log(ADMIN_ID, "admin_delete_user", f"target={uid}; removed={peers_count}")
@@ -2245,7 +2284,7 @@ async def confirm_delete_user(cb: types.CallbackQuery):
             ),
             parse_mode="HTML",
             reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ К списку", callback_data=f"{CB_ADMIN_USERS_PAGE_PREFIX}{page}")]]
+                inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ К списку", callback_data=back_callback)]]
             ),
         )
         await cb.answer("Готово")
@@ -2304,7 +2343,12 @@ async def broadcast_select_segment(cb: types.CallbackQuery):
         BROADCAST_INPUT_ACTION_KEY,
         {"action": BROADCAST_INPUT_ACTION_KEY, "segment": segment},
     )
-    recipients_count = await get_broadcast_segment_user_count(segment)
+    try:
+        recipients_count = await get_broadcast_segment_user_count(segment)
+    except InvalidBroadcastSegmentError:
+        await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
+        await cb.answer("Некорректный сегмент рассылки. Выберите сегмент заново.", show_alert=True)
+        return
     await cb.message.answer(
         (
             "📢 <b>Рассылка</b>\n\n"
@@ -2328,10 +2372,19 @@ async def broadcast_confirm(cb: types.CallbackQuery):
         return
     text = pending["text"]
     segment = pending["segment"]
-    expected_total = await get_broadcast_segment_user_count(segment)
-    job_id = await create_broadcast_job(ADMIN_ID, text, segment=segment)
+    try:
+        expected_total = await get_broadcast_segment_user_count(segment)
+        job_id = await create_broadcast_job(ADMIN_ID, text, segment=segment)
+    except InvalidBroadcastSegmentError:
+        await clear_pending_broadcast(ADMIN_ID)
+        await cb.answer("Некорректный сегмент рассылки. Создайте рассылку заново.", show_alert=True)
+        return
     await clear_pending_broadcast(ADMIN_ID)
-    await write_audit_log(ADMIN_ID, "broadcast_queued", f"job_id={job_id}")
+    await write_audit_log(
+        ADMIN_ID,
+        "broadcast_queued",
+        f"job_id={job_id}; segment={segment}; expected_total={expected_total}; text_len={len(text)}",
+    )
     await cb.message.answer(
         (
             "📢 <b>Рассылка поставлена в очередь</b>\n\n"
@@ -2369,9 +2422,15 @@ async def broadcast_capture_text(message: types.Message):
 
     action = await get_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
     segment = str((action or {}).get("segment") or "all")
+    try:
+        users_total = await get_broadcast_segment_user_count(segment)
+    except InvalidBroadcastSegmentError:
+        await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
+        await clear_pending_broadcast(ADMIN_ID)
+        await message.answer("Некорректный сегмент рассылки. Начните заново из меню рассылок.")
+        return
     await set_pending_broadcast(ADMIN_ID, text, segment=segment)
     await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
-    users_total = await get_broadcast_segment_user_count(segment)
     await message.answer(
         (
             "📢 <b>Подтвердите рассылку</b>\n\n"
