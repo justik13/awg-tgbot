@@ -315,7 +315,7 @@ def get_problem_activations_kb(*, page: int, total_pages: int, items: list[dict[
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text=f"🛠 Retry {uid}",
+                        text=f"🛠 Повторить активацию {uid}",
                         callback_data=f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}{uid}_{page}",
                     )
                 ]
