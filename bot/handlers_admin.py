@@ -52,12 +52,12 @@ from traffic import format_bytes_compact, render_device_traffic_line
 from keyboards import (
     get_admin_confirm_kb, get_admin_inline_kb, get_admin_maintenance_kb, get_admin_payments_kb, get_admin_price_confirm_kb, get_admin_prices_kb, get_admin_promocodes_kb,
     get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb, get_broadcast_segment_kb, get_open_user_card_kb, get_problem_activations_kb,
-    get_user_manage_problem_nav_kb,
     get_admin_network_policy_kb, get_admin_denylist_kb,
     get_admin_service_settings_kb, get_admin_text_override_item_kb, get_admin_text_overrides_kb, get_admin_add_days_confirm_kb,
 )
 from ui_constants import (
     BTN_ADMIN, CB_ADMIN_BACK_MAIN, CB_ADMIN_BROADCAST,
+    CB_ADMIN_NOOP,
     CB_ADMIN_COMMANDS, CB_ADMIN_FIND_CHARGE, CB_ADMIN_HEALTH, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_LIST, CB_ADMIN_MAINTENANCE, CB_ADMIN_MAINTENANCE_OFF, CB_ADMIN_MAINTENANCE_ON,
     CB_ADMIN_MAINTENANCE_REFRESH, CB_ADMIN_OPEN_USER_CARD_PREFIX, CB_ADMIN_PAYMENTS, CB_ADMIN_PRICE_CANCEL, CB_ADMIN_PRICE_EDIT_30, CB_ADMIN_PRICE_EDIT_7,
     CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX, CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX,
@@ -928,7 +928,7 @@ def _users_page_kb(rows: list[tuple[int, str]], page: int, total_pages: int) -> 
     nav_row: list[types.InlineKeyboardButton] = []
     if page > 0:
         nav_row.append(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"{CB_ADMIN_USERS_PAGE_PREFIX}{page - 1}"))
-    nav_row.append(types.InlineKeyboardButton(text=f"📄 {page + 1}/{max(total_pages, 1)}", callback_data="noop"))
+    nav_row.append(types.InlineKeyboardButton(text=f"📄 {page + 1}/{max(total_pages, 1)}", callback_data=CB_ADMIN_NOOP))
     if page + 1 < total_pages:
         nav_row.append(types.InlineKeyboardButton(text="➡️ Далее", callback_data=f"{CB_ADMIN_USERS_PAGE_PREFIX}{page + 1}"))
     keyboard.append(nav_row)
@@ -941,7 +941,24 @@ def _user_manage_kb(
     *,
     show_retry_activation: bool = False,
     device_nums: list[int] | None = None,
+    source: str = "users",
 ) -> types.InlineKeyboardMarkup:
+    is_problem_source = source == "problem_activations"
+    retry_callback = (
+        f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}{uid}_{page}"
+        if is_problem_source
+        else f"{CB_ADMIN_RETRY_ACTIVATION_PREFIX}{uid}_{page}"
+    )
+    refresh_callback = (
+        f"{CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX}{uid}_{page}"
+        if is_problem_source
+        else f"{CB_ADMIN_MANAGE_USER_PREFIX}{uid}_{page}"
+    )
+    back_callback = (
+        f"{CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX}{page}"
+        if is_problem_source
+        else f"{CB_ADMIN_USERS_PAGE_PREFIX}{page}"
+    )
     rows: list[list[types.InlineKeyboardButton]] = [
         [
             types.InlineKeyboardButton(text="+1 день", callback_data=f"{CB_ADMIN_ADD_DAYS_PREFIX}{uid}_1_{page}"),
@@ -958,7 +975,7 @@ def _user_manage_kb(
             [
                 types.InlineKeyboardButton(
                     text="🛠 Повторить активацию",
-                    callback_data=f"{CB_ADMIN_RETRY_ACTIVATION_PREFIX}{uid}_{page}",
+                    callback_data=retry_callback,
                 ),
             ]
         )
@@ -977,8 +994,8 @@ def _user_manage_kb(
                 ]
             )
     rows.extend([
-        [types.InlineKeyboardButton(text="🔄 Обновить карточку", callback_data=f"{CB_ADMIN_MANAGE_USER_PREFIX}{uid}_{page}")],
-        [types.InlineKeyboardButton(text="⬅️ К списку", callback_data=f"{CB_ADMIN_USERS_PAGE_PREFIX}{page}")],
+        [types.InlineKeyboardButton(text="🔄 Обновить карточку", callback_data=refresh_callback)],
+        [types.InlineKeyboardButton(text="⬅️ К списку", callback_data=back_callback)],
     ])
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1186,15 +1203,13 @@ async def _send_user_manage_card(
             f"{traffic_text}"
             f"{retry_hint}"
         )
-    if source == "problem_activations":
-        markup = get_user_manage_problem_nav_kb(uid, page, show_retry_activation=show_retry_activation)
-    else:
-        markup = _user_manage_kb(
-            uid,
-            page,
-            show_retry_activation=show_retry_activation,
-            device_nums=admin_device_nums,
-        )
+    markup = _user_manage_kb(
+        uid,
+        page,
+        show_retry_activation=show_retry_activation,
+        device_nums=admin_device_nums,
+        source=source,
+    )
     try:
         await target_message.edit_text(text, parse_mode="HTML", reply_markup=markup)
     except TelegramBadRequest:
@@ -1229,6 +1244,14 @@ async def admin_back_main(cb: types.CallbackQuery):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     await _send_or_edit_admin_message(cb, "⚙️ <b>Админ-меню</b>", get_admin_inline_kb())
+    await cb.answer()
+
+
+@router.callback_query(F.data == CB_ADMIN_NOOP)
+async def admin_noop(cb: types.CallbackQuery):
+    if cb.from_user and cb.from_user.id != ADMIN_ID:
+        await cb.answer("Нет доступа", show_alert=True)
+        return
     await cb.answer()
 
 
@@ -1835,7 +1858,7 @@ async def admin_retry_activation_from_problem(cb: types.CallbackQuery):
             await write_audit_log(ADMIN_ID, "manual_retry_noop", f"target={uid}; reason=no_payment; source=problem_activations")
             await cb.message.answer(
                 "ℹ️ Нет платежей для повтора активации. Нечего запускать повторно.",
-                reply_markup=get_user_manage_problem_nav_kb(uid, page, show_retry_activation=False),
+                reply_markup=_user_manage_kb(uid, page, show_retry_activation=False, source="problem_activations"),
             )
             await cb.answer("Нечего повторять")
             return
@@ -1844,17 +1867,38 @@ async def admin_retry_activation_from_problem(cb: types.CallbackQuery):
         result = await manual_retry_activation(payment_id, bot=cb.bot)
         result_code = result.get("result", "unknown")
         result_message = result.get("message", "Без деталей.")
+        if result_code == "succeeded":
+            await write_audit_log(
+                ADMIN_ID,
+                "manual_retry_succeeded",
+                f"target={uid}; payment_id={payment_id}; result={result_code}; source=problem_activations",
+            )
+            outcome = "✅ Повтор активации успешен"
+        elif result_code in {"no_payment", "already_applied", "in_progress", "not_retryable", "no_op"}:
+            await write_audit_log(
+                ADMIN_ID,
+                "manual_retry_noop",
+                f"target={uid}; payment_id={payment_id}; result={result_code}; source=problem_activations",
+            )
+            outcome = "ℹ️ Повтор активации не требуется"
+        else:
+            await write_audit_log(
+                ADMIN_ID,
+                "manual_retry_failed",
+                f"target={uid}; payment_id={payment_id}; result={result_code}; source=problem_activations",
+            )
+            outcome = "⚠️ Повтор активации не удался"
         show_retry_activation = result_code not in {"already_applied"}
         await cb.message.answer(
             (
-                f"🛠 Повтор из проблемных активаций\n\n"
+                f"{outcome}\n\n"
                 f"🆔 <code>{uid}</code>\n"
                 f"💳 Charge ID: <code>{payment_id}</code>\n"
                 f"🧩 Результат: <b>{escape_html(result_code)}</b>\n"
                 f"📝 Детали: {escape_html(result_message)}"
             ),
             parse_mode="HTML",
-            reply_markup=get_user_manage_problem_nav_kb(uid, page, show_retry_activation=show_retry_activation),
+            reply_markup=_user_manage_kb(uid, page, show_retry_activation=show_retry_activation, source="problem_activations"),
         )
         await cb.answer("Повтор обработан")
     except Exception as error:

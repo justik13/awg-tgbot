@@ -19,6 +19,7 @@ from ui_constants import (
     CB_ADMIN_DENYLIST_REPLACE_DOMAINS, CB_ADMIN_DENYLIST_REPLACE_CIDRS, CB_ADMIN_DENYLIST_SYNC,
     CB_ADMIN_DENYLIST_MODE_SOFT, CB_ADMIN_DENYLIST_MODE_STRICT,
     CB_ADMIN_FIND_CHARGE, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_OPEN_USER_CARD_PREFIX,
+    CB_ADMIN_NOOP,
     CB_ADMIN_PROBLEM_ACTIVATIONS, CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX,
     CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX, CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX, CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX,
     CB_ADMIN_RETRY_ACTIVATION_PREFIX,
@@ -328,7 +329,7 @@ def get_problem_activations_kb(*, page: int, total_pages: int, items: list[dict[
                 callback_data=f"{CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX}{page - 1}",
             )
         )
-    nav_row.append(InlineKeyboardButton(text=f"📄 {page + 1}/{max(total_pages, 1)}", callback_data="noop"))
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page + 1}/{max(total_pages, 1)}", callback_data=CB_ADMIN_NOOP))
     if page + 1 < total_pages:
         nav_row.append(
             InlineKeyboardButton(

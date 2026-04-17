@@ -5,6 +5,7 @@ BTN_SUPPORT = "🆘 Поддержка"
 BTN_ADMIN = "⚙️ Админка"
 
 ADMIN_CALLBACK_PREFIX = "a:"
+CB_ADMIN_NOOP = "a:noop"
 
 CB_BUY_7 = "buy_7"
 CB_BUY_30 = "buy_30"

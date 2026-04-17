@@ -32,11 +32,14 @@ from database import (
 )
 from security_utils import encrypt_text
 from texts import get_payment_result_text
-from keyboards import get_problem_activations_kb, get_user_manage_problem_nav_kb
+from keyboards import get_problem_activations_kb
+from handlers_admin import _user_manage_kb, admin_noop
 from ui_constants import (
+    CB_ADMIN_NOOP,
     CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX,
     CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX,
     CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX,
+    CB_ADMIN_USERS_PAGE_PREFIX,
 )
 
 
@@ -170,11 +173,52 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}3003_1", callbacks)
         self.assertNotIn(f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}3002_1", callbacks)
 
-    async def test_problem_context_card_navigation_callbacks_are_stable(self):
-        kb = get_user_manage_problem_nav_kb(uid=4001, page=2, show_retry_activation=True)
+    async def test_problem_context_user_card_keeps_full_actions_and_context_nav(self):
+        kb = _user_manage_kb(uid=4001, page=2, show_retry_activation=True, device_nums=[1, 2], source="problem_activations")
         callbacks = [button.callback_data for row in kb.inline_keyboard for button in row]
+        self.assertIn("admin_add_days_4001_1_2", callbacks)
+        self.assertIn("admin_revoke_4001_2", callbacks)
+        self.assertIn("admin_delete_4001_2", callbacks)
+        self.assertIn("admin_device_delete_4001_1_2", callbacks)
+        self.assertIn("admin_device_reissue_4001_1_2", callbacks)
         self.assertIn(f"{CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX}4001_2", callbacks)
         self.assertIn(f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}4001_2", callbacks)
+        self.assertIn("a:pm:pa:p:2", callbacks)
+
+    async def test_normal_user_card_flow_not_regressed(self):
+        kb = _user_manage_kb(uid=5001, page=1, show_retry_activation=True, device_nums=[1], source="users")
+        callbacks = [button.callback_data for row in kb.inline_keyboard for button in row]
+        self.assertIn("admin_add_days_5001_30_1", callbacks)
+        self.assertIn("admin_retry_activation_5001_1", callbacks)
+        self.assertIn(f"{CB_ADMIN_USERS_PAGE_PREFIX}1", callbacks)
+        self.assertNotIn(f"{CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX}5001_1", callbacks)
+        self.assertNotIn(f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}5001_1", callbacks)
+
+    async def test_admin_noop_handler_is_silent(self):
+        class DummyFromUser:
+            id = ADMIN_ID
+
+        class DummyCallback:
+            from_user = DummyFromUser()
+
+            def __init__(self):
+                self.answer = AsyncMock()
+
+        cb = DummyCallback()
+        await admin_noop(cb)
+        cb.answer.assert_awaited_once_with()
+
+    async def test_page_indicator_uses_admin_noop_callback(self):
+        kb = get_problem_activations_kb(page=0, total_pages=1, items=[{"user_id": 1, "retry_enabled": False}])
+        callbacks = [button.callback_data for row in kb.inline_keyboard for button in row]
+        self.assertIn(CB_ADMIN_NOOP, callbacks)
+
+    async def test_problem_retry_audit_logging_contains_outcome_and_source(self):
+        handlers_source = (ROOT / "bot" / "handlers_admin.py").read_text(encoding="utf-8")
+        self.assertIn("manual_retry_succeeded", handlers_source)
+        self.assertIn("manual_retry_noop", handlers_source)
+        self.assertIn("manual_retry_failed", handlers_source)
+        self.assertIn("source=problem_activations", handlers_source)
 
     async def test_text_override_validation_for_new_keys(self):
         ok_instruction, _ = await validate_text_template("instruction_body", "link: {download_url}")
