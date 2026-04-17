@@ -19,6 +19,9 @@ from ui_constants import (
     CB_ADMIN_DENYLIST_REPLACE_DOMAINS, CB_ADMIN_DENYLIST_REPLACE_CIDRS, CB_ADMIN_DENYLIST_SYNC,
     CB_ADMIN_DENYLIST_MODE_SOFT, CB_ADMIN_DENYLIST_MODE_STRICT,
     CB_ADMIN_FIND_CHARGE, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_OPEN_USER_CARD_PREFIX,
+    CB_ADMIN_NOOP,
+    CB_ADMIN_PROBLEM_ACTIVATIONS, CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX,
+    CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX, CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX,
     CB_BROADCAST_CANCEL, CB_BROADCAST_CONFIRM, CB_BUY_30, CB_BUY_7, CB_BUY_90,
     CB_BUY_PAY_7, CB_BUY_PAY_30, CB_BUY_PAY_90,
     CB_CHECK_ACTIVATION_STATUS,
@@ -28,6 +31,7 @@ from ui_constants import (
     CB_SHOW_BUY_MENU, CB_SHOW_INSTRUCTION, CB_USER_REISSUE_CANCEL, CB_USER_REISSUE_CONFIRM,
     CB_SUPPORT_CONNECTION, CB_SUPPORT_PAYMENT, CB_SUPPORT_TERMS, CB_SUPPORT_USEFUL, CB_USER_REISSUE_DEVICE_PREFIX,
     CB_CONFIRM_ADD_DAYS, CB_CANCEL_ADD_DAYS,
+    CB_BROADCAST_SEGMENT_PREFIX, CB_ADMIN_TEXT_VIEW_PREFIX,
 )
 
 
@@ -139,7 +143,7 @@ def get_config_post_conf_kb(key_id: int) -> InlineKeyboardMarkup:
 def get_post_payment_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔑 Получить подключение", callback_data=CB_OPEN_CONFIGS)],
+            [InlineKeyboardButton(text="🔑 Подключение (выбрать устройство)", callback_data=CB_OPEN_CONFIGS)],
             [InlineKeyboardButton(text="⏱ Проверить статус активации", callback_data=CB_CHECK_ACTIVATION_STATUS)],
             [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
             _guide_row(),
@@ -288,9 +292,59 @@ def get_admin_payments_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🔎 Поиск по Charge ID", callback_data=CB_ADMIN_FIND_CHARGE)],
             [InlineKeyboardButton(text="👤 Последний платёж по user_id", callback_data=CB_ADMIN_LAST_PAYMENT)],
+            [InlineKeyboardButton(text="🚨 Проблемные активации", callback_data=CB_ADMIN_PROBLEM_ACTIVATIONS)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
         ]
     )
+
+
+def get_problem_activations_kb(*, page: int, total_pages: int, items: list[dict[str, object]]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for item in items:
+        uid = int(item["user_id"])
+        retry_enabled = bool(item.get("retry_enabled", False))
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"👤 {uid}",
+                    callback_data=f"{CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX}{uid}_{page}",
+                )
+            ]
+        )
+        if retry_enabled:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"🛠 Retry {uid}",
+                        callback_data=f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}{uid}_{page}",
+                    )
+                ]
+            )
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"{CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX}{page - 1}",
+            )
+        )
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page + 1}/{max(total_pages, 1)}", callback_data=CB_ADMIN_NOOP))
+    if page + 1 < total_pages:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="➡️ Далее",
+                callback_data=f"{CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX}{page + 1}",
+            )
+        )
+    rows.append(nav_row)
+    rows.append([InlineKeyboardButton(text="⬅️ К платежам", callback_data=CB_ADMIN_PAYMENTS)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_broadcast_segment_kb(segments: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=label, callback_data=f"{CB_BROADCAST_SEGMENT_PREFIX}{key}")] for key, label in segments]
+    rows.append([InlineKeyboardButton(text="❌ Отменить", callback_data=CB_BROADCAST_CANCEL)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_open_user_card_kb(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
@@ -379,14 +433,29 @@ def get_admin_add_days_confirm_kb(token: str | None = None) -> InlineKeyboardMar
 
 
 def get_admin_text_overrides_kb() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="help:start", callback_data=CB_ADMIN_TEXT_START)],
+        [InlineKeyboardButton(text="help:instruction_body", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}instruction_body")],
+        [InlineKeyboardButton(text="help:support_contact", callback_data=CB_ADMIN_TEXT_SUPPORT)],
+        [InlineKeyboardButton(text="help:support_useful", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}support_useful")],
+        [InlineKeyboardButton(text="help:profile_screen", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}profile_screen")],
+        [InlineKeyboardButton(text="referral:referral_screen", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}referral_screen")],
+        [InlineKeyboardButton(text="buy:buy_menu", callback_data=CB_ADMIN_TEXT_BUY_MENU)],
+        [InlineKeyboardButton(text="buy:renew_menu", callback_data=CB_ADMIN_TEXT_RENEW_MENU)],
+        [InlineKeyboardButton(text="payment:payment_success", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}payment_success")],
+        [InlineKeyboardButton(text="payment:payment_pending", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}payment_pending")],
+        [InlineKeyboardButton(text="payment:payment_error", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}payment_error")],
+        [InlineKeyboardButton(text="payment:payment_next_step", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}payment_next_step")],
+        [InlineKeyboardButton(text="activation:activation_status_pending", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}activation_status_pending")],
+        [InlineKeyboardButton(text="activation:activation_status_problem", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}activation_status_problem")],
+        [InlineKeyboardButton(text="activation:activation_status_ready", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}activation_status_ready")],
+        [InlineKeyboardButton(text="activation:activation_status_ready_config_pending", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}activation_status_ready_config_pending")],
+        [InlineKeyboardButton(text="activation:activation_status_delayed", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}activation_status_delayed")],
+        [InlineKeyboardButton(text="activation:activation_status_no_payments", callback_data=f"{CB_ADMIN_TEXT_VIEW_PREFIX}activation_status_no_payments")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
+    ]
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="start", callback_data=CB_ADMIN_TEXT_START)],
-            [InlineKeyboardButton(text="buy_menu", callback_data=CB_ADMIN_TEXT_BUY_MENU)],
-            [InlineKeyboardButton(text="renew_menu", callback_data=CB_ADMIN_TEXT_RENEW_MENU)],
-            [InlineKeyboardButton(text="support_contact", callback_data=CB_ADMIN_TEXT_SUPPORT)],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
-        ]
+        inline_keyboard=rows
     )
 
 

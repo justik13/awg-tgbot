@@ -985,7 +985,8 @@ async def reissue_user_device(user_id: int, device_num: int) -> dict[str, Any]:
             await db.commit()
         finally:
             await db.close()
-        await add_protected_peer(new_public_key, "admin-issued")
+        if user_id == ADMIN_ID:
+            await add_protected_peer(new_public_key, "admin-issued")
         await write_audit_log(user_id, "reissue_user_device", f"device_num={device_num}")
         return {"status": "reissued", "new_public_key": new_public_key, "old_public_key": old_public_key}
     except Exception:

@@ -109,7 +109,7 @@ async def process_one_broadcast_job(deps: RuntimeDeps) -> bool:
     if not claimed:
         return False
 
-    job_id, admin_id, text, total = claimed
+    job_id, admin_id, text, total, _segment = claimed
     try:
         cursor = 0
         while True:
