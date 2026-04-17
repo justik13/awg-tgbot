@@ -1735,11 +1735,23 @@ def _broadcast_segment_sql_where(segment: str) -> tuple[str, tuple[object, ...]]
         return (
             """
             EXISTS (
-                SELECT 1 FROM payments p
-                WHERE p.user_id = u.user_id
+                SELECT 1
+                FROM (
+                    SELECT
+                        p.user_id,
+                        p.status,
+                        p.last_provision_status,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY p.user_id
+                            ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.created_at DESC, p.telegram_payment_charge_id DESC
+                        ) AS rn
+                    FROM payments p
+                ) latest
+                WHERE latest.user_id = u.user_id
+                  AND latest.rn = 1
                   AND (
-                    p.status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
-                    OR p.last_provision_status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
+                    latest.status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
+                    OR latest.last_provision_status IN ('needs_repair', 'stuck_manual', 'failed', 'ready_config_pending')
                   )
             )
             """,

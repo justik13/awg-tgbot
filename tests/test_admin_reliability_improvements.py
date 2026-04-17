@@ -32,6 +32,12 @@ from database import (
 )
 from security_utils import encrypt_text
 from texts import get_payment_result_text
+from keyboards import get_problem_activations_kb, get_user_manage_problem_nav_kb
+from ui_constants import (
+    CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX,
+    CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX,
+    CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX,
+)
 
 
 class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
@@ -129,6 +135,7 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
             """
             INSERT INTO payments (telegram_payment_charge_id, user_id, payload, amount, created_at, status, last_provision_status, updated_at)
             VALUES
+                ('pay-2001-old-failed', 2001, 'sub_7', 100, '2025-12-31T00:00:00', 'failed', 'failed', '2025-12-31T00:01:00'),
                 ('pay-2001', 2001, 'sub_30', 100, '2026-01-01T00:00:00', 'applied', 'ready', '2026-01-01T00:01:00'),
                 ('pay-2003', 2003, 'sub_30', 100, '2026-01-01T00:00:00', 'needs_repair', 'needs_repair', '2026-01-01T00:01:00')
             """
@@ -147,6 +154,27 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await recipients_for("problematic_activation"), [2003])
         self.assertEqual(await recipients_for("without_keys"), [2002, 2003, 2004])
         self.assertEqual(await recipients_for("with_referral_attribution"), [2004])
+
+    async def test_problematic_activation_keyboard_has_actions_for_every_visible_item(self):
+        items = [
+            {"user_id": 3001, "retry_enabled": True},
+            {"user_id": 3002, "retry_enabled": False},
+            {"user_id": 3003, "retry_enabled": True},
+        ]
+        kb = get_problem_activations_kb(page=1, total_pages=4, items=items)
+        callbacks = [button.callback_data for row in kb.inline_keyboard for button in row]
+        self.assertIn(f"{CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX}3001_1", callbacks)
+        self.assertIn(f"{CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX}3002_1", callbacks)
+        self.assertIn(f"{CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX}3003_1", callbacks)
+        self.assertIn(f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}3001_1", callbacks)
+        self.assertIn(f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}3003_1", callbacks)
+        self.assertNotIn(f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}3002_1", callbacks)
+
+    async def test_problem_context_card_navigation_callbacks_are_stable(self):
+        kb = get_user_manage_problem_nav_kb(uid=4001, page=2, show_retry_activation=True)
+        callbacks = [button.callback_data for row in kb.inline_keyboard for button in row]
+        self.assertIn(f"{CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX}4001_2", callbacks)
+        self.assertIn(f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}4001_2", callbacks)
 
     async def test_text_override_validation_for_new_keys(self):
         ok_instruction, _ = await validate_text_template("instruction_body", "link: {download_url}")
