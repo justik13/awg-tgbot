@@ -33,7 +33,7 @@ from database import (
 from security_utils import encrypt_text
 from texts import get_payment_result_text
 from keyboards import get_problem_activations_kb
-from handlers_admin import _user_manage_kb, admin_noop
+from handlers_admin import _user_manage_kb, admin_noop, admin_retry_activation_from_problem
 from ui_constants import (
     CB_ADMIN_NOOP,
     CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX,
@@ -213,12 +213,46 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
         callbacks = [button.callback_data for row in kb.inline_keyboard for button in row]
         self.assertIn(CB_ADMIN_NOOP, callbacks)
 
-    async def test_problem_retry_audit_logging_contains_outcome_and_source(self):
-        handlers_source = (ROOT / "bot" / "handlers_admin.py").read_text(encoding="utf-8")
-        self.assertIn("manual_retry_succeeded", handlers_source)
-        self.assertIn("manual_retry_noop", handlers_source)
-        self.assertIn("manual_retry_failed", handlers_source)
-        self.assertIn("source=problem_activations", handlers_source)
+    async def _run_problem_retry_with_result(self, result_code: str):
+        class DummyUser:
+            id = ADMIN_ID
+
+        class DummyMessage:
+            def __init__(self):
+                self.answer = AsyncMock()
+
+        class DummyCb:
+            def __init__(self):
+                self.from_user = DummyUser()
+                self.data = f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}777_3"
+                self.message = DummyMessage()
+                self.bot = object()
+                self.answer = AsyncMock()
+
+        cb = DummyCb()
+        with (
+            patch("handlers_admin.admin_command_limited", return_value=False),
+            patch("handlers_admin.get_latest_user_payment_summary", new=AsyncMock(return_value={"payment_id": "pay-777"})),
+            patch("handlers_admin.manual_retry_activation", new=AsyncMock(return_value={"result": result_code, "message": "ok"})),
+            patch("handlers_admin.write_audit_log", new=AsyncMock()) as audit_mock,
+        ):
+            await admin_retry_activation_from_problem(cb)
+        return audit_mock.await_args_list
+
+    async def test_problem_retry_audit_logging_succeeded(self):
+        calls = await self._run_problem_retry_with_result("succeeded")
+        self.assertTrue(any(call.args[1] == "manual_retry_succeeded" for call in calls))
+        self.assertTrue(any("source=problem_activations" in str(call.args[2]) for call in calls))
+
+    async def test_problem_retry_audit_logging_noop(self):
+        calls = await self._run_problem_retry_with_result("already_applied")
+        self.assertTrue(any(call.args[1] == "manual_retry_noop" for call in calls))
+        self.assertTrue(any("source=problem_activations" in str(call.args[2]) for call in calls))
+
+    async def test_problem_retry_audit_logging_failed(self):
+        calls = await self._run_problem_retry_with_result("failed")
+        self.assertTrue(any(call.args[1] == "manual_retry_failed" for call in calls))
+        self.assertTrue(any("source=problem_activations" in str(call.args[2]) for call in calls))
 
     async def test_text_override_validation_for_new_keys(self):
         ok_instruction, _ = await validate_text_template("instruction_body", "link: {download_url}")

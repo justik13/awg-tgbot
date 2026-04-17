@@ -21,8 +21,7 @@ from ui_constants import (
     CB_ADMIN_FIND_CHARGE, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_OPEN_USER_CARD_PREFIX,
     CB_ADMIN_NOOP,
     CB_ADMIN_PROBLEM_ACTIVATIONS, CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX,
-    CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX, CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX, CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX,
-    CB_ADMIN_RETRY_ACTIVATION_PREFIX,
+    CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX, CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX,
     CB_BROADCAST_CANCEL, CB_BROADCAST_CONFIRM, CB_BUY_30, CB_BUY_7, CB_BUY_90,
     CB_BUY_PAY_7, CB_BUY_PAY_30, CB_BUY_PAY_90,
     CB_CHECK_ACTIVATION_STATUS,
@@ -339,23 +338,6 @@ def get_problem_activations_kb(*, page: int, total_pages: int, items: list[dict[
         )
     rows.append(nav_row)
     rows.append([InlineKeyboardButton(text="⬅️ К платежам", callback_data=CB_ADMIN_PAYMENTS)])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def get_user_manage_problem_nav_kb(uid: int, page: int, *, show_retry_activation: bool = False) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text="🔄 Обновить карточку", callback_data=f"{CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX}{uid}_{page}")],
-    ]
-    if show_retry_activation:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="🛠 Повторить активацию",
-                    callback_data=f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}{uid}_{page}",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="⬅️ К проблемным активациям", callback_data=f"{CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX}{page}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
