@@ -350,7 +350,7 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
             patch("handlers_admin.get_broadcast_segment_user_count", new=AsyncMock(return_value=17)),
             patch("handlers_admin.create_broadcast_job", new=AsyncMock(return_value=9001)) as create_job_mock,
             patch("handlers_admin.clear_pending_broadcast", new=AsyncMock()) as clear_pending_mock,
-            patch("handlers_admin.write_audit_log", new=AsyncMock()),
+            patch("handlers_admin.write_audit_log", new=AsyncMock()) as audit_mock,
         ):
             await broadcast_confirm(cb)
 
@@ -363,6 +363,7 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Текущая оценка получателей: <b>17</b>", answer_text)
         self.assertEqual(cb.message.answer.await_args.kwargs["parse_mode"], "HTML")
         cb.answer.assert_awaited_once_with("Поставлено в очередь")
+        audit_mock.assert_awaited_once_with(ADMIN_ID, "broadcast_queued", "job_id=9001")
 
     async def test_post_payment_result_text_clarifies_device_choice(self):
         text = await get_payment_result_text("ready")
