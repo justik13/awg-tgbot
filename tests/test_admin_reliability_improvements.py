@@ -37,7 +37,7 @@ from security_utils import encrypt_text
 from content_settings import get_text
 from texts import get_payment_result_text
 from keyboards import get_problem_activations_kb
-from handlers_admin import _user_manage_kb, admin_noop, admin_retry_activation_from_problem
+from handlers_admin import _user_manage_kb, admin_noop, admin_retry_activation_from_problem, broadcast_confirm
 from ui_constants import (
     CB_ADMIN_NOOP,
     CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX,
@@ -325,6 +325,44 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(claimed)
         self.assertEqual(claimed[0], job_id)
         self.assertEqual(claimed[4], "problematic_activation")
+
+    async def test_broadcast_confirm_preserves_segment_and_reports_context(self):
+        class DummyUser:
+            id = ADMIN_ID
+
+        class DummyMessage:
+            def __init__(self):
+                self.answer = AsyncMock()
+
+        class DummyCb:
+            def __init__(self):
+                self.from_user = DummyUser()
+                self.message = DummyMessage()
+                self.answer = AsyncMock()
+
+        cb = DummyCb()
+        with (
+            patch("handlers_admin._guard_admin_callback", new=AsyncMock(return_value=True)),
+            patch(
+                "handlers_admin.get_pending_broadcast",
+                new=AsyncMock(return_value={"text": "queued text", "segment": "problematic_activation"}),
+            ),
+            patch("handlers_admin.get_broadcast_segment_user_count", new=AsyncMock(return_value=17)),
+            patch("handlers_admin.create_broadcast_job", new=AsyncMock(return_value=9001)) as create_job_mock,
+            patch("handlers_admin.clear_pending_broadcast", new=AsyncMock()) as clear_pending_mock,
+            patch("handlers_admin.write_audit_log", new=AsyncMock()),
+        ):
+            await broadcast_confirm(cb)
+
+        create_job_mock.assert_awaited_once_with(ADMIN_ID, "queued text", segment="problematic_activation")
+        self.assertNotEqual(create_job_mock.await_args.kwargs.get("segment"), "all")
+        clear_pending_mock.assert_awaited_once_with(ADMIN_ID)
+        cb.message.answer.assert_awaited_once()
+        answer_text = cb.message.answer.await_args.args[0]
+        self.assertIn("Проблемные активации", answer_text)
+        self.assertIn("Текущая оценка получателей: <b>17</b>", answer_text)
+        self.assertEqual(cb.message.answer.await_args.kwargs["parse_mode"], "HTML")
+        cb.answer.assert_awaited_once_with("Поставлено в очередь")
 
     async def test_post_payment_result_text_clarifies_device_choice(self):
         text = await get_payment_result_text("ready")
