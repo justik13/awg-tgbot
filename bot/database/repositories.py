@@ -230,6 +230,10 @@ class ServerRepository:
         awg_settings: Optional[dict[str, Any]] = None,
     ) -> Server:
         """Create a new VPN server."""
+        # Serialize awg_settings to JSON if it's a dict
+        if isinstance(awg_settings, dict):
+            awg_settings = json.dumps(awg_settings)
+        
         server = Server(
             name=name,
             ip=ip,
@@ -310,7 +314,6 @@ class DeviceRepository:
         subscription_id: int,
         server_id: int,
         pub_key: str,
-        priv_key: str,
         psk_key: str,
         ip_address: str,
         conf_name: str,
@@ -320,7 +323,6 @@ class DeviceRepository:
             subscription_id=subscription_id,
             server_id=server_id,
             pub_key=pub_key,
-            priv_key=priv_key,
             psk_key=psk_key,
             ip_address=ip_address,
             conf_name=conf_name,

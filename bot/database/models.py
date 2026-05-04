@@ -229,7 +229,7 @@ class Device(Base):
     
     # WireGuard keys
     pub_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
-    priv_key: Mapped[str] = mapped_column(String(64), nullable=False)  # Should be encrypted at rest
+    # PrivateKey клиента не хранится в БД
     psk_key: Mapped[str] = mapped_column(String(64), nullable=False)  # Should be encrypted at rest
     
     # Network settings

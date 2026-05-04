@@ -43,9 +43,10 @@ class AWGSettings:
     @classmethod
     def from_server(cls, server: Server) -> "AWGSettings":
         """Create AWGSettings from server's awg_settings JSON."""
-        settings = server.awg_settings if isinstance(server.awg_settings, dict) else {}
-        if isinstance(settings, str):
-            settings = json.loads(settings)
+        if isinstance(server.awg_settings, str):
+            settings = json.loads(server.awg_settings)
+        else:
+            settings = server.awg_settings if isinstance(server.awg_settings, dict) else {}
         
         return cls(
             jc=settings.get("Jc", cls.jc),
