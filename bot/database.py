@@ -181,9 +181,11 @@ async def init_db() -> None:
         await ensure_column(db, "keys", "tx_bytes_last", "INTEGER")
         await ensure_column(db, "keys", "traffic_updated_at", "TEXT")
 
-        # Добавляем колонку server_public_key в таблицу nodes (если еще не существует)
-        # Эта колонка критична для генерации AmneziaWG конфигов
-        await ensure_column(db, "nodes", "server_public_key", "TEXT")
+        # Добавляем колонку server_public_key в таблицу nodes (только если таблица уже создана миграцией Phase 1)
+        # Эта проверка предотвращает ошибку "no such table: nodes" на чистой установке
+        async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='nodes'") as cur:
+            if await cur.fetchone():
+                await ensure_column(db, "nodes", "server_public_key", "TEXT")
 
         await db.execute(
             """
