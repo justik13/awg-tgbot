@@ -2565,3 +2565,27 @@ async def get_bot_managed_known_public_keys() -> set[str]:
         """
     )
     return {row[0].strip() for row in rows if row[0]}
+
+
+# =============================================================================
+# Phase 4: Node command queue
+# =============================================================================
+
+async def enqueue_node_command(node_id: int, action: str, payload: dict) -> int:
+    """
+    Queue a command for a node. Returns command ID.
+    Идемпотентная запись команды для ноды со статусом 'pending'.
+    """
+    now_iso = utc_now_naive().isoformat()
+    db = await open_db()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        cursor = await db.execute(
+            """INSERT INTO node_commands (node_id, action, payload_json, status, created_at)
+               VALUES (?, ?, ?, 'pending', ?)""",
+            (node_id, action, json.dumps(payload, ensure_ascii=False), now_iso)
+        )
+        await db.commit()
+        return cursor.lastrowid
+    finally:
+        await db.close()

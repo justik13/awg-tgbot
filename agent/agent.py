@@ -260,17 +260,17 @@ def apply_add_peer(payload: dict[str, Any]) -> bool:
             psk_file = AGENT_DIR / f"psk_{public_key[:8]}.txt"
             with open(psk_file, "w") as f:
                 f.write(preshared_key)
+            os.chmod(psk_file, 0o600)  # Защита PSK файла
             cmd.extend(["preshared-key", str(psk_file)])
         
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        
-        if proc.returncode != 0:
-            log_error("add_peer failed: %s", proc.stderr.strip())
-            return False
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=True)
         
         log_info("add_peer: added peer %s", public_key[:16])
         return True
     
+    except subprocess.CalledProcessError as e:
+        log_error("add_peer failed: %s", e.stderr.strip() if e.stderr else str(e))
+        return False
     except Exception as e:
         log_error("add_peer exception: %s", e)
         return False
@@ -288,11 +288,12 @@ def apply_remove_peer(payload: dict[str, Any]) -> bool:
         return False
     
     try:
-        proc = subprocess.run(
+        subprocess.run(
             ["awg", "set", AWG_INTERFACE, "peer", public_key, "remove"],
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,  # Не падаем если пир не найден
         )
         
         # Возвращаем успех даже если пир не найден (идемпотентность)
