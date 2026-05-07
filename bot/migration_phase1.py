@@ -2,8 +2,14 @@
 PHASE 1: Multi-node schema migration module.
 This module handles safe, idempotent migration from single-server to multi-node architecture.
 
+⚠️ PHASE 1 BOUNDARY
+- Source of truth: `keys` table
+- `devices` is MIGRATION-ONLY derived state
+- DO NOT query `devices` in handlers/payments/referrals until Phase 2
+- Enforcement: code review + integration tests
+
 CRITICAL RULES:
-- Never modify existing configs table or business logic
+- Never modify existing keys table or business logic
 - Migration is transactional with full rollback on error
 - Dry-run mode available for testing without DB writes
 - Existing users continue using their configs without reconnect/regenerate

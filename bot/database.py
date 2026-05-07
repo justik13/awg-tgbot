@@ -96,7 +96,7 @@ async def ensure_db_ready() -> None:
                 raise RuntimeError(f"Migration failed: {result['errors']}")
             logger.info("Phase 1 migration completed successfully")
         else:
-            logger.info("Phase 1 migration already applied (version=%s)", row[0])
+            logger.debug("Phase 1 migration already applied (version=%s)", row[0])
     except Exception as e:
         logger.exception("Error checking/applying Phase 1 migration: %s", e)
         raise
