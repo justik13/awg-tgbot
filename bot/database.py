@@ -181,6 +181,10 @@ async def init_db() -> None:
         await ensure_column(db, "keys", "tx_bytes_last", "INTEGER")
         await ensure_column(db, "keys", "traffic_updated_at", "TEXT")
 
+        # Добавляем колонку server_public_key в таблицу nodes (если еще не существует)
+        # Эта колонка критична для генерации AmneziaWG конфигов
+        await ensure_column(db, "nodes", "server_public_key", "TEXT")
+
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS payments (
@@ -791,7 +795,7 @@ async def get_node_by_id(node_id: int) -> dict[str, Any] | None:
     row = await fetchone(
         """
         SELECT id, name, ip, port, s1, s2, s3, s4, h1, h2, h3, h4,
-               country, flag_emoji, is_visible, capacity, active_configs, status, api_token
+               country, flag_emoji, is_visible, capacity, active_configs, status, api_token, server_public_key
         FROM nodes
         WHERE id = ?
         """,
@@ -819,6 +823,7 @@ async def get_node_by_id(node_id: int) -> dict[str, Any] | None:
         "active_configs": row[16],
         "status": row[17],
         "api_token": row[18],
+        "server_public_key": row[19] or "",  # Fallback на пустую строку для legacy-нод
     }
 
 
@@ -854,7 +859,8 @@ async def create_device(
         )
         device_id = cursor.lastrowid
         
-        # Увеличиваем счетчик active_configs у ноды
+        # ⚠️ COUNTER SYNC: active_configs обновляется в той же транзакции, что и INSERT devices.
+        # При ROLLBACK счётчик автоматически откатится.
         await db.execute(
             "UPDATE nodes SET active_configs = active_configs + 1 WHERE id = ?",
             (node_id,),
@@ -899,7 +905,8 @@ async def delete_device(device_id: int) -> dict[str, Any]:
         # Удаляем запись
         await db.execute("DELETE FROM devices WHERE id = ?", (device_id,))
         
-        # Уменьшаем счетчик active_configs у ноды
+        # ⚠️ COUNTER SYNC: active_configs обновляется в той же транзакции, что и DELETE devices.
+        # При ROLLBACK счётчик автоматически откатится. Защита active_configs > 0 предотвращает уход в минус.
         await db.execute(
             "UPDATE nodes SET active_configs = active_configs - 1 WHERE id = ? AND active_configs > 0",
             (node_id,),
@@ -925,7 +932,7 @@ async def get_active_nodes() -> list[dict[str, Any]]:
     rows = await fetchall(
         """
         SELECT id, name, ip, port, s1, s2, s3, s4, h1, h2, h3, h4,
-               country, flag_emoji, capacity, active_configs
+               country, flag_emoji, capacity, active_configs, server_public_key
         FROM nodes
         WHERE status = 'ready'
           AND is_visible = 1
@@ -952,6 +959,7 @@ async def get_active_nodes() -> list[dict[str, Any]]:
             "flag_emoji": row[13],
             "capacity": row[14],
             "active_configs": row[15],
+            "server_public_key": row[16] or "",  # Fallback на пустую строку для legacy-нод
         })
     return result
 
@@ -962,7 +970,7 @@ async def get_device_by_user_and_slot(user_id: int, slot_number: int) -> dict[st
         """
         SELECT d.id, d.slot_number, d.node_id, d.public_key, d.private_key_enc, d.psk_enc,
                d.status, d.created_at, d.last_reissued_at,
-               n.country, n.flag_emoji, n.ip, n.port, n.s1, n.s2, n.s3, n.s4, n.h1, n.h2, n.h3, n.h4
+               n.country, n.flag_emoji, n.ip, n.port, n.s1, n.s2, n.s3, n.s4, n.h1, n.h2, n.h3, n.h4, n.server_public_key
         FROM devices d
         LEFT JOIN nodes n ON d.node_id = n.id
         WHERE d.user_id = ? AND d.slot_number = ?
@@ -993,6 +1001,7 @@ async def get_device_by_user_and_slot(user_id: int, slot_number: int) -> dict[st
         "h2": row[18],
         "h3": row[19],
         "h4": row[20],
+        "server_public_key": row[21] or "",  # Fallback на пустую строку для legacy-нод
     }
 
 
