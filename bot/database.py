@@ -9,7 +9,7 @@ import aiosqlite
 
 from config import DB_PATH, logger
 from helpers import utc_now_naive
-from security_utils import decrypt_text
+from security_utils import decrypt_text, encrypt_text
 
 _shared_db: aiosqlite.Connection | None = None
 SAFE_TG_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{1,32}$")
@@ -725,6 +725,300 @@ async def get_user_total_traffic_bytes(user_id: int) -> int:
         (user_id,),
     )
     return int(row[0]) if row and row[0] is not None else 0
+
+
+# =============================================================================
+# PHASE 2: Multi-node devices & nodes management
+# =============================================================================
+
+
+async def get_user_devices(user_id: int) -> list[dict[str, Any]]:
+    """
+    Возвращает список устройств (слотов) пользователя с JOIN на nodes
+    для получения флага страны и статуса ноды.
+    """
+    rows = await fetchall(
+        """
+        SELECT 
+            d.id,
+            d.slot_number,
+            d.node_id,
+            d.public_key,
+            d.status,
+            d.created_at,
+            d.last_reissued_at,
+            n.country,
+            n.flag_emoji,
+            n.ip as node_ip,
+            n.port as node_port,
+            n.s1, n.s2, n.s3, n.s4,
+            n.h1, n.h2, n.h3, n.h4
+        FROM devices d
+        LEFT JOIN nodes n ON d.node_id = n.id
+        WHERE d.user_id = ?
+        ORDER BY d.slot_number
+        """,
+        (user_id,),
+    )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        result.append({
+            "id": row[0],
+            "slot_number": row[1],
+            "node_id": row[2],
+            "public_key": row[3],
+            "status": row[4],
+            "created_at": row[5],
+            "last_reissued_at": row[6],
+            "country": row[7],
+            "flag_emoji": row[8],
+            "node_ip": row[9],
+            "node_port": row[10],
+            "s1": row[11],
+            "s2": row[12],
+            "s3": row[13],
+            "s4": row[14],
+            "h1": row[15],
+            "h2": row[16],
+            "h3": row[17],
+            "h4": row[18],
+        })
+    return result
+
+
+async def get_node_by_id(node_id: int) -> dict[str, Any] | None:
+    """Возвращает параметры ноды по ID."""
+    row = await fetchone(
+        """
+        SELECT id, name, ip, port, s1, s2, s3, s4, h1, h2, h3, h4,
+               country, flag_emoji, is_visible, capacity, active_configs, status, api_token
+        FROM nodes
+        WHERE id = ?
+        """,
+        (node_id,),
+    )
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "name": row[1],
+        "ip": row[2],
+        "port": row[3],
+        "s1": row[4],
+        "s2": row[5],
+        "s3": row[6],
+        "s4": row[7],
+        "h1": row[8],
+        "h2": row[9],
+        "h3": row[10],
+        "h4": row[11],
+        "country": row[12],
+        "flag_emoji": row[13],
+        "is_visible": row[14],
+        "capacity": row[15],
+        "active_configs": row[16],
+        "status": row[17],
+        "api_token": row[18],
+    }
+
+
+async def create_device(
+    user_id: int,
+    slot_number: int,
+    node_id: int,
+    public_key: str,
+    private_key_enc: str,
+    psk_enc: str,
+) -> int:
+    """
+    Создает запись в devices.
+    Возвращает ID созданного устройства.
+    """
+    db = await open_db()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        
+        # Удаляем старую запись если была (для данного user_id + slot_number)
+        await db.execute(
+            "DELETE FROM devices WHERE user_id = ? AND slot_number = ?",
+            (user_id, slot_number),
+        )
+        
+        now_iso = utc_now_naive().isoformat()
+        cursor = await db.execute(
+            """
+            INSERT INTO devices (user_id, slot_number, node_id, public_key, private_key_enc, psk_enc, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
+            """,
+            (user_id, slot_number, node_id, public_key, private_key_enc, psk_enc, now_iso),
+        )
+        device_id = cursor.lastrowid
+        
+        # Увеличиваем счетчик active_configs у ноды
+        await db.execute(
+            "UPDATE nodes SET active_configs = active_configs + 1 WHERE id = ?",
+            (node_id,),
+        )
+        
+        await db.commit()
+        return device_id
+    finally:
+        await db.close()
+
+
+async def update_device_status(device_id: int, status: str) -> None:
+    """Меняет статус устройства (active/inactive/revoked)."""
+    await execute(
+        "UPDATE devices SET status = ?, last_reissued_at = ? WHERE id = ?",
+        (status, utc_now_naive().isoformat(), device_id),
+    )
+
+
+async def delete_device(device_id: int) -> dict[str, Any]:
+    """
+    Удаляет устройство из БД и уменьшает счетчик ноды.
+    Возвращает информацию о deleted устройстве.
+    """
+    db = await open_db()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        
+        # Получаем info об устройстве перед удалением
+        async with db.execute(
+            "SELECT node_id, user_id, slot_number, public_key FROM devices WHERE id = ?",
+            (device_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        
+        if not row:
+            await db.rollback()
+            return {"deleted": False, "reason": "not_found"}
+        
+        node_id, user_id, slot_number, public_key = row
+        
+        # Удаляем запись
+        await db.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+        
+        # Уменьшаем счетчик active_configs у ноды
+        await db.execute(
+            "UPDATE nodes SET active_configs = active_configs - 1 WHERE id = ? AND active_configs > 0",
+            (node_id,),
+        )
+        
+        await db.commit()
+        return {
+            "deleted": True,
+            "node_id": node_id,
+            "user_id": user_id,
+            "slot_number": slot_number,
+            "public_key": public_key,
+        }
+    finally:
+        await db.close()
+
+
+async def get_active_nodes() -> list[dict[str, Any]]:
+    """
+    Возвращает список нод со статусом 'ready' и is_visible=1,
+    у которых active_configs < capacity.
+    """
+    rows = await fetchall(
+        """
+        SELECT id, name, ip, port, s1, s2, s3, s4, h1, h2, h3, h4,
+               country, flag_emoji, capacity, active_configs
+        FROM nodes
+        WHERE status = 'ready'
+          AND is_visible = 1
+          AND active_configs < capacity
+        ORDER BY country, name
+        """
+    )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        result.append({
+            "id": row[0],
+            "name": row[1],
+            "ip": row[2],
+            "port": row[3],
+            "s1": row[4],
+            "s2": row[5],
+            "s3": row[6],
+            "s4": row[7],
+            "h1": row[8],
+            "h2": row[9],
+            "h3": row[10],
+            "h4": row[11],
+            "country": row[12],
+            "flag_emoji": row[13],
+            "capacity": row[14],
+            "active_configs": row[15],
+        })
+    return result
+
+
+async def get_device_by_user_and_slot(user_id: int, slot_number: int) -> dict[str, Any] | None:
+    """Возвращает устройство пользователя по номеру слота."""
+    row = await fetchone(
+        """
+        SELECT d.id, d.slot_number, d.node_id, d.public_key, d.private_key_enc, d.psk_enc,
+               d.status, d.created_at, d.last_reissued_at,
+               n.country, n.flag_emoji, n.ip, n.port, n.s1, n.s2, n.s3, n.s4, n.h1, n.h2, n.h3, n.h4
+        FROM devices d
+        LEFT JOIN nodes n ON d.node_id = n.id
+        WHERE d.user_id = ? AND d.slot_number = ?
+        """,
+        (user_id, slot_number),
+    )
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "slot_number": row[1],
+        "node_id": row[2],
+        "public_key": row[3],
+        "private_key_enc": row[4],
+        "psk_enc": row[5],
+        "status": row[6],
+        "created_at": row[7],
+        "last_reissued_at": row[8],
+        "country": row[9],
+        "flag_emoji": row[10],
+        "node_ip": row[11],
+        "node_port": row[12],
+        "s1": row[13],
+        "s2": row[14],
+        "s3": row[15],
+        "s4": row[16],
+        "h1": row[17],
+        "h2": row[18],
+        "h3": row[19],
+        "h4": row[20],
+    }
+
+
+async def get_user_subscription_expires_at(user_id: int) -> str | None:
+    """Возвращает дату истечения подписки пользователя."""
+    row = await fetchone(
+        "SELECT subscription_expires_at FROM users WHERE user_id = ?",
+        (user_id,),
+    )
+    if row and row[0]:
+        return row[0]
+    # Fallback на старый sub_until
+    row = await fetchone("SELECT sub_until FROM users WHERE user_id = ?", (user_id,))
+    return row[0] if row else None
+
+
+async def get_user_max_devices(user_id: int) -> int:
+    """Возвращает максимальное количество устройств для пользователя."""
+    row = await fetchone(
+        "SELECT max_devices FROM users WHERE user_id = ?",
+        (user_id,),
+    )
+    if row and row[0]:
+        return int(row[0])
+    from config import CONFIGS_PER_USER
+    return CONFIGS_PER_USER
 
 
 async def set_active_key_rate_limit(user_id: int, device_num: int, rate_limit_mbit: int | None) -> bool:

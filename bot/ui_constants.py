@@ -7,6 +7,15 @@ BTN_ADMIN = "⚙️ Админка"
 ADMIN_CALLBACK_PREFIX = "a:"
 CB_ADMIN_NOOP = "a:noop"
 
+# Phase 2: Slot management callbacks
+CB_SLOT_PREFIX = "slot:"
+CB_PICK_COUNTRY_PREFIX = "pick_country:"
+CB_REISSUE_PREFIX = "reissue:"
+CB_CHANGE_COUNTRY_PREFIX = "change_country:"
+CB_DELETE_PREFIX = "delete:"
+CB_DELETE_CONFIRM_PREFIX = "delete_confirm:"
+CB_MAIN_MENU = "main_menu"
+
 CB_BUY_7 = "buy_7"
 CB_BUY_30 = "buy_30"
 CB_BUY_90 = "buy_90"
