@@ -44,6 +44,7 @@ def _problematic_payment_predicate(payment_alias: str = "p") -> str:
 
 
 async def _apply_pragmas(db: aiosqlite.Connection) -> None:
+    """Apply required PRAGMA settings for SQLite connection."""
     await db.execute("PRAGMA journal_mode=WAL;")
     await db.execute("PRAGMA synchronous=NORMAL;")
     await db.execute("PRAGMA foreign_keys=ON;")
@@ -66,9 +67,41 @@ async def close_shared_db() -> None:
 
 
 async def open_db() -> aiosqlite.Connection:
+    """Open new database connection with required PRAGMAs."""
     db = await aiosqlite.connect(DB_PATH)
     await _apply_pragmas(db)
     return db
+
+
+async def ensure_db_ready() -> None:
+    """Initialize database schema and run Phase 1 migration if needed."""
+    from migration_phase1 import run_migration
+    
+    # Run init_db first to ensure base schema exists
+    await init_db()
+    
+    # Check if Phase 1 migration has been applied
+    db = await open_db()
+    try:
+        async with db.execute(
+            "SELECT version FROM schema_versions WHERE version='phase1_multi_node_schema'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        
+        if row is None:
+            logger.info("Phase 1 migration not yet applied, running now...")
+            result = await run_migration(dry_run=False)
+            if not result["success"]:
+                logger.error("Phase 1 migration failed: %s", result["errors"])
+                raise RuntimeError(f"Migration failed: {result['errors']}")
+            logger.info("Phase 1 migration completed successfully")
+        else:
+            logger.info("Phase 1 migration already applied (version=%s)", row[0])
+    except Exception as e:
+        logger.exception("Error checking/applying Phase 1 migration: %s", e)
+        raise
+    finally:
+        await db.close()
 
 
 async def fetchone(sql: str, params: tuple[Any, ...] = ()) -> Any:
@@ -441,10 +474,6 @@ async def init_db() -> None:
         await db.commit()
     finally:
         await db.close()
-
-
-async def ensure_db_ready() -> None:
-    await init_db()
 
 
 async def set_pending_admin_action(admin_id: int, action_key: str, payload: dict[str, Any]) -> None:
