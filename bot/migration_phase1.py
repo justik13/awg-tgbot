@@ -47,8 +47,10 @@ CREATE TABLE IF NOT EXISTS nodes (
     capacity INTEGER DEFAULT 50,
     active_configs INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending',
-    api_token TEXT,
+    api_token TEXT UNIQUE,
     last_seen TEXT,
+    params_hash TEXT,
+    denylist_version TEXT DEFAULT 'v0',
     created_at TEXT DEFAULT (datetime('now'))
 );
 """
@@ -84,6 +86,26 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);",
     "CREATE INDEX IF NOT EXISTS idx_devices_node_id ON devices(node_id);",
     "CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status);",
+    "CREATE INDEX IF NOT EXISTS idx_nodes_api_token ON nodes(api_token);",
+]
+
+# Phase 4: Node commands queue table
+CREATE_NODE_COMMANDS_TABLE = """
+CREATE TABLE IF NOT EXISTS node_commands (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    payload_json TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    sent_at TEXT,
+    FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+"""
+
+CREATE_NODE_COMMANDS_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_node_commands_node_id ON node_commands(node_id);",
+    "CREATE INDEX IF NOT EXISTS idx_node_commands_status ON node_commands(status);",
 ]
 
 # =============================================================================
@@ -310,8 +332,15 @@ async def _ensure_schema(db: aiosqlite.Connection) -> None:
     # Create schema_versions table
     await db.execute(CREATE_SCHEMA_VERSIONS_TABLE)
     
+    # Create node_commands table (Phase 4)
+    await db.execute(CREATE_NODE_COMMANDS_TABLE)
+    
     # Create indexes (one at a time for SQLite compatibility)
     for index_sql in CREATE_INDEXES:
+        await db.execute(index_sql)
+    
+    # Create node_commands indexes
+    for index_sql in CREATE_NODE_COMMANDS_INDEXES:
         await db.execute(index_sql)
     
     # Add columns to users table (safe, idempotent)

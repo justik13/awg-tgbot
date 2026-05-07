@@ -3345,8 +3345,9 @@ show_logs() {
 print_menu_awg_yes_bot_no() {
   echo "Доступные действия:"
   echo "1) Установить"
-  echo "2) Диагностика"
-  echo "3) Повторить проверку"
+  echo "2) Node (Agent + sync)"
+  echo "3) Диагностика"
+  echo "4) Повторить проверку"
   echo "0) Выход"
   print_line
 }
@@ -3436,8 +3437,9 @@ main_menu() {
         prompt_menu_key "Выбери действие: " choice
         case "$choice" in
           1) install_or_reinstall_flow install ;;
-          2) print_detailed_startup_summary ;;
-          3) should_pause=0 ;;
+          2) install_node_flow ;;
+          3) print_detailed_startup_summary ;;
+          4) should_pause=0 ;;
           0) cleanup_transient_install_state; clear_if_tty; print_exit_hint; exit 0 ;;
           *) warn "Неизвестный пункт меню." ;;
         esac
