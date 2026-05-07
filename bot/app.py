@@ -10,6 +10,8 @@ from aiogram import Bot, Dispatcher, Router, types
 from aiogram.exceptions import TelegramUnauthorizedError
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from aiohttp.web_runner import AppRunner, TCPSite
+
 from awg_backend import (
     bootstrap_protected_peers,
     check_awg_container,
@@ -30,6 +32,7 @@ from config import (
     CLEANUP_INTERVAL_SECONDS,
     DB_PATH,
     DOCKER_CONTAINER,
+    NODE_API_PORT,
     PENDING_KEY_TTL_SECONDS,
     RECONCILIATION_INTERVAL_SECONDS,
     WG_INTERFACE,
@@ -57,6 +60,7 @@ from handlers_admin import router as admin_router
 from handlers_user import router as user_router
 from middlewares import DuplicateCallbackGuardMiddleware, DuplicateMessageGuardMiddleware, RateLimitMiddleware
 from network_policy import denylist_should_refresh, denylist_sync
+from node_api import create_node_api_app, start_node_api_server, stop_node_api_server
 from payments import payment_recovery_worker
 from payments import router as payments_router
 from ui_constants import is_admin_callback_data
@@ -371,11 +375,18 @@ async def main() -> None:
         ),
     )
     worker_pool = WorkerPool()
+    
+    # Создаём Node API приложение
+    node_api_app = create_node_api_app()
 
     try:
         await _startup_checks(bot)
         scheduler.add_job(_notify_expiring_subscriptions, "interval", minutes=30, kwargs={"bot": bot}, id="expiring-reminders", replace_existing=True)
         scheduler.start()
+        
+        # Запускаем Node API сервер параллельно с ботом
+        await start_node_api_server(node_api_app, NODE_API_PORT)
+        
         worker_pool.start(
             [
                 WorkerSpec(
@@ -400,6 +411,7 @@ async def main() -> None:
             logger.warning("Не удалось корректно остановить scheduler: %s", shutdown_error)
         await worker_pool.stop()
         await close_shared_db()
+        await stop_node_api_server(node_api_app)
         await bot.session.close()
 
 

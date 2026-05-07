@@ -1,24 +1,34 @@
 ```
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Dependencies
-.venv/
+# Virtual environments
 venv/
 env/
-.env
-.env.local
-.env.*
+ENV/
+.venv/
+.env/
 
-# Build artifacts
-dist/
-build/
-*.egg-info/
-
-# Editors
+# IDE
 .vscode/
 .idea/
 *.swp
@@ -27,12 +37,31 @@ build/
 # Logs
 *.log
 
+# Environment
+.env
+.env.local
+.env.*
+
 # Coverage
 .coverage
 coverage/
 htmlcov/
 
-# Testing
-.pytest_cache/
+# MyPy
 .mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pytest
+.pytest_cache/
+
+# Node.js (if present)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
 ```
