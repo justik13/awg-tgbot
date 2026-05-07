@@ -73,18 +73,25 @@ from ui_constants import (
     BTN_CONFIGS,
     BTN_PROFILE,
     BTN_SUPPORT,
+    CB_CHANGE_COUNTRY_PREFIX,
     CB_CHECK_ACTIVATION_STATUS,
     CB_CONFIG_CONF_PREFIX,
     CB_CONFIG_DEVICE_PREFIX,
+    CB_DELETE_CONFIRM_PREFIX,
+    CB_DELETE_PREFIX,
+    CB_MAIN_MENU,
     CB_OPEN_CONFIGS,
     CB_OPEN_PROFILE,
     CB_OPEN_REFERRALS,
     CB_OPEN_TRAFFIC_DEVICES,
     CB_OPEN_SUPPORT,
+    CB_PICK_COUNTRY_PREFIX,
     CB_PROMO_INPUT_CANCEL,
     CB_PROMO_INPUT_START,
+    CB_REISSUE_PREFIX,
     CB_SHOW_BUY_MENU,
     CB_SHOW_INSTRUCTION,
+    CB_SLOT_PREFIX,
     CB_SUPPORT_CONNECTION,
     CB_SUPPORT_PAYMENT,
     CB_SUPPORT_TERMS,
@@ -97,6 +104,18 @@ from content_settings import get_setting, get_text
 from referrals import build_referral_inviter_banner_text, capture_referral_start, get_referral_screen_data
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 from payments import clear_pending_invoice_for_user
+from security_utils import encrypt_text, decrypt_text
+from awg_backend import generate_keypair, generate_psk, build_client_config, encode_vpn_key, build_vpn_payload
+from database import (
+    get_user_devices,
+    create_device,
+    get_active_nodes,
+    get_device_by_user_and_slot,
+    delete_device,
+    get_user_subscription_expires_at,
+    get_user_max_devices,
+    get_node_by_id,
+)
 
 router = Router()
 USER_PROMO_INPUT_ACTION_KEY = "user_promo_input"
@@ -946,6 +965,562 @@ async def promo_input_cancel_callback(cb: types.CallbackQuery):
 @router.message(HasPendingPromoInput())
 async def promo_input_pending_message(message: types.Message):
     await _handle_promo_input_message(message)
+
+
+# =============================================================================
+# ФАЗА 3: Inline-интерфейс управления слотами
+# =============================================================================
+
+async def render_main_menu(bot: types.Bot, chat_id: int, message_id: int | None = None) -> None:
+    """
+    Рендерит главное меню пользователя со слотами устройств.
+    Использует edit_message_text если message_id передан, иначе send_message.
+    """
+    user_id = chat_id
+    
+    # Получаем данные о подписке
+    subscription_expires_at = await get_user_subscription_expires_at(user_id)
+    max_devices = await get_user_max_devices(user_id)
+    
+    # Проверяем активна ли подписка
+    now = utc_now_naive()
+    is_active = False
+    expires_display = "— "
+    if subscription_expires_at:
+        try:
+            expires_dt = datetime.fromisoformat(subscription_expires_at.replace("Z", "+00:00"))
+            if expires_dt.tzinfo is None:
+                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+            is_active = expires_dt > now
+            expires_display = format_moscow_datetime(expires_dt)[:10]
+        except (ValueError, TypeError):
+            expires_display = "— "
+            is_active = False
+    
+    # Получаем устройства пользователя
+    devices = await get_user_devices(user_id)
+    devices_by_slot = {d["slot_number"]: d for d in devices}
+    
+    # Формируем текст сообщения
+    status_text = "✅ Активна" if is_active else "❌ Истекла"
+    active_count = len([d for d in devices if d.get("status") == "active"])
+    
+    text = (
+        f"🔐 <b>Подписка</b>: {status_text} до {expires_display}\n"
+        f"📦 <b>Устройств</b>: {active_count} / {max_devices}\n\n"
+        f"Нажмите на слот, чтобы настроить или управлять конфигурацией:"
+    )
+    
+    # Формируем клавиатуру со слотами
+    builder = InlineKeyboardBuilder()
+    
+    for slot_num in range(1, max_devices + 1):
+        device = devices_by_slot.get(slot_num)
+        
+        if not is_active:
+            # Подписка истекла - все слоты заблокированы
+            builder.button(text=f"🔒 Конфиг #{slot_num}", callback_data="blocked")
+        elif device and device.get("status") == "active":
+            # Слот занят
+            flag = device.get("flag_emoji") or "🌍"
+            country = device.get("country") or "Unknown"
+            builder.button(text=f"{flag} Конфиг #{slot_num}", callback_data=f"{CB_SLOT_PREFIX}{slot_num}")
+        else:
+            # Слот пуст
+            builder.button(text=f"⚪ Не настроено #{slot_num}", callback_data=f"{CB_SLOT_PREFIX}{slot_num}")
+    
+    # Дополнительные кнопки внизу
+    builder.adjust(max_devices)  # Кнопки слотов в один ряд по max_devices
+    
+    # Нижние кнопки
+    bottom_buttons = [
+        [InlineKeyboardButton(text="💳 Купить / Продлить", callback_data=CB_SHOW_BUY_MENU)],
+        [InlineKeyboardButton(text="🎁 Промокод", callback_data=CB_PROMO_INPUT_START)],
+        [InlineKeyboardButton(text="👥 Рефералы", callback_data=CB_OPEN_REFERRALS)],
+        [InlineKeyboardButton(text="🆘 Поддержка", callback_data=CB_OPEN_SUPPORT)],
+    ]
+    
+    final_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=builder.inline_keyboard + bottom_buttons
+    )
+    
+    try:
+        if message_id is not None:
+            await bot.edit_message_text(
+                text=text,
+                chat_id=chat_id,
+                message_id=message_id,
+                parse_mode="HTML",
+                reply_markup=final_keyboard,
+            )
+        else:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=final_keyboard,
+            )
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return  # Ничего не делаем, сообщение не изменилось
+        logger.warning("Ошибка при рендере главного меню: %s", e)
+        raise
+
+
+@router.callback_query(F.data == CB_MAIN_MENU)
+async def main_menu_callback(cb: types.CallbackQuery):
+    """Возврат к главному меню."""
+    await cb.answer()
+    if cb.message:
+        await render_main_menu(cb.bot, cb.from_user.id, cb.message.message_id)
+
+
+@router.callback_query(F.data.startswith(CB_SLOT_PREFIX))
+async def slot_callback(cb: types.CallbackQuery):
+    """Обработка нажатия на слот."""
+    # Парсим номер слота
+    try:
+        slot_number = int(cb.data.split(":")[1])
+    except (IndexError, ValueError):
+        await cb.answer("⛔️ Ошибка формата", show_alert=True)
+        return
+    
+    user_id = cb.from_user.id
+    
+    # Проверяем активность подписки
+    subscription_expires_at = await get_user_subscription_expires_at(user_id)
+    now = utc_now_naive()
+    is_active = False
+    if subscription_expires_at:
+        try:
+            expires_dt = datetime.fromisoformat(subscription_expires_at.replace("Z", "+00:00"))
+            if expires_dt.tzinfo is None:
+                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+            is_active = expires_dt > now
+        except (ValueError, TypeError):
+            pass
+    
+    if not is_active:
+        await cb.answer("⛔️ Подписка истекла. Продлите доступ.", show_alert=True)
+        return
+    
+    # Получаем устройство
+    device = await get_device_by_user_and_slot(user_id, slot_number)
+    
+    if not device:
+        # Пустой слот - показываем выбор страны
+        nodes = await get_active_nodes()
+        
+        builder = InlineKeyboardBuilder()
+        for node in nodes:
+            flag = node.get("flag_emoji") or "🌍"
+            country = node.get("country") or "Unknown"
+            builder.button(
+                text=f"{flag} {country}",
+                callback_data=f"{CB_PICK_COUNTRY_PREFIX}{slot_number}:{node['id']}"
+            )
+        
+        builder.button(text="🔙 Назад", callback_data=CB_MAIN_MENU)
+        builder.adjust(2)  # 2 кнопки в ряд
+        
+        text = f"⚙️ <b>Настройка слота #{slot_number}</b>\n\nВыберите страну для подключения:"
+        
+        try:
+            await cb.message.edit_text(
+                text=text,
+                parse_mode="HTML",
+                reply_markup=builder.as_markup(),
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                raise
+        await cb.answer()
+    else:
+        # Занятый слот - показываем меню управления
+        flag = device.get("flag_emoji") or "🌍"
+        country = device.get("country") or "Unknown"
+        
+        # Форматируем дату истечения
+        expires_display = expires_display = subscription_expires_at[:10] if subscription_expires_at else "—"
+        
+        text = (
+            f"📱 <b>Конфиг #{slot_number}</b> | {flag} {country}\n"
+            f"Активен до: {expires_display}"
+        )
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔄 Перевыпустить", callback_data=f"{CB_REISSUE_PREFIX}{slot_number}")
+        builder.button(text="🌍 Сменить страну", callback_data=f"{CB_CHANGE_COUNTRY_PREFIX}{slot_number}")
+        builder.button(text="🗑 Удалить", callback_data=f"{CB_DELETE_PREFIX}{slot_number}")
+        builder.button(text="🔙 Назад", callback_data=CB_MAIN_MENU)
+        builder.adjust(2)
+        
+        try:
+            await cb.message.edit_text(
+                text=text,
+                parse_mode="HTML",
+                reply_markup=builder.as_markup(),
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                raise
+        await cb.answer()
+
+
+@router.callback_query(F.data.startswith(CB_PICK_COUNTRY_PREFIX))
+async def pick_country_callback(cb: types.CallbackQuery):
+    """Выбор страны и создание устройства."""
+    # Парсим callback_data: pick_country:{slot}:{node_id}
+    try:
+        parts = cb.data.split(":")
+        slot_number = int(parts[1])
+        node_id = int(parts[2])
+    except (IndexError, ValueError):
+        await cb.answer("⛔️ Ошибка формата", show_alert=True)
+        return
+    
+    user_id = cb.from_user.id
+    
+    # Проверяем лимит ноды
+    node = await get_node_by_id(node_id)
+    if not node:
+        await cb.answer("⛔️ Сервер недоступен", show_alert=True)
+        return
+    
+    if node["active_configs"] >= node["capacity"]:
+        await cb.answer("⛔️ Лимит сервера достигнут. Выберите другой.", show_alert=True)
+        return
+    
+    await cb.answer("⏳ Генерация ключей...")
+    
+    try:
+        # Генерируем ключи WireGuard
+        private_key, public_key = await generate_keypair()
+        psk = await generate_psk()
+        
+        # Шифруем чувствительные данные
+        private_key_enc = encrypt_text(private_key)
+        psk_enc = encrypt_text(psk)
+        
+        # Создаём устройство в БД
+        device_id = await create_device(
+            user_id=user_id,
+            slot_number=slot_number,
+            node_id=node_id,
+            public_key=public_key,
+            private_key_enc=private_key_enc,
+            psk_enc=psk_enc,
+        )
+        
+        # Генерируем конфиг AmneziaWG
+        config_text = build_client_config(
+            private_key=private_key,
+            ip=node["ip"],
+            psk_key=psk,
+        )
+        
+        # Добавляем параметры AmneziaWG
+        awg_params = {
+            "Jc": node.get("s1", ""),
+            "Jmin": node.get("s2", ""),
+            "Jmax": node.get("s3", ""),
+            "S1": node.get("s4", ""),
+            "H1": node.get("h1", ""),
+            "H2": node.get("h2", ""),
+            "H3": node.get("h3", ""),
+            "H4": node.get("h4", ""),
+        }
+        
+        # Формируем полный конфиг с параметрами AmneziaWG
+        full_config = f"[Interface]\nAddress = {node['ip']}/32\nDNS = 8.8.8.8, 8.8.4.4\nPrivateKey = {private_key}\n"
+        for key, value in awg_params.items():
+            if value:
+                full_config += f"{key} = {value}\n"
+        full_config += f"\n[Peer]\nPublicKey = {node.get('server_public_key', '')}\nPresharedKey = {psk}\nAllowedIPs = 0.0.0.0/0\nEndpoint = {node['ip']}:{node['port']}\nPersistentKeepalive = 25\n"
+        
+        # Отправляем конфиг файлом
+        config_file = types.InputFile(
+            io.BytesIO(full_config.encode("utf-8")),
+            filename=f"config_slot_{slot_number}.conf"
+        )
+        
+        await cb.bot.send_document(
+            chat_id=user_id,
+            document=config_file,
+            caption=f"📄 <b>Конфигурация для слота #{slot_number}</b>\n\n"
+                    f"🇩🇪 Страна: {node.get('country', 'Unknown')}\n"
+                    f"🌐 Сервер: {node.get('name', 'N/A')}\n\n"
+                    f"<b>Как импортировать:</b>\n"
+                    f"1. Скачайте файл .conf\n"
+                    f"2. Откройте клиент AmneziaWG\n"
+                    f"3. Добавьте туннель из файла\n"
+                    f"4. Подключитесь",
+            parse_mode="HTML",
+        )
+        
+        # Обновляем главное меню
+        await render_main_menu(cb.bot, user_id, cb.message.message_id)
+        
+        logger.info(
+            "Создано устройство: user_id=%s, slot=%s, node_id=%s, public_key=%s...",
+            user_id, slot_number, node_id, public_key[:20]
+        )
+        
+    except Exception as e:
+        logger.exception("Ошибка при создании устройства: %s", e)
+        await cb.answer("❌ Ошибка создания конфига. Попробуйте позже.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith(CB_REISSUE_PREFIX))
+async def reissue_callback(cb: types.CallbackQuery):
+    """Перевыпуск ключей для устройства."""
+    try:
+        slot_number = int(cb.data.split(":")[1])
+    except (IndexError, ValueError):
+        await cb.answer("⛔️ Ошибка формата", show_alert=True)
+        return
+    
+    user_id = cb.from_user.id
+    
+    # Находим устройство
+    device = await get_device_by_user_and_slot(user_id, slot_number)
+    if not device:
+        await cb.answer("⛔️ Устройство не найдено", show_alert=True)
+        return
+    
+    await cb.answer("⏳ Перевыпуск ключей...")
+    
+    try:
+        # Генерируем новые ключи
+        private_key, public_key = await generate_keypair()
+        psk = await generate_psk()
+        
+        # Шифруем
+        private_key_enc = encrypt_text(private_key)
+        psk_enc = encrypt_text(psk)
+        
+        # Обновляем устройство в БД (через delete + create для данного слота)
+        db = await open_db()
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            
+            # Удаляем старую запись
+            await db.execute(
+                "DELETE FROM devices WHERE user_id = ? AND slot_number = ?",
+                (user_id, slot_number)
+            )
+            
+            now_iso = utc_now_naive().isoformat()
+            
+            # Создаём новую запись
+            cursor = await db.execute(
+                """
+                INSERT INTO devices (user_id, slot_number, node_id, public_key, private_key_enc, psk_enc, status, created_at, last_reissued_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (user_id, slot_number, device["node_id"], public_key, private_key_enc, psk_enc, now_iso, now_iso)
+            )
+            
+            await db.commit()
+        finally:
+            await db.close()
+        
+        # Генерируем новый конфиг
+        node = await get_node_by_id(device["node_id"])
+        full_config = f"[Interface]\nAddress = {node['ip']}/32\nDNS = 8.8.8.8, 8.8.4.4\nPrivateKey = {private_key}\n"
+        awg_params = {
+            "Jc": node.get("s1", ""),
+            "Jmin": node.get("s2", ""),
+            "Jmax": node.get("s3", ""),
+            "S1": node.get("s4", ""),
+            "H1": node.get("h1", ""),
+            "H2": node.get("h2", ""),
+            "H3": node.get("h3", ""),
+            "H4": node.get("h4", ""),
+        }
+        for key, value in awg_params.items():
+            if value:
+                full_config += f"{key} = {value}\n"
+        full_config += f"\n[Peer]\nPublicKey = {node.get('server_public_key', '')}\nPresharedKey = {psk}\nAllowedIPs = 0.0.0.0/0\nEndpoint = {node['ip']}:{node['port']}\nPersistentKeepalive = 25\n"
+        
+        # Отправляем новый конфиг
+        config_file = types.InputFile(
+            io.BytesIO(full_config.encode("utf-8")),
+            filename=f"config_slot_{slot_number}_reissued.conf"
+        )
+        
+        await cb.bot.send_document(
+            chat_id=user_id,
+            document=config_file,
+            caption=f"🔄 <b>Конфиг перевыпущен!</b>\n\n"
+                    f"Старый ключ деактивирован. Используйте новый файл.",
+            parse_mode="HTML",
+        )
+        
+        # Возвращаемся к меню слота
+        flag = node.get("flag_emoji") or "🌍"
+        country = node.get("country") or "Unknown"
+        subscription_expires_at = await get_user_subscription_expires_at(user_id)
+        expires_display = subscription_expires_at[:10] if subscription_expires_at else "—"
+        
+        text = (
+            f"📱 <b>Конфиг #{slot_number}</b> | {flag} {country}\n"
+            f"Активен до: {expires_display}\n\n"
+            f"✅ Ключи перевыпущены"
+        )
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔄 Перевыпустить", callback_data=f"{CB_REISSUE_PREFIX}{slot_number}")
+        builder.button(text="🌍 Сменить страну", callback_data=f"{CB_CHANGE_COUNTRY_PREFIX}{slot_number}")
+        builder.button(text="🗑 Удалить", callback_data=f"{CB_DELETE_PREFIX}{slot_number}")
+        builder.button(text="🔙 Назад", callback_data=CB_MAIN_MENU)
+        builder.adjust(2)
+        
+        await cb.message.edit_text(
+            text=text,
+            parse_mode="HTML",
+            reply_markup=builder.as_markup(),
+        )
+        
+        logger.info(
+            "Перевыпущено устройство: user_id=%s, slot=%s, public_key=%s...",
+            user_id, slot_number, public_key[:20]
+        )
+        
+    except Exception as e:
+        logger.exception("Ошибка при перевыпуске: %s", e)
+        await cb.answer("❌ Ошибка перевыпуска. Попробуйте позже.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith(CB_CHANGE_COUNTRY_PREFIX))
+async def change_country_callback(cb: types.CallbackQuery):
+    """Смена страны для устройства."""
+    try:
+        slot_number = int(cb.data.split(":")[1])
+    except (IndexError, ValueError):
+        await cb.answer("⛔️ Ошибка формата", show_alert=True)
+        return
+    
+    user_id = cb.from_user.id
+    
+    # Находим текущее устройство
+    device = await get_device_by_user_and_slot(user_id, slot_number)
+    if not device:
+        await cb.answer("⛔️ Устройство не найдено", show_alert=True)
+        return
+    
+    # Удаляем старое устройство (освобождаем слот на старой ноде)
+    result = await delete_device(device["id"])
+    if not result.get("deleted"):
+        await cb.answer("⛔️ Ошибка удаления старого конфига", show_alert=True)
+        return
+    
+    # Показываем выбор стран (как для пустого слота)
+    nodes = await get_active_nodes()
+    
+    builder = InlineKeyboardBuilder()
+    for node in nodes:
+        flag = node.get("flag_emoji") or "🌍"
+        country = node.get("country") or "Unknown"
+        builder.button(
+            text=f"{flag} {country}",
+            callback_data=f"{CB_PICK_COUNTRY_PREFIX}{slot_number}:{node['id']}"
+        )
+    
+    builder.button(text="🔙 Назад", callback_data=CB_MAIN_MENU)
+    builder.adjust(2)
+    
+    text = f"🌍 <b>Смена страны для слота #{slot_number}</b>\n\nВыберите новую страну:"
+    
+    try:
+        await cb.message.edit_text(
+            text=text,
+            parse_mode="HTML",
+            reply_markup=builder.as_markup(),
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            raise
+    
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith(CB_DELETE_PREFIX))
+async def delete_callback(cb: types.CallbackQuery):
+    """Первый этап удаления - запрос подтверждения."""
+    try:
+        slot_number = int(cb.data.split(":")[1])
+    except (IndexError, ValueError):
+        await cb.answer("⛔️ Ошибка формата", show_alert=True)
+        return
+    
+    user_id = cb.from_user.id
+    
+    # Проверяем что устройство существует
+    device = await get_device_by_user_and_slot(user_id, slot_number)
+    if not device:
+        await cb.answer("⛔️ Устройство не найдено", show_alert=True)
+        return
+    
+    # Показываем подтверждение
+    text = (
+        f"⚠️ <b>Удалить Конфиг #{slot_number}?</b>\n\n"
+        f"Это действие нельзя отменить.\n\n"
+        f"Текущая страна: {device.get('country', 'Unknown')}"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, удалить", callback_data=f"{CB_DELETE_CONFIRM_PREFIX}{slot_number}")
+    builder.button(text="❌ Отмена", callback_data=f"{CB_SLOT_PREFIX}{slot_number}")
+    builder.adjust(1)
+    
+    try:
+        await cb.message.edit_text(
+            text=text,
+            parse_mode="HTML",
+            reply_markup=builder.as_markup(),
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            raise
+    
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith(CB_DELETE_CONFIRM_PREFIX))
+async def delete_confirm_callback(cb: types.CallbackQuery):
+    """Второй этап удаления - подтверждение и выполнение."""
+    try:
+        slot_number = int(cb.data.split(":")[1])
+    except (IndexError, ValueError):
+        await cb.answer("⛔️ Ошибка формата", show_alert=True)
+        return
+    
+    user_id = cb.from_user.id
+    
+    # Находим устройство
+    device = await get_device_by_user_and_slot(user_id, slot_number)
+    if not device:
+        await cb.answer("⛔️ Устройство уже удалено", show_alert=True)
+        return
+    
+    # Удаляем устройство
+    result = await delete_device(device["id"])
+    if not result.get("deleted"):
+        await cb.answer("❌ Ошибка удаления", show_alert=True)
+        return
+    
+    await cb.answer("✅ Устройство удалено")
+    
+    # Обновляем главное меню
+    await render_main_menu(cb.bot, user_id, cb.message.message_id)
+    
+    logger.info("Удалено устройство: user_id=%s, slot=%s", user_id, slot_number)
+
+
+# =============================================================================
+# КОНЕЦ ФАЗЫ 3
+# =============================================================================
 
 
 @router.message()
