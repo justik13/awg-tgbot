@@ -2645,3 +2645,44 @@ async def enqueue_node_command(node_id: int, action: str, payload: dict) -> int:
         return cursor.lastrowid
     finally:
         await db.close()
+
+
+async def get_pending_commands(node_id: int) -> list[dict[str, Any]]:
+    """
+    Получает pending команды для ноды и помечает их как sent.
+    Возвращает список команд в формате {"action": str, "payload": dict}.
+    """
+    db = await open_db()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        
+        async with db.execute(
+            """
+            SELECT id, action, payload_json
+            FROM node_commands
+            WHERE node_id = ? AND status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT 50
+            """,
+            (node_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        
+        commands = []
+        for row in rows:
+            cmd_id, action, payload_json = row
+            payload = json.loads(payload_json) if payload_json else {}
+            commands.append({
+                "action": action,
+                "payload": payload,
+            })
+            # Помечаем команду как sent
+            await db.execute(
+                "UPDATE node_commands SET status = 'sent' WHERE id = ?",
+                (cmd_id,),
+            )
+        
+        await db.commit()
+        return commands
+    finally:
+        await db.close()

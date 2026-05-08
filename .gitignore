@@ -1,58 +1,47 @@
-```
+# Compiled and build artifacts
+*.pyc
+__pycache__/
+*.o
+*.obj
+*.so
+*.dll
+*.exe
+*.class
+*.out
+
+# Dependencies
+.venv/
+venv/
+.env
+.env.local
+.env.*
+
 # Logs and temp files
 *.log
 *.tmp
 *.swp
-
-# Environment
-.env
-.env.local
-*.env.*
+*.swo
 
 # Editors
 .vscode/
 .idea/
 
-# Dependencies
-node_modules/
-.venv/
-venv/
-__pycache__/
-.mypy_cache/
+# Coverage and testing
+.coverage
+coverage/
+htmlcov/
 .pytest_cache/
+.mypy_cache/
+
+# Build directories
 dist/
 build/
 target/
 .gradle/
 
-# OS generated files
+# System files
 .DS_Store
 Thumbs.db
-
-# Python specific
-*.pyc
-*.pyo
-*.pyd
-*.so
-*.egg-info/
-.coverage
-coverage/
-htmlcov/
-
-# JavaScript/Node specific
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Compiled files
-*.class
-*.o
-*.obj
-*.exe
-*.dll
-*.so
-*.a
-*.out
 
 # Compressed files
 *.zip
@@ -77,4 +66,3 @@ yarn-error.log*
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-```
