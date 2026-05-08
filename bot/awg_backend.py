@@ -334,7 +334,7 @@ def _awg_settings() -> dict[str, str]:
     return {k: str(v).strip() for k, v in settings.items() if str(v).strip()}
 
 
-def build_client_config(private_key: str, ip: str, psk_key: str) -> str:
+def build_client_config(private_key: str, ip: str, psk_key: str, server_ip: str, server_pub_key: str) -> str:
     settings = "".join(f"{k} = {v}\n" for k, v in _awg_settings().items())
     return (
         f"[Interface]\n"
@@ -343,10 +343,10 @@ def build_client_config(private_key: str, ip: str, psk_key: str) -> str:
         f"PrivateKey = {private_key}\n"
         f"{settings}\n"
         f"[Peer]\n"
-        f"PublicKey = {SERVER_PUBLIC_KEY}\n"
+        f"PublicKey = {server_pub_key}\n"
         f"PresharedKey = {psk_key}\n"
         f"AllowedIPs = {CLIENT_ALLOWED_IPS}\n"
-        f"Endpoint = {SERVER_IP}\n"
+        f"Endpoint = {server_ip}\n"
         f"PersistentKeepalive = {PERSISTENT_KEEPALIVE}\n"
     )
 
@@ -358,11 +358,19 @@ def build_vpn_payload(
     psk_key: str,
     *,
     device_num: int | None = None,
+    server_ip: str | None = None,
+    server_pub_key: str | None = None,
 ) -> dict[str, Any]:
-    host, port = parse_server_host_port(SERVER_IP)
+    # Используем переданные параметры или глобальные значения (для обратной совместимости)
+    effective_server_ip = server_ip or SERVER_IP
+    effective_server_pub_key = server_pub_key or SERVER_PUBLIC_KEY
+    
+    host, port = parse_server_host_port(effective_server_ip)
     subnet_address = ".".join(client_ip.split(".")[:3]) + ".0"
     settings = _awg_settings()
-    config_text = build_client_config(client_private_key, client_ip, psk_key).replace(
+    config_text = build_client_config(
+        client_private_key, client_ip, psk_key, effective_server_ip, effective_server_pub_key
+    ).replace(
         f"DNS = {PRIMARY_DNS}, {SECONDARY_DNS}", "DNS = $PRIMARY_DNS, $SECONDARY_DNS"
     )
     last_config_obj = {
@@ -378,7 +386,7 @@ def build_vpn_payload(
         "persistent_keep_alive": PERSISTENT_KEEPALIVE,
         "port": port,
         "psk_key": psk_key,
-        "server_pub_key": SERVER_PUBLIC_KEY,
+        "server_pub_key": effective_server_pub_key,
     }
     profile_name = SERVER_NAME
     try:
@@ -949,7 +957,7 @@ async def reissue_user_device(user_id: int, device_num: int) -> dict[str, Any]:
         client_private_key, new_public_key = await generate_keypair()
         psk_key = await generate_psk()
         await add_peer_to_awg(new_public_key, ip, psk_key)
-        config = build_client_config(client_private_key, ip, psk_key)
+        config = build_client_config(client_private_key, ip, psk_key, SERVER_IP, SERVER_PUBLIC_KEY)
         vpn_key = encode_vpn_key(
             build_vpn_payload(client_private_key, new_public_key, ip, psk_key, device_num=device_num)
         )
