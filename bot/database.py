@@ -183,6 +183,7 @@ async def init_db() -> None:
 
         # Добавляем колонку server_public_key в таблицу nodes (только если таблица уже создана миграцией Phase 1)
         # Эта проверка предотвращает ошибку "no such table: nodes" на чистой установке
+        # Примечание: теперь nodes создаётся в init_db(), но оставляем для совместимости с migration_phase1
         async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='nodes'") as cur:
             if await cur.fetchone():
                 await ensure_column(db, "nodes", "server_public_key", "TEXT")
@@ -455,6 +456,85 @@ async def init_db() -> None:
             """
         )
 
+        # =====================================================================
+        # PHASE 2/3/4: Multi-node tables (devices, nodes, node_commands)
+        # These tables are required for multi-node functionality
+        # =====================================================================
+
+        # Table: nodes - stores AmneziaWG server configurations
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                ip TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                s1 TEXT, s2 TEXT, s3 TEXT, s4 TEXT,
+                h1 TEXT, h2 TEXT, h3 TEXT, h4 TEXT,
+                country TEXT, flag_emoji TEXT,
+                is_visible INTEGER DEFAULT 1,
+                capacity INTEGER DEFAULT 50,
+                active_configs INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'pending',
+                api_token TEXT UNIQUE,
+                server_public_key TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT
+            )
+            """
+        )
+
+        # Table: devices - user device slots linked to nodes
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                slot_number INTEGER NOT NULL,
+                node_id INTEGER NOT NULL,
+                public_key TEXT NOT NULL,
+                private_key_enc TEXT NOT NULL,
+                psk_enc TEXT NOT NULL,
+                status TEXT DEFAULT 'active',
+                created_at TEXT DEFAULT (datetime('now')),
+                last_reissued_at TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE,
+                UNIQUE(user_id, slot_number)
+            )
+            """
+        )
+
+        # Table: node_commands - command queue for Phase 4 agents
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS node_commands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                payload_json TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                retry_count INTEGER DEFAULT 0,
+                last_error TEXT,
+                FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+            )
+            """
+        )
+
+        # Table: schema_versions - tracks migration versions (required by ensure_db_ready)
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_versions (
+                version TEXT PRIMARY KEY,
+                applied_at TEXT DEFAULT (datetime('now')),
+                description TEXT
+            )
+            """
+        )
+
+        # Create indexes for base tables
         await db.execute("CREATE INDEX IF NOT EXISTS idx_users_sub_until ON users(sub_until)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_keys_user_id ON keys(user_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_keys_ip ON keys(ip)")
@@ -476,6 +556,14 @@ async def init_db() -> None:
         await db.execute("CREATE INDEX IF NOT EXISTS idx_promo_activations_user ON promo_activations(user_id, activated_at DESC)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_broadcast_jobs_status ON broadcast_jobs(status, created_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_broadcast_targets_job ON broadcast_job_targets(job_id, user_id)")
+
+        # Create indexes for multi-node tables (Phase 2/3/4)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_devices_user_slot ON devices(user_id, slot_number)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_nodes_status_visible ON nodes(status, is_visible)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_node_commands_node_status ON node_commands(node_id, status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_devices_node_id ON devices(node_id)")
+        await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_public_key_unique ON devices(public_key)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_nodes_api_token ON nodes(api_token)")
 
         await db.commit()
     finally:
