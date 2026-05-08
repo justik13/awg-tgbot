@@ -189,6 +189,14 @@ class TestDeviceCreationCapacityCheck:
         # Очищаем devices чтобы избежать конфликтов UNIQUE(user_id, slot_number)
         await db.execute("DELETE FROM devices")
         await db.execute("DELETE FROM nodes")
+        # Создаём тестовых пользователей (требуется для FK devices -> users)
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for uid in [101, 102, 103]:
+            await db.execute(
+                "INSERT OR IGNORE INTO users (user_id, sub_until, created_at) VALUES (?, ?, ?)",
+                (uid, '0', now_iso)
+            )
         await db.commit()
         
         node_id = await insert_test_node(db, capacity=1, active_configs=0)
