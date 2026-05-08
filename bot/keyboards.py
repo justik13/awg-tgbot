@@ -157,7 +157,7 @@ def get_support_center_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💳 Помощь с оплатой", callback_data=CB_SUPPORT_PAYMENT)],
             [InlineKeyboardButton(text="🔌 Помощь с подключением", callback_data=CB_SUPPORT_CONNECTION)],
             [InlineKeyboardButton(text="📚 Полезное", callback_data=CB_SUPPORT_USEFUL)],
-            [InlineKeyboardButton(text="📄 Краткие условия", callback_data=CB_SUPPORT_TERMS)],
+            [InlineKeyboardButton(text="📄 Условия", callback_data=CB_SUPPORT_TERMS)],
             [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
         ]
     )
