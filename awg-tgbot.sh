@@ -1969,7 +1969,7 @@ install_or_reinstall_flow() {
     default="$(pick_existing_or_default "$(get_env_value STARS_PRICE_30_DAYS)" "50")"
     prompt_with_default 'Цена 30 дней в Telegram Stars' "$default" value
     set_env_value STARS_PRICE_30_DAYS "$value"
-    default="$(pick_existing_or_default "$(get_env_value DOWNLOAD_URL)" "https://m-1-14-3w5hsuiikq-ez.a.run.app/ru/downloads")"
+    default="$(pick_existing_or_default "$(get_env_value DOWNLOAD_URL)" "https://github.com/amnezia-vpn/amnezia-client/releases/latest")"
     prompt_with_default 'Ссылка на Amnezia / инструкцию скачивания' "$default" value
     set_env_value DOWNLOAD_URL "$value"
     default="$(get_env_value SUPPORT_USERNAME)"
