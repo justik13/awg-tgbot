@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     active_configs INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending',
     api_token TEXT UNIQUE,
+    api_token_hash TEXT,
     last_seen TEXT,
     params_hash TEXT,
     denylist_version TEXT DEFAULT 'v0',

@@ -829,21 +829,40 @@ async def get_node_by_id(node_id: int) -> dict[str, Any] | None:
     }
 
 
-async def create_device(
+async def create_device_with_capacity_check(
     user_id: int,
     slot_number: int,
     node_id: int,
     public_key: str,
     private_key_enc: str,
     psk_enc: str,
-) -> int:
+) -> tuple[int | None, str | None]:
     """
-    Создает запись в devices.
-    Возвращает ID созданного устройства.
+    Создает запись в devices с атомарной проверкой capacity.
+    Возвращает (device_id, None) при успехе или (None, error_message) при ошибке.
+    
+    Использует UPDATE ... WHERE active_configs < capacity RETURNING id
+    для атомарной проверки и инкремента счётчика.
     """
     db = await open_db()
     try:
         await db.execute("BEGIN IMMEDIATE")
+        
+        # Проверяем, существует ли нода и есть ли свободные слоты
+        async with db.execute(
+            "SELECT capacity, active_configs FROM nodes WHERE id = ?",
+            (node_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        
+        if not row:
+            await db.rollback()
+            return None, "Нода не найдена"
+        
+        capacity, active_configs = row
+        if active_configs >= capacity:
+            await db.rollback()
+            return None, "Лимит сервера достигнут"
         
         # Удаляем старую запись если была (для данного user_id + slot_number)
         await db.execute(
@@ -861,17 +880,54 @@ async def create_device(
         )
         device_id = cursor.lastrowid
         
-        # ⚠️ COUNTER SYNC: active_configs обновляется в той же транзакции, что и INSERT devices.
-        # При ROLLBACK счётчик автоматически откатится.
+        # ⚠️ COUNTER SYNC: Атомарно обновляем active_configs только если есть место
+        # Используем WHERE active_configs < capacity для гарантии
         await db.execute(
-            "UPDATE nodes SET active_configs = active_configs + 1 WHERE id = ?",
-            (node_id,),
+            "UPDATE nodes SET active_configs = active_configs + 1 WHERE id = ? AND active_configs < ?",
+            (node_id, capacity),
         )
         
+        # Проверяем, что строка действительно обновилась
+        async with db.execute(
+            "SELECT changes()"
+        ) as cursor:
+            changes_row = await cursor.fetchone()
+        
+        if not changes_row or changes_row[0] == 0:
+            # Кто-то опередил нас в промежутке между SELECT и UPDATE
+            await db.rollback()
+            return None, "Лимит сервера достигнут (race condition)"
+        
         await db.commit()
-        return device_id
+        return device_id, None
+    except Exception as e:
+        await db.rollback()
+        return None, f"Ошибка БД: {e}"
     finally:
         await db.close()
+
+
+async def create_device(
+    user_id: int,
+    slot_number: int,
+    node_id: int,
+    public_key: str,
+    private_key_enc: str,
+    psk_enc: str,
+) -> int:
+    """
+    Создает запись в devices.
+    Возвращает ID созданного устройства.
+    Raises RuntimeError при превышении capacity.
+    """
+    device_id, error = await create_device_with_capacity_check(
+        user_id, slot_number, node_id, public_key, private_key_enc, psk_enc
+    )
+    
+    if error:
+        raise RuntimeError(error)
+    
+    return device_id
 
 
 async def update_device_status(device_id: int, status: str) -> None:

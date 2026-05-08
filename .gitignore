@@ -4,39 +4,33 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Compiled and build artifacts
-*.o
-*.obj
-*.out
-*.so
-*.a
-*.dll
-*.exe
-
-# Dependencies
+.Python
+env/
 .venv/
 venv/
-.env
-.env.local
-.env.*
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
-# Editors
-.vscode/
-.idea/
-
-# Coverage
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
 .coverage
-coverage/
-htmlcov/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+*.so
+.Coverage
+.coverage.*
+.pytest_cache/
+.mypy_cache/
 
-# Distribution / packaging
-dist/
-build/
-*.egg-info/
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
 ```
