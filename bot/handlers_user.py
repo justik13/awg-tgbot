@@ -501,6 +501,7 @@ def _help_clients_kb() -> types.InlineKeyboardMarkup:
     kb.button(text="📱 iOS", url="https://apps.apple.com/us/app/amneziavpn/id1600529900")
     kb.button(text="🤖 Android", url="https://play.google.com/store/apps/details?id=org.amnezia.vpn")
     kb.button(text="🪟 Windows", url=get_download_url())
+    kb.button(text="Зеркало Amenzia", url="https://storage.googleapis.com/amnezia/amnezia.org")
     kb.adjust(1)
     return kb.as_markup()
 
