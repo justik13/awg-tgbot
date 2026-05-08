@@ -671,6 +671,7 @@ async def get_user_keys(user_id: int) -> list[tuple[int, int, str, str]]:
         (user_id, now_iso),
     )
     from awg_backend import build_client_config, build_vpn_payload, encode_vpn_key
+    from config import SERVER_IP, SERVER_PUBLIC_KEY
 
     result: list[tuple[int, int, str, str]] = []
     for key_id, device_num, ip, client_private_key, public_key, psk_key in rows:
@@ -682,7 +683,7 @@ async def get_user_keys(user_id: int) -> list[tuple[int, int, str, str]]:
             continue
         if not private_key or not public_key or not psk or not ip:
             continue
-        config = build_client_config(private_key, ip, psk)
+        config = build_client_config(private_key, ip, psk, SERVER_IP, SERVER_PUBLIC_KEY)
         vpn_key = encode_vpn_key(build_vpn_payload(private_key, public_key, ip, psk, device_num=device_num))
         result.append((key_id, device_num, config, vpn_key))
     return result

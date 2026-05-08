@@ -115,6 +115,7 @@ from database import (
     get_user_subscription_expires_at,
     get_user_max_devices,
     get_node_by_id,
+    enqueue_node_command,
 )
 
 router = Router()
@@ -1212,11 +1213,25 @@ async def pick_country_callback(cb: types.CallbackQuery):
             psk_enc=psk_enc,
         )
         
-        # Генерируем конфиг AmneziaWG
+        # Отправляем команду на удалённую ноду для добавления peer
+        await enqueue_node_command(
+            node_id=node_id,
+            action="add_peer",
+            payload={
+                "public_key": public_key,
+                "allowed_ips": "0.0.0.0/0",
+                "preshared_key": psk,
+            },
+        )
+        
+        # Генерируем конфиг AmneziaWG с параметрами ноды
+        server_ip_endpoint = f"{node['ip']}:{node['port']}"
         config_text = build_client_config(
             private_key=private_key,
             ip=node["ip"],
             psk_key=psk,
+            server_ip=server_ip_endpoint,
+            server_pub_key=node.get("server_public_key", ""),
         )
         
         # Добавляем параметры AmneziaWG
