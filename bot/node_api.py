@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from aiohttp import web
+from aiohttp.web import Request, StreamResponse
+from typing import Callable, Awaitable
 
 from config import logger
 from database import open_db, fetchone, execute
@@ -26,68 +28,65 @@ from database import open_db, fetchone, execute
 # =============================================================================
 
 
-async def auth_middleware(app: web.Application, handler: web.Handler) -> web.Handler:
+@web.middleware
+async def auth_middleware(request: web.Request, handler: Callable[[Request], Awaitable[StreamResponse]]) -> StreamResponse:
     """Middleware для проверки NODE_TOKEN из заголовка Authorization."""
+    # Эндпоинты регистрации не требуют токена (он генерируется после)
+    if request.path == "/api/v1/node/register":
+        return await handler(request)
     
-    async def middleware_handler(request: web.Request) -> web.Response:
-        # Эндпоинты регистрации не требуют токена (он генерируется после)
-        if request.path == "/api/v1/node/register":
-            return await handler(request)
+    # Все остальные эндпоинты требуют авторизации
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        logger.warning("Auth failed: missing or invalid Authorization header")
+        return web.json_response(
+            {"error": "Missing or invalid Authorization header"},
+            status=401,
+        )
+    
+    token = auth_header[7:]  # Remove "Bearer " prefix
+    
+    # Вычисляем SHA-256 хэш предоставленного токена
+    provided_token_hash = hashlib.sha256(token.encode()).hexdigest()
+    
+    # Проверяем токен в БД через сравнение хешей
+    db = await open_db()
+    try:
+        async with db.execute(
+            "SELECT id, status, api_token FROM nodes WHERE api_token_hash = ?",
+            (provided_token_hash,),
+        ) as cursor:
+            row = await cursor.fetchone()
         
-        # Все остальные эндпоинты требуют авторизации
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            logger.warning("Auth failed: missing or invalid Authorization header")
+        if not row:
+            logger.warning("Auth failed: invalid token hash")
             return web.json_response(
-                {"error": "Missing or invalid Authorization header"},
+                {"error": "Invalid node token"},
                 status=401,
             )
         
-        token = auth_header[7:]  # Remove "Bearer " prefix
+        node_id, status, stored_token = row
+        if status != "ready":
+            logger.warning("Auth failed: node not ready (status=%s)", status)
+            return web.json_response(
+                {"error": f"Node not ready (status={status})"},
+                status=403,
+            )
         
-        # Вычисляем SHA-256 хэш предоставленного токена
-        provided_token_hash = hashlib.sha256(token.encode()).hexdigest()
+        # Дополнительная проверка: сравниваем полный токен (защита от коллизий хешей)
+        if stored_token != token:
+            logger.warning("Auth failed: token mismatch after hash match (collision?)")
+            return web.json_response(
+                {"error": "Invalid node token"},
+                status=401,
+            )
         
-        # Проверяем токен в БД через сравнение хешей
-        db = await open_db()
-        try:
-            async with db.execute(
-                "SELECT id, status, api_token FROM nodes WHERE api_token_hash = ?",
-                (provided_token_hash,),
-            ) as cursor:
-                row = await cursor.fetchone()
-            
-            if not row:
-                logger.warning("Auth failed: invalid token hash")
-                return web.json_response(
-                    {"error": "Invalid node token"},
-                    status=401,
-                )
-            
-            node_id, status, stored_token = row
-            if status != "ready":
-                logger.warning("Auth failed: node not ready (status=%s)", status)
-                return web.json_response(
-                    {"error": f"Node not ready (status={status})"},
-                    status=403,
-                )
-            
-            # Дополнительная проверка: сравниваем полный токен (защита от коллизий хешей)
-            if stored_token != token:
-                logger.warning("Auth failed: token mismatch after hash match (collision?)")
-                return web.json_response(
-                    {"error": "Invalid node token"},
-                    status=401,
-                )
-            
-            # Сохраняем node_id в request context
-            request["node_id"] = node_id
-        finally:
-            await db.close()
-        
-        return await handler(request)
+        # Сохраняем node_id в request context
+        request["node_id"] = node_id
+    finally:
+        await db.close()
     
-    return middleware_handler
+    return await handler(request)
 
 
 # =============================================================================
