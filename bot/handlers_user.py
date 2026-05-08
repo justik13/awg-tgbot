@@ -498,7 +498,7 @@ async def _start_user_reissue_flow(target, user: types.User, *, key_id: int | No
 
 def _help_clients_kb() -> types.InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="📱 iOS", url="https://apps.apple.com/app/amnezia-vpn/id1600529902")
+    kb.button(text="📱 iOS", url="https://apps.apple.com/us/app/amneziavpn/id1600529900")
     kb.button(text="🤖 Android", url="https://play.google.com/store/apps/details?id=org.amnezia.vpn")
     kb.button(text="🪟 Windows", url=get_download_url())
     kb.adjust(1)
