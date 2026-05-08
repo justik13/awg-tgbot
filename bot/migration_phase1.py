@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS devices (
     created_at TEXT DEFAULT (datetime('now')),
     last_reissued_at TEXT,
     UNIQUE(user_id, slot_number),
-    FOREIGN KEY(user_id) REFERENCES users(id),
+    FOREIGN KEY(user_id) REFERENCES users(user_id),
     FOREIGN KEY(node_id) REFERENCES nodes(id)
 );
 """

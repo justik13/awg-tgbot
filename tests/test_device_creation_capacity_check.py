@@ -30,6 +30,7 @@ def setup_test_env(tmp_path, monkeypatch):
     """
     Настраивает изолированную среду для каждого теста.
     Использует временный файл БД вместо :memory:.
+    Запускает init_db() и миграцию Phase 1 для создания таблицы nodes.
     """
     db_file = tmp_path / "test_awg.db"
     
@@ -45,7 +46,10 @@ def setup_test_env(tmp_path, monkeypatch):
     
     # Импортируем и инициализируем БД после настройки окружения
     from database import init_db
+    from migration_phase1 import run_migration
+    
     asyncio.run(init_db())
+    asyncio.run(run_migration(dry_run=False))
     
     yield db_file
 
@@ -64,8 +68,15 @@ async def get_open_db():
 
 
 async def insert_test_node(db, capacity: int = 3, active_configs: int = 0):
-    """Вставляет тестовую ноду."""
+    """Вставляет тестовую ноду и тестового пользователя."""
     now_iso = datetime.now(timezone.utc).isoformat()
+    
+    # Создаём тестового пользователя (требуется для FK devices -> users)
+    await db.execute("""
+        INSERT OR IGNORE INTO users (user_id, sub_until, created_at) 
+        VALUES (?, ?, ?)
+    """, (123, '0', now_iso))
+    
     await db.execute("""
         INSERT INTO nodes (
             name, ip, port, status, capacity, active_configs,
