@@ -330,11 +330,9 @@ async def _find_user_config_by_key_id(user_id: int, key_id: int):
 
 def _terms_text() -> str:
     return (
-        "📄 <b>Краткие условия</b>\n\n"
-        "• Сервис выдаёт доступ AmneziaWG для личного использования (single-server MVP).\n"
-        "• Оплата даёт доступ на 7 / 30 / 90 дней.\n"
-        "• После успешной оплаты выдаётся цифровой доступ (vpn:// и .conf).\n"
-        "• По вопросам поддержки и возвратов: через раздел помощи."
+        "📄 <b>Юридические документы</b>\n\n"
+        "🔒 <a href='https://telegra.ph/Politika-konfidencialnosti-04-01-26'>Политика конфиденциальности</a>\n"
+        "📜 <a href='https://telegra.ph/Polzovatelskoe-soglashenie-04-01-19'>Пользовательское соглашение</a>\n\n"
     )
 
 
