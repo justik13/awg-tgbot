@@ -1,6 +1,6 @@
 DEFAULT_ENV: dict[str, str] = {
     'SERVER_NAME': 'My VPN',
-    'DOWNLOAD_URL': 'https://m-1-14-3w5hsuiikq-ez.a.run.app/ru/downloads',
+    'DOWNLOAD_URL': 'https://storage.googleapis.com/amnezia/amnezia.org',
     'PUBLIC_HOST': '',
     'SUPPORT_USERNAME': '',
     'AWG_I1': '<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>',
