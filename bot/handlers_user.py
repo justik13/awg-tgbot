@@ -1,4 +1,5 @@
 import re
+import io
 
 from aiogram import F, Router, types
 from aiogram.exceptions import TelegramBadRequest
