@@ -488,7 +488,7 @@ async def _start_user_reissue_flow(target, user: types.User, *, key_id: int | No
         (
             "⚠️ <b>Перевыпуск доступа</b>\n\n"
             "Текущий конфиг устройства будет отключён.\n"
-            "Старый vpn:// и .conf перестанут работать.\n\n"
+            "Старый ключ:// и .conf перестанут работать.\n\n"
             "Продолжить перевыпуск?"
         ),
         parse_mode="HTML",
