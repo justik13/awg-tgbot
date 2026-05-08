@@ -242,6 +242,7 @@ def apply_add_peer(payload: dict[str, Any]) -> bool:
         log_error("add_peer: missing public_key")
         return False
     
+    psk_file = None
     try:
         # Сначала удаляем пира если существует (для идемпотентности)
         subprocess.run(
@@ -274,6 +275,14 @@ def apply_add_peer(payload: dict[str, Any]) -> bool:
     except Exception as e:
         log_error("add_peer exception: %s", e)
         return False
+    finally:
+        # === Гарантированная очистка временного PSK-файла ===
+        if psk_file and psk_file.exists():
+            try:
+                os.remove(psk_file)
+                log_info("Cleaned up temporary PSK file: %s", psk_file.name)
+            except Exception as cleanup_err:
+                log_warning("Failed to cleanup PSK file %s: %s", psk_file, cleanup_err)
 
 
 def apply_remove_peer(payload: dict[str, Any]) -> bool:
@@ -303,6 +312,15 @@ def apply_remove_peer(payload: dict[str, Any]) -> bool:
     except Exception as e:
         log_error("remove_peer exception: %s", e)
         return False
+    finally:
+        # === Очистка PSK-файла если он остался от предыдущей операции ===
+        try:
+            leftover_psk_file = AGENT_DIR / f"psk_{public_key[:8]}.txt"
+            if leftover_psk_file.exists():
+                os.remove(leftover_psk_file)
+                log_info("Cleaned up leftover PSK file: %s", leftover_psk_file.name)
+        except Exception as cleanup_err:
+            log_warning("Failed to cleanup leftover PSK file %s: %s", leftover_psk_file, cleanup_err)
 
 
 def apply_update_denylist(payload: dict[str, Any]) -> bool:
@@ -430,8 +448,45 @@ async def send_heartbeat(
 # MAIN LOOP
 # =============================================================================
 
+def validate_main_api_url(url: str) -> bool:
+    """Проверяет валидность MAIN_API_URL."""
+    if not url:
+        return False
+    
+    # Простая проверка формата URL
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return False
+    
+    # Проверяем, что есть домен или IP после протокола
+    try:
+        remainder = url.split("://", 1)[1]
+        if not remainder or remainder.startswith("/"):
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def check_awg_available() -> bool:
+    """Проверяет наличие команды awg в PATH."""
+    import shutil
+    awg_path = shutil.which("awg")
+    if awg_path is None:
+        return False
+    return True
+
+
 async def run_agent() -> None:
     """Основной цикл агента."""
+    # === Шаг 0: Проверка наличия awg в PATH ===
+    if not check_awg_available():
+        log_error("CRITICAL: 'awg' command not found in PATH")
+        log_error("Please install AmneziaWG tools before running the agent.")
+        log_error("Exiting gracefully.")
+        sys.exit(1)
+    
+    log_info("AmneziaWG (awg) found in PATH")
+    
     state = AgentState()
     state.load()
     
@@ -447,7 +502,13 @@ async def run_agent() -> None:
         # Проверяем env переменную для автоматической регистрации
         main_url = os.environ.get("MAIN_API_URL", "")
         if main_url:
-            log_info("MAIN_API_URL found, attempting auto-registration...")
+            # === Валидация MAIN_API_URL ===
+            if not validate_main_api_url(main_url):
+                log_error("Invalid MAIN_API_URL format: %s", main_url)
+                log_error("URL must start with http:// or https:// and contain a valid host.")
+                sys.exit(1)
+            
+            log_info("MAIN_API_URL found and valid, attempting auto-registration...")
             state.main_api_url = main_url
             
             async with aiohttp.ClientSession() as session:
@@ -467,6 +528,12 @@ async def run_agent() -> None:
             while not state.api_token:
                 await asyncio.sleep(10)
                 state.load()
+    
+    # === Валидация сохранённого MAIN_API_URL ===
+    if state.main_api_url and not validate_main_api_url(state.main_api_url):
+        log_error("Stored MAIN_API_URL is invalid: %s", state.main_api_url)
+        log_error("Please fix node.env or state.json and restart.")
+        sys.exit(1)
     
     # Основной цикл heartbeat
     retry_backoff = RETRY_BACKOFF_BASE_SEC
@@ -539,7 +606,7 @@ async def run_agent() -> None:
                         state.status = "offline"
                         state.save()
                     
-                    # Ждём перед retry
+                    # Экспоненциальный бэкофф: 5s → 10s → 30s → 60s (cap)
                     await asyncio.sleep(retry_backoff)
                     retry_backoff = min(retry_backoff * 2, MAX_RETRY_BACKOFF_SEC)
                     continue

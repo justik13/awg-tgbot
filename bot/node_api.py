@@ -37,6 +37,7 @@ async def auth_middleware(app: web.Application, handler: web.Handler) -> web.Han
         # Все остальные эндпоинты требуют авторизации
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
+            logger.warning("Auth failed: missing or invalid Authorization header")
             return web.json_response(
                 {"error": "Missing or invalid Authorization header"},
                 status=401,
@@ -44,26 +45,39 @@ async def auth_middleware(app: web.Application, handler: web.Handler) -> web.Han
         
         token = auth_header[7:]  # Remove "Bearer " prefix
         
-        # Проверяем токен в БД
+        # Вычисляем SHA-256 хэш предоставленного токена
+        provided_token_hash = hashlib.sha256(token.encode()).hexdigest()
+        
+        # Проверяем токен в БД через сравнение хешей
         db = await open_db()
         try:
             async with db.execute(
-                "SELECT id, status FROM nodes WHERE api_token = ?",
-                (token,),
+                "SELECT id, status, api_token FROM nodes WHERE api_token_hash = ?",
+                (provided_token_hash,),
             ) as cursor:
                 row = await cursor.fetchone()
             
             if not row:
+                logger.warning("Auth failed: invalid token hash")
                 return web.json_response(
                     {"error": "Invalid node token"},
                     status=401,
                 )
             
-            node_id, status = row
+            node_id, status, stored_token = row
             if status != "ready":
+                logger.warning("Auth failed: node not ready (status=%s)", status)
                 return web.json_response(
                     {"error": f"Node not ready (status={status})"},
                     status=403,
+                )
+            
+            # Дополнительная проверка: сравниваем полный токен (защита от коллизий хешей)
+            if stored_token != token:
+                logger.warning("Auth failed: token mismatch after hash match (collision?)")
+                return web.json_response(
+                    {"error": "Invalid node token"},
+                    status=401,
                 )
             
             # Сохраняем node_id в request context
@@ -234,18 +248,19 @@ async def handle_register(request: web.Request) -> web.Response:
         else:
             # Создаём новую ноду
             api_token = str(uuid.uuid4())
+            api_token_hash = hashlib.sha256(api_token.encode()).hexdigest()
             
             cursor = await db.execute(
                 """
                 INSERT INTO nodes (
                     name, ip, port, s1, s2, s3, s4, h1, h2, h3, h4,
-                    status, api_token, params_hash, last_seen, created_at
+                    status, api_token, api_token_hash, params_hash, last_seen, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?)
                 """,
                 (
                     hostname, ip, port, s1, s2, s3, s4, h1, h2, h3, h4,
-                    api_token, params_hash, now_iso, now_iso,
+                    api_token, api_token_hash, params_hash, now_iso, now_iso,
                 ),
             )
             node_id = cursor.lastrowid

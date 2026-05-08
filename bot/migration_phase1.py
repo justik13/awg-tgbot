@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     active_configs INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending',
     api_token TEXT UNIQUE,
+    api_token_hash TEXT,
     last_seen TEXT,
     params_hash TEXT,
     denylist_version TEXT DEFAULT 'v0',
@@ -68,7 +69,7 @@ CREATE TABLE IF NOT EXISTS devices (
     created_at TEXT DEFAULT (datetime('now')),
     last_reissued_at TEXT,
     UNIQUE(user_id, slot_number),
-    FOREIGN KEY(user_id) REFERENCES users(id),
+    FOREIGN KEY(user_id) REFERENCES users(user_id),
     FOREIGN KEY(node_id) REFERENCES nodes(id)
 );
 """
