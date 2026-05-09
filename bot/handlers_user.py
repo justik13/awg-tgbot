@@ -1,7 +1,7 @@
 import re
 import io
 
-from aiogram import F, Router, types
+from aiogram import F, Router, types, Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -973,7 +973,7 @@ async def promo_input_pending_message(message: types.Message):
 # ФАЗА 3: Inline-интерфейс управления слотами
 # =============================================================================
 
-async def render_main_menu(bot: types.Bot, chat_id: int, message_id: int | None = None) -> None:
+async def render_main_menu(bot: Bot, chat_id: int, message_id: int | None = None) -> None:
     """
     Рендерит главное меню пользователя со слотами устройств.
     Использует edit_message_text если message_id передан, иначе send_message.
