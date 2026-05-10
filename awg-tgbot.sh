@@ -3349,9 +3349,9 @@ show_logs() {
 
 
 install_node_flow() {
-  log_info "=== Инициализация Node (Agent + sync) ==="
+  info "=== Инициализация Node (Agent + sync) ==="
   if ! command -v docker &> /dev/null; then
-    log_error "Docker не найден. Agent требует Docker для синхронизации."
+    warn "Docker не найден. Agent требует Docker для синхронизации."
     return 1
   fi
   local config_dir="/etc/awg-tgbot"
@@ -3360,12 +3360,12 @@ install_node_flow() {
   local node_token
   if [[ -f "$token_file" ]]; then
     node_token=$(cat "$token_file")
-    log_info "Токен ноды найден: ${node_token:0:10}..."
+    info "Токен ноды найден: ${node_token:0:10}..."
   else
     node_token=$(openssl rand -hex 32 2>/dev/null || tr -dc 'a-f0-9' < /dev/urandom | head -c 64)
     echo "$node_token" > "$token_file"
     chmod 600 "$token_file"
-    log_info "Токен ноды сгенерирован: $token_file"
+    info "Токен ноды сгенерирован: $token_file"
   fi
   local agent_conf="$config_dir/agent.env"
   cat > "$agent_conf" <<EOF
@@ -3378,22 +3378,22 @@ SYNC_INTERVAL=30
 LOG_FILE=/var/log/awg-tgbot-agent.log
 EOF
   chmod 600 "$agent_conf"
-  log_info "Конфиг агента создан: $agent_conf"
+  info "Конфиг агента создан: $agent_conf"
   local bot_cid
   bot_cid=$(docker ps -q -f name=awg-tgbot 2>/dev/null)
   if [[ -n "$bot_cid" ]]; then
-    log_info "Контейнер бота обнаружен: $bot_cid"
+    info "Контейнер бота обнаружен: $bot_cid"
     if docker cp "$token_file" "$bot_cid:/app/data/node_token" 2>/dev/null; then
-      log_info "Токен передан в контейнер. Ожидание обработки..."
+      info "Токен передан в контейнер. Ожидание обработки..."
       sleep 2
-      docker exec "$bot_cid" test -f /app/data/node_token 2>/dev/null && log_info "Синхронизация с ботом установлена." || log_warn "Токен передан, бот обработает при запуске."
+      docker exec "$bot_cid" test -f /app/data/node_token 2>/dev/null && info "Синхронизация с ботом установлена." || warn "Токен передан, бот обработает при запуске."
     else
-      log_warn "Не удалось передать токен в контейнер. Убедитесь, что volume /etc/awg-tgbot подключён к /app/data."
+      warn "Не удалось передать токен в контейнер. Убедитесь, что volume /etc/awg-tgbot подключён к /app/data."
     fi
   else
-    log_warn "Контейнер awg-tgbot не запущен. Агент настроен. Синхронизация начнётся после запуска бота."
+    warn "Контейнер awg-tgbot не запущен. Агент настроен. Синхронизация начнётся после запуска бота."
   fi
-  log_info "=== Node (Agent + sync) завершён успешно ==="
+  info "=== Node (Agent + sync) завершён успешно ==="
   return 0
 }
 
