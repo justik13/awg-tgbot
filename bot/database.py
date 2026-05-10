@@ -327,7 +327,7 @@ async def init_db() -> None:
                 user_id INTEGER NOT NULL,
                 sub_until TEXT NOT NULL,
                 kind TEXT NOT NULL,
-                sent_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
                 PRIMARY KEY (user_id, sub_until, kind)
             )
             """
@@ -1495,7 +1495,7 @@ async def has_subscription_notification(user_id: int, sub_until: str, kind: str)
 async def mark_subscription_notification_sent(user_id: int, sub_until: str, kind: str) -> None:
     await execute(
         """
-        INSERT OR IGNORE INTO subscription_notifications (user_id, sub_until, kind, sent_at)
+        INSERT OR IGNORE INTO subscription_notifications (user_id, sub_until, kind, created_at)
         VALUES (?, ?, ?, ?)
         """,
         (user_id, sub_until, kind, utc_now_naive().isoformat()),
