@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     status TEXT DEFAULT 'pending',
     api_token TEXT UNIQUE,
     api_token_hash TEXT,
+    server_public_key TEXT,
     last_seen TEXT,
     params_hash TEXT,
     denylist_version TEXT DEFAULT 'v0',
@@ -99,7 +100,9 @@ CREATE TABLE IF NOT EXISTS node_commands (
     payload_json TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL,
-    sent_at TEXT,
+    updated_at TEXT,
+    retry_count INTEGER DEFAULT 0,
+    last_error TEXT,
     FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
 );
 """

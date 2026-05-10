@@ -4,18 +4,25 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Dependencies
-.venv/
-venv/
+.Python
 env/
-.ENV/
-
-# Logs
+venv/
+.venv/
+.ENV
+.python-version
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
 *.log
-
-# Environment variables
-.env
-.env.local
-.env.*
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
 ```
