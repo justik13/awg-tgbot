@@ -33,19 +33,19 @@ def _invalidate_peers_cache() -> None:
     _peers_cache["data"] = None
 
 
-async def run_docker_once(args: list[str], input_data: str | None = None, timeout: int = DOCKER_TIMEOUT_SECONDS) -> str:
+async def run_docker_once(args: list[str], input_: str | None = None, timeout: int = DOCKER_TIMEOUT_SECONDS) -> str:
     cmd = [AWG_HELPER_PATH]
     if AWG_HELPER_USE_SUDO:
         cmd = ["sudo", "-n", AWG_HELPER_PATH]
     process = await asyncio.create_subprocess_exec(
         *cmd,
         *args,
-        stdin=asyncio.subprocess.PIPE if input_data is not None else None,
+        stdin=asyncio.subprocess.PIPE if input_ is not None else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     stdout, stderr = await asyncio.wait_for(
-        process.communicate(input=input_data.encode("utf-8") if input_data is not None else None),
+        process.communicate(input=input_.encode("utf-8") if input_ is not None else None),
         timeout=timeout,
     )
     out = stdout.decode("utf-8", errors="ignore").strip()
@@ -55,11 +55,11 @@ async def run_docker_once(args: list[str], input_data: str | None = None, timeou
     return out
 
 
-async def run_docker(args: list[str], input_data: str | None = None, timeout: int = DOCKER_TIMEOUT_SECONDS) -> str:
+async def run_docker(args: list[str], input_: str | None = None, timeout: int = DOCKER_TIMEOUT_SECONDS) -> str:
     last_error: Exception | None = None
     for attempt in range(1, DOCKER_RETRIES + 1):
         try:
-            return await run_docker_once(args, input_data=input_data, timeout=timeout)
+            return await run_docker_once(args, input_=input_, timeout=timeout)
         except asyncio.TimeoutError:
             last_error = RuntimeError(f"helper timeout: {' '.join(args)}")
             logger.warning("helper timeout attempt=%s/%s cmd=%s", attempt, DOCKER_RETRIES, args)
@@ -212,7 +212,7 @@ async def generate_keypair() -> tuple[str, str]:
     private_key = (await run_docker(["genkey"])).strip()
     if not private_key:
         raise RuntimeError("awg genkey вернул пустой private key")
-    public_key = (await run_docker(["pubkey"], input_data=private_key)).strip()
+    public_key = (await run_docker(["pubkey"], input_=private_key)).strip()
     if not public_key or not is_valid_awg_public_key(public_key):
         raise RuntimeError("awg pubkey вернул некорректный public key")
     return private_key, public_key
@@ -232,7 +232,7 @@ async def add_peer_to_awg(public_key: str, ip: str, psk_key: str) -> None:
         "add-peer",
         "--public-key", public_key,
         "--ip", ip,
-    ], input_data=psk_key)
+    ], input_=psk_key)
     _invalidate_peers_cache()
 
 
