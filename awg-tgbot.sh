@@ -3367,17 +3367,59 @@ install_node_flow() {
     chmod 600 "$token_file"
     info "Токен ноды сгенерирован: $token_file"
   fi
+  # Запрос и валидация BOT_API_HOST
+  local bot_api_host=""
+  while true; do
+    prompt_raw "Введите IP или домен основного бота (Main Bot API Host): " bot_api_host
+    # Проверка на пустую строку
+    if [[ -z "$bot_api_host" ]]; then
+      warn "Значение не может быть пустым."
+      continue
+    fi
+    # Проверка на запрещённые localhost-значения
+    if [[ "$bot_api_host" == "127.0.0.1" || "$bot_api_host" == "localhost" || "$bot_api_host" == "::1" ]]; then
+      warn "localhost, 127.0.0.1 и ::1 запрещены. Укажите внешний IP или домен."
+      continue
+    fi
+    # Валидация IPv4 формата
+    if [[ "$bot_api_host" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+      local i o1="${BASH_REMATCH[1]}" o2="${BASH_REMATCH[2]}" o3="${BASH_REMATCH[3]}" o4="${BASH_REMATCH[4]}"
+      if (( o1 > 255 || o2 > 255 || o3 > 255 || o4 > 255 )); then
+        warn "Некорректный IPv4 адрес."
+        continue
+      fi
+    elif [[ "$bot_api_host" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]]; then
+      : # Допустимый домен
+    else
+      warn "Некорректный формат. Разрешены IPv4 или домен."
+      continue
+    fi
+    break
+  done
   local agent_conf="$config_dir/agent.env"
-  cat > "$agent_conf" <<EOF
+  # Сохранение существующего NODE_TOKEN если файл уже есть
+  local existing_token=""
+  if [[ -f "$agent_conf" ]]; then
+    existing_token=$(grep -m1 -E "^NODE_TOKEN=" "$agent_conf" 2>/dev/null | cut -d'=' -f2- || true)
+    if [[ -n "$existing_token" ]]; then
+      node_token="$existing_token"
+      info "Сохранён существующий NODE_TOKEN из agent.env"
+    fi
+  fi
+  # Атомарная запись через временный файл
+  local tmp_agent_conf
+  tmp_agent_conf="$(mktemp)"
+  cat > "$tmp_agent_conf" <<EOF
 NODE_TOKEN=$node_token
 SYNC_MODE=multi
 AWG_PROTOCOL=amnezia
-BOT_API_HOST=127.0.0.1
+BOT_API_HOST=$bot_api_host
 BOT_API_PORT=8080
 SYNC_INTERVAL=30
 LOG_FILE=/var/log/awg-tgbot-agent.log
 EOF
-  chmod 600 "$agent_conf"
+  chmod 600 "$tmp_agent_conf"
+  mv -f "$tmp_agent_conf" "$agent_conf"
   info "Конфиг агента создан: $agent_conf"
   local bot_cid
   bot_cid=$(docker ps -q -f name=awg-tgbot 2>/dev/null)
