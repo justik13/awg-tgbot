@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     status TEXT DEFAULT 'pending',
     api_token TEXT UNIQUE,
     api_token_hash TEXT,
-    server_public_key TEXT,
+    server_public_key TEXT NOT NULL,
     last_seen TEXT,
     params_hash TEXT,
     denylist_version TEXT DEFAULT 'v0',
