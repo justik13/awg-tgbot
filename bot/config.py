@@ -194,7 +194,9 @@ EGRESS_DENYLIST_MODE = env_with_runtime_default('EGRESS_DENYLIST_MODE', DEFAULT_
 TORRENT_POLICY_TEXT_ENABLED = env_int('TORRENT_POLICY_TEXT_ENABLED', int(DEFAULT_ENV['TORRENT_POLICY_TEXT_ENABLED'])) == 1
 
 # Phase 4: Node API configuration
-NODE_API_PORT = env_int('NODE_API_PORT', 8443)
+# Порт для внутреннего Node API (multi-server синхронизация и web-панель)
+# Если порт занят, бот завершится с ошибкой — измените NODE_API_PORT в .env
+NODE_API_PORT = env_int('NODE_API_PORT', 8444)
 
 validate_required_env(
     api_token=API_TOKEN,

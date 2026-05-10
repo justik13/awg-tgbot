@@ -340,14 +340,30 @@ def create_node_api_app() -> web.Application:
 
 
 async def start_node_api_server(app: web.Application, port: int) -> None:
-    """Запускает Node API сервер вместе с основным приложением бота."""
+    """Запускает Node API сервер вместе с основным приложением бота.
+    
+    ARCHITECTURE DECISION: Node API критичен для multi-server синхронизации.
+    При невозможности bind на порт — завершаем процесс с явной ошибкой.
+    Это предотвращает запуск бота в неконсистентном состоянии без API для нод.
+    """
     from aiohttp.web_runner import AppRunner, TCPSite
     
     runner = AppRunner(app)
     await runner.setup()
     
     site = TCPSite(runner, "0.0.0.0", port)
-    await site.start()
+    try:
+        await site.start()
+    except OSError as e:
+        if e.errno == 98:  # Address already in use
+            logger.error(
+                "NODE API PORT CONFLICT: порт %d занят другим сервисом. "
+                "Измените NODE_API_PORT в .env на свободный порт и перезапустите бота.",
+                port
+            )
+        else:
+            logger.error("NODE API START ERROR: %s", e)
+        raise SystemExit(1) from e
     
     logger.info("Node API server started on port %d", port)
     

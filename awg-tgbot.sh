@@ -1343,6 +1343,9 @@ ensure_selfhost_network_defaults() {
   [[ -n "$current" ]] || set_env_value AUTO_BACKUP_ENABLED "$SELFHOST_AUTO_BACKUP_ENABLED_DEFAULT"
   current="$(get_env_value AUTO_BACKUP_KEEP_COUNT)"
   [[ -n "$current" ]] || set_env_value AUTO_BACKUP_KEEP_COUNT "$SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT"
+  # Node API port для multi-server синхронизации
+  current="$(get_env_value NODE_API_PORT)"
+  [[ -n "$current" ]] || set_env_value NODE_API_PORT "8444"
 }
 
 autobackup_enabled() {
@@ -2110,11 +2113,21 @@ restore_repo_snapshot_after_failed_reinstall() {
 }
 
 run_post_restart_smokecheck() {
-  local failed=0 env_container env_interface policy_container policy_interface policy_error db_result runtime_python awg_check_output awg_check_rc=0
+  local failed=0 env_container env_interface policy_container policy_interface policy_error db_result runtime_python awg_check_output awg_check_rc=0 node_api_port port_in_use
 
   if ! service_exists || [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" != "active" ]]; then
     warn "Smokecheck: сервис ${SERVICE_NAME} не в состоянии active."
     failed=1
+  fi
+
+  # Проверка занятости порта Node API
+  node_api_port="$(get_env_value NODE_API_PORT)"
+  node_api_port="${node_api_port:-8444}"
+  if ss -tlnp 2>/dev/null | grep -qE ":${node_api_port}\\s"; then
+    port_in_use="$(ss -tlnp 2>/dev/null | grep -E ":${node_api_port}\\s" | head -1)"
+    warn "Smokecheck: NODE_API_PORT=${node_api_port} занят другим процессом: ${port_in_use}"
+    warn "Рекомендация: измените NODE_API_PORT в .env на свободный порт (например, 8445) и перезапустите бота."
+    # Не блокируем установку, но предупреждаем
   fi
 
   env_container="$(get_env_value DOCKER_CONTAINER)"
