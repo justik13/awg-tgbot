@@ -11,6 +11,7 @@ Main-сервер принимает исходящие HTTPS-запросы о�
 
 import hashlib
 import json
+import sys
 import uuid
 from datetime import datetime, timezone
 from typing import Any
