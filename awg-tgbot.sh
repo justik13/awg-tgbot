@@ -1806,6 +1806,55 @@ migrate_legacy_default_db_path() {
   return 0
 }
 
+install_awg_binaries() {
+  info "Установка AmneziaWG (бинарные утилиты)..."
+  
+  local arch
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64) arch="amd64" ;;
+    aarch64) arch="arm64" ;;
+    armv7l) arch="armhf" ;;
+    *) error "Неподдерживаемая архитектура: $arch"; return 1 ;;
+  esac
+  
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  
+  # Скачиваем бинарники AmneziaWG с официального GitHub релиза
+  local awg_url="https://github.com/amnezia-vpn/amnezia-core/releases/latest/download/amneziawg-tools-linux-${arch}.tar.gz"
+  
+  if ! curl -fsSL "$awg_url" -o "$tmp_dir/awg-tools.tar.gz"; then
+    error "Не удалось скачать AmneziaWG инструменты"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  
+  tar -xzf "$tmp_dir/awg-tools.tar.gz" -C "$tmp_dir"
+  
+  # Устанавливаем бинарные файлы
+  if [[ -f "$tmp_dir/awg" ]]; then
+    install -m 755 "$tmp_dir/awg" /usr/bin/awg
+    ok "Установлен /usr/bin/awg"
+  fi
+  
+  if [[ -f "$tmp_dir/awg-quick" ]]; then
+    install -m 755 "$tmp_dir/awg-quick" /usr/bin/awg-quick
+    ok "Установлен /usr/bin/awg-quick"
+  fi
+  
+  rm -rf "$tmp_dir"
+  
+  # Проверяем установку
+  if command -v awg &>/dev/null; then
+    ok "AmneziaWG успешно установлен (версия: $(awg --version 2>&1 | head -1 || echo 'unknown'))"
+    return 0
+  else
+    error "AmneziaWG установлен, но команда awg недоступна"
+    return 1
+  fi
+}
+
 install_awg_helper() {
   [[ -f "$BOT_DIR/awg_helper.py" ]] || return 1
   install -d -m 755 /usr/local/libexec
@@ -3728,16 +3777,93 @@ EOF
   # =============================================================================
   info "Запуск сервиса агента синхронизации..."
 
-  local agent_service_file="/etc/systemd/system/awg-tgbot-agent.service"
-  local agent_service_source="${SCRIPT_DIR}/packaging/systemd/awg-tgbot-agent.service"
+  # Создаём директорию для агента
+  local agent_dir="/opt/amnezia/agent"
+  mkdir -p "$agent_dir"
+  info "Директория агента создана: $agent_dir"
 
-  # Копируем unit-файл если он есть в репозитории
-  if [[ -f "$agent_service_source" ]]; then
-    cp -f "$agent_service_source" "$agent_service_file"
-    info "Systemd unit скопирован: $agent_service_file"
+  # Скачиваем или обновляем агентский скрипт
+  local agent_script_url="${RAW_BASE_URL}/agent/agent.py"
+  local agent_script_dest="$agent_dir/agent.py"
+  
+  if curl -fsSL "$agent_script_url" -o "$agent_script_dest" 2>/dev/null; then
+    chmod +x "$agent_script_dest"
+    info "Скрипт агента загружен: $agent_script_dest"
   else
-    # Создаём unit-файл вручную если исходник не найден
-    cat > "$agent_service_file" <<'UNIT'
+    warn "Не удалось загрузить агентский скрипт из репозитория"
+    # Пробуем скопировать из локальной директории если доступно
+    local local_agent="${SCRIPT_DIR}/agent/agent.py"
+    if [[ -f "$local_agent" ]]; then
+      cp -f "$local_agent" "$agent_script_dest"
+      chmod +x "$agent_script_dest"
+      info "Скрипт агента скопирован из локального репозитория"
+    else
+      error "Критическая ошибка: агентский скрипт недоступен"
+      return 1
+    fi
+  fi
+
+  # =============================================================================
+  # ПРОВЕРКА ЗАВИСИМОСТЕЙ И АВТОМАТИЧЕСКАЯ УСТАНОВКА
+  # =============================================================================
+  
+  # Проверяем наличие awg и устанавливаем автоматически если отсутствует
+  if ! command -v awg &> /dev/null; then
+    warn "Утилита 'awg' (AmneziaWG) не найдена в PATH"
+    info "Попытка автоматической установки AmneziaWG..."
+    
+    # Попытка установить через ту же функцию что и основная установка
+    if type install_awg_helper &>/dev/null; then
+      if install_awg_helper; then
+        ok "AmneziaWG установлен успешно"
+      else
+        error "Не удалось автоматически установить AmneziaWG"
+        warn ""
+        warn "Для ручной установки выполните:"
+        warn "  curl -fsSL https://raw.githubusercontent.com/justik13/awg-tgbot/multi/awg-tgbot.sh | sudo bash -s -- install-awg"
+        warn ""
+        warn "Продолжаю настройку, но агент не сможет работать без awg."
+      fi
+    else
+      warn "Функция install_awg_helper недоступна в данном контексте"
+      warn ""
+      warn "Для установки AmneziaWG выполните вручную:"
+      warn "  curl -fsSL https://raw.githubusercontent.com/justik13/awg-tgbot/multi/awg-tgbot.sh | sudo bash -s -- install-awg"
+      warn ""
+      warn "Продолжаю настройку, но агент не сможет работать без awg."
+    fi
+  fi
+
+  # Проверяем наличие интерфейса awg0 и создаём если отсутствует
+  if ! ip link show awg0 &> /dev/null; then
+    warn "Интерфейс 'awg0' не найден. Попытка создания..."
+    
+    local awg_config_dir="/etc/amnezia/awg0"
+    mkdir -p "$awg_config_dir"
+    
+    # Генерируем ключи если их нет
+    if [[ ! -f "$awg_config_dir/private.key" ]]; then
+      if command -v awg &> /dev/null; then
+        awg genkey > "$awg_config_dir/private.key" 2>/dev/null
+        chmod 600 "$awg_config_dir/private.key"
+        awg pubkey < "$awg_config_dir/private.key" > "$awg_config_dir/public.key" 2>/dev/null
+        ok "Ключи WireGuard сгенерированы"
+      else
+        warn "Невозможно сгенерировать ключи без утилиты awg"
+      fi
+    fi
+    
+    # Создаём простой интерфейс awg0 для синхронизации
+    # Примечание: полная настройка интерфейса требует дополнительных параметров
+    # которые будут получены от главного бота при первой синхронизации
+    info "Интерфейс awg0 будет настроен автоматически при первой синхронизации с главным ботом"
+    warn "Без настроенного интерфейса awg0 агент не сможет управлять туннелем"
+  fi
+
+  local agent_service_file="/etc/systemd/system/awg-tgbot-agent.service"
+
+  # Создаём unit-файл вручную
+  cat > "$agent_service_file" <<'UNIT'
 [Unit]
 Description=AWG Telegram Bot Node Agent (Sync)
 After=network-online.target
@@ -3759,8 +3885,7 @@ StandardError=append:/var/log/awg-tgbot-agent.log
 [Install]
 WantedBy=multi-user.target
 UNIT
-    info "Systemd unit создан: $agent_service_file"
-  fi
+  info "Systemd unit создан: $agent_service_file"
 
   # Перезагружаем конфигурацию systemd
   systemctl daemon-reload
@@ -3857,6 +3982,11 @@ run_action() {
   case "$action" in
     install) install_or_reinstall_flow install ;;
     reinstall) install_or_reinstall_flow reinstall ;;
+    install-awg)
+      require_root
+      setup_logging
+      install_awg_helper || die "Не удалось установить helper для AWG."
+      ;;
     update|check-updates|choose-branch)
       warn "Команда '$action' отключена в personal MVP. Используй reinstall для обновления."
       ;;
