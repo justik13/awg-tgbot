@@ -124,6 +124,13 @@ async def denylist_should_refresh() -> bool:
     return datetime.utcnow() >= datetime.utcfromtimestamp(last_ts) + timedelta(minutes=max(refresh_minutes, 1))
 
 
+async def refresh_denylist() -> None:
+    """Wrapper for denylist_sync to be used by scheduler."""
+    from .awg_backend import run_docker
+    if await denylist_should_refresh():
+        await denylist_sync(run_docker)
+
+
 async def policy_metrics() -> dict[str, int]:
     denylist_last_clear_known = await get_metric("denylist_last_clear_known")
     denylist_last_clear_ok = await get_metric("denylist_last_clear_ok")
