@@ -4,17 +4,48 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Logs and temp files
-*.log
-*.tmp
-
-# Environment
+.Python
+env/
+venv/
+.venv/
+.ENV
 .env
+*.env
 .env.local
-*.env.*
 
-# Editors
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Node.js (if any Node.js dependencies exist)
+node_modules/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# IDE
 .vscode/
 .idea/
+
+# OS
+.DS_Store
+Thumbs.db
 ```
