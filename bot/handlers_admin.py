@@ -21,6 +21,7 @@ from .config import (
     ADMIN_ID,
     AWG_HELPER_POLICY_PATH,
     DOCKER_CONTAINER,
+    NODE_API_PORT,
     WG_INTERFACE,
     logger,
     save_env_value,
@@ -696,6 +697,39 @@ async def run_runtime_smokecheck() -> dict[str, object]:
             )
         else:
             checks.append({"name": "Политика helper", "state": "ok", "detail": "готово", "hint": ""})
+
+    # Проверка порта Node API
+    import socket
+    node_api_port = NODE_API_PORT
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(2)
+    try:
+        result = sock.connect_ex(('127.0.0.1', node_api_port))
+        if result == 0:
+            # Порт открыт - это хорошо, значит сервер запущен
+            checks.append({
+                "name": f"Node API порт {node_api_port}",
+                "state": "ok",
+                "detail": f"порт открыт, сервер доступен",
+                "hint": ""
+            })
+        else:
+            # Порт закрыт - возможно сервер не запущен
+            checks.append({
+                "name": f"Node API порт {node_api_port}",
+                "state": "warning",
+                "detail": f"порт закрыт (код ошибки: {result})",
+                "hint": "проверьте, запущен ли Node API сервер"
+            })
+    except Exception as e:
+        checks.append({
+            "name": f"Node API порт {node_api_port}",
+            "state": "warning",
+            "detail": f"ошибка проверки: {str(e)[:80]}",
+            "hint": "попробуйте проверить вручную"
+        })
+    finally:
+        sock.close()
 
     failed = [c for c in checks if c["state"] == "failed"]
     warnings = [c for c in checks if c["state"] == "warning"]

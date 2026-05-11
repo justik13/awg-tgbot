@@ -12,9 +12,9 @@ __pycache__/
 # Environment
 .env
 .env.local
-.env.*
+*.env.*
 
-# Dependencies
-.venv/
-venv/
+# Editors
+.vscode/
+.idea/
 ```

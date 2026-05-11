@@ -11,6 +11,10 @@ Main-сервер принимает исходящие HTTPS-запросы о�
 
 import hashlib
 import json
+import os
+import signal
+import socket
+import subprocess
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -367,6 +371,107 @@ async def send_node_alert(message: str) -> None:
 
 
 # =============================================================================
+# PORT CLEANUP HELPERS
+# =============================================================================
+
+
+def cleanup_port_processes(port: int) -> None:
+    """
+    Находит и останавливает процессы python/python3/node на указанном порту.
+    Вызывается перед попыткой запуска Node API сервера.
+    """
+    try:
+        # Используем ss для нахождения процесса на порту
+        result = subprocess.run(
+            ["ss", "-tlnp"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode != 0:
+            return
+        
+        # Ищем строки с нужным портом
+        for line in result.stdout.splitlines():
+            if f":{port}" in line and "pid=" in line:
+                # Извлекаем PID
+                import re
+                pid_match = re.search(r'pid=(\d+)', line)
+                if not pid_match:
+                    continue
+                
+                pid = int(pid_match.group(1))
+                
+                # Проверяем, существует ли процесс
+                if not os.path.exists(f"/proc/{pid}"):
+                    continue
+                
+                # Получаем имя процесса
+                try:
+                    with open(f"/proc/{pid}/comm", "r") as f:
+                        proc_name = f.read().strip()
+                except (IOError, OSError):
+                    continue
+                
+                # Проверяем, относится ли процесс к python/node
+                if proc_name in ("python", "python3", "node"):
+                    logger.warning(
+                        "Обнаружен остаточный процесс на порту %d: PID=%d, cmd=%s",
+                        port, pid, proc_name
+                    )
+                    
+                    # Пробуем остановить gracefully
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                        logger.info("Отправлен SIGTERM процессу PID=%d", pid)
+                    except OSError:
+                        pass
+                    
+                    # Ждём немного
+                    import time
+                    time.sleep(1)
+                    
+                    # Если процесс всё ещё жив - принудительная остановка
+                    if os.path.exists(f"/proc/{pid}"):
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                            logger.info("Процесс PID=%d уничтожен принудительно", pid)
+                        except OSError:
+                            pass
+                else:
+                    logger.warning(
+                        "На порту %d обнаружен процесс %s (PID=%d), не относящийся к боту. "
+                        "Требуется ручная проверка.",
+                        port, proc_name, pid
+                    )
+    except Exception as e:
+        logger.warning("Ошибка при очистке порта %d: %s", port, e)
+
+
+def find_free_port(start_port: int = 8444, max_attempts: int = 20) -> int:
+    """
+    Находит первый свободный порт начиная с указанного.
+    Возвращает свободный порт или исходный, если не удалось найти.
+    """
+    for attempt in range(max_attempts):
+        port = start_port + attempt
+        try:
+            # Проверяем, свободен ли порт
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            result = sock.connect_ex(('127.0.0.1', port))
+            sock.close()
+            
+            if result != 0:  # Порт свободен
+                return port
+        except Exception:
+            pass
+    
+    # Если не нашли свободный порт - возвращаем исходный
+    return start_port
+
+
+# =============================================================================
 # APP FACTORY
 # =============================================================================
 
@@ -382,19 +487,31 @@ def create_node_api_app() -> web.Application:
     return app
 
 
-async def start_node_api_server(app: web.Application, port: int) -> None:
+async def start_node_api_server(app: web.Application, port: int) -> int:
     """Запускает Node API сервер вместе с основным приложением бота.
     
     ARCHITECTURE DECISION: Node API критичен для multi-server синхронизации.
-    При невозможности bind на порт — завершаем процесс с явной ошибкой.
-    Это предотвращает запуск бота в неконсистентном состоянии без API для нод.
+    При невозможности bind на порт — пробуем очистить порт и найти свободный.
+    Возвращает фактически использованный порт.
     """
     from aiohttp.web_runner import AppRunner, TCPSite
+    
+    # Сначала пробуем очистить порт от остаточных процессов
+    cleanup_port_processes(port)
+    
+    # Пробуем найти свободный порт (может быть тот же самый)
+    actual_port = find_free_port(port)
+    
+    if actual_port != port:
+        logger.info(
+            "Порт %d был занят, используем свободный порт %d",
+            port, actual_port
+        )
     
     runner = AppRunner(app)
     await runner.setup()
     
-    site = TCPSite(runner, "0.0.0.0", port)
+    site = TCPSite(runner, "0.0.0.0", actual_port)
     try:
         await site.start()
     except OSError as e:
@@ -402,16 +519,19 @@ async def start_node_api_server(app: web.Application, port: int) -> None:
             logger.error(
                 "NODE API PORT CONFLICT: порт %d занят другим сервисом. "
                 "Измените NODE_API_PORT в .env на свободный порт и перезапустите бота.",
-                port
+                actual_port
             )
         else:
             logger.error("NODE API START ERROR: %s", e)
         raise SystemExit(1) from e
     
-    logger.info("Node API server started on port %d", port)
+    logger.info("Node API server started on port %d", actual_port)
     
-    # Сохраняем runner для последующей остановки
+    # Сохраняем runner и порт для последующей остановки
     app["node_api_runner"] = runner
+    app["node_api_port"] = actual_port
+    
+    return actual_port
 
 
 async def stop_node_api_server(app: web.Application) -> None:

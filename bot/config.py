@@ -195,7 +195,7 @@ TORRENT_POLICY_TEXT_ENABLED = env_int('TORRENT_POLICY_TEXT_ENABLED', int(DEFAULT
 
 # Phase 4: Node API configuration
 # Порт для внутреннего Node API (multi-server синхронизация и web-панель)
-# Если порт занят, бот завершится с ошибкой — измените NODE_API_PORT в .env
+# Installer автоматически очищает остаточные процессы и подбирает свободный порт
 NODE_API_PORT = env_int('NODE_API_PORT', 8444)
 
 validate_required_env(
