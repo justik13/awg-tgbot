@@ -1277,6 +1277,11 @@ EOF
   chown -R root:"$BOT_USER" "$SSL_DIR"
   chmod 750 "$SSL_DIR"
   
+  # Гарантируем, что runtime директория имеет правильные права после генерации SSL
+  mkdir -p "$RUNTIME_DIR"
+  chown -R "$BOT_USER:$BOT_USER" "$RUNTIME_DIR" 2>/dev/null || true
+  chmod 770 "$RUNTIME_DIR" 2>/dev/null || true
+  
   ok "SSL сертификаты сгенерированы: ${SSL_DIR}"
   info "  - Серверный сертификат: $SSL_CERT_FILE (10 лет)"
   info "  - Серверный ключ: $SSL_KEY_FILE"
@@ -1662,13 +1667,14 @@ enforce_root_owned_code_paths() {
 prepare_runtime_access_paths() {
   local db_file
   mkdir -p "$RUNTIME_DIR"
-  chown "$BOT_USER:$BOT_USER" "$RUNTIME_DIR" 2>/dev/null || true
-  chmod 750 "$RUNTIME_DIR" 2>/dev/null || true
-  mkdir -p "$INSTALL_DIR" "$RUNTIME_DIR" "$APP_LOG_DIR"
+  mkdir -p "$INSTALL_DIR" "$APP_LOG_DIR"
   # Назначаем пользователя awg-bot на директорию /opt/amnezia/bot и её подпапки
   chown -R root:"$BOT_USER" "$INSTALL_DIR" 2>/dev/null || true
   chmod 750 "$INSTALL_DIR" 2>/dev/null || true
   # runtime/ должна быть полностью доступна пользователю awg-bot для записи
+  # Устанавливаем явные права после общего chown, чтобы гарантировать доступ
+  chown -R "$BOT_USER:$BOT_USER" "$RUNTIME_DIR" 2>/dev/null || true
+  chmod 770 "$RUNTIME_DIR" 2>/dev/null || true
   touch "$APP_LOG_FILE"
   chown -R "$BOT_USER:$BOT_USER" "$APP_LOG_DIR" 2>/dev/null || true
   chmod 750 "$APP_LOG_DIR" 2>/dev/null || true
@@ -1818,6 +1824,10 @@ SUDOERS
 
 write_service() {
   mkdir -p "$APP_LOG_DIR"
+  # Гарантируем корректные права на runtime директорию перед запуском сервиса
+  mkdir -p "$RUNTIME_DIR"
+  chown -R "$BOT_USER:$BOT_USER" "$RUNTIME_DIR" 2>/dev/null || true
+  chmod 770 "$RUNTIME_DIR" 2>/dev/null || true
   touch "$APP_LOG_FILE"
   chmod 640 "$APP_LOG_FILE" || true
   cat > "$SERVICE_FILE" <<SERVICE
