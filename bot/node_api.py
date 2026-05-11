@@ -20,8 +20,9 @@ from aiohttp import web
 from aiohttp.web import Request, StreamResponse
 from typing import Callable, Awaitable
 
-from config import logger
+from config import logger, ADMIN_ID, BOT_TOKEN
 from database import open_db, fetchone, execute, enqueue_node_command, get_pending_commands
+import aiohttp
 
 
 # =============================================================================
@@ -302,12 +303,30 @@ async def handle_heartbeat(request: web.Request) -> web.Response:
         # Получаем pending команды
         commands = await get_pending_commands(node_id)
         
-        # Если есть drift — логируем (можно отправить уведомление админу)
+        # Если есть drift — отправляем уведомление админу
         if params_drift:
-            # Здесь можно добавить отправку уведомления ADMIN_ID в Telegram
             logger.warning(
                 "PARAMS DRIFT ALERT: node_id=%s name=%s requires attention",
                 node_id, node_name,
+            )
+            # Отправляем уведомление в Telegram
+            await send_node_alert(
+                f"⚠️ <b>Params Drift Detected</b>\n\n"
+                f"Node: <code>{node_name}</code> (ID: {node_id})\n"
+                f"Требуется проверка конфигурации awg0 на ноде."
+            )
+        
+        # Проверяем offline статус
+        if node_status == "degraded" or node_status == "offline":
+            logger.warning(
+                "NODE OFFLINE ALERT: node_id=%s name=%s status=%s",
+                node_id, node_name, node_status,
+            )
+            await send_node_alert(
+                f"🔴 <b>Node Offline/Degraded</b>\n\n"
+                f"Node: <code>{node_name}</code> (ID: {node_id})\n"
+                f"Status: <code>{node_status}</code>\n"
+                f"Последний heartbeat: {now_iso}"
             )
         
         logger.debug(
@@ -322,6 +341,29 @@ async def handle_heartbeat(request: web.Request) -> web.Response:
         })
     finally:
         await db.close()
+
+
+async def send_node_alert(message: str) -> None:
+    """Отправляет уведомление админу о проблемах с нодой."""
+    if not ADMIN_ID or not BOT_TOKEN:
+        logger.warning("Cannot send node alert: ADMIN_ID or BOT_TOKEN not configured")
+        return
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": ADMIN_ID,
+                "text": message,
+                "parse_mode": "HTML",
+            }
+            async with session.post(url, json=payload) as resp:
+                if resp.status != 200:
+                    logger.warning("Failed to send node alert: status=%d", resp.status)
+                else:
+                    logger.info("Node alert sent to admin: %s", message[:50])
+    except Exception as e:
+        logger.error("Failed to send node alert: %s", e)
 
 
 # =============================================================================

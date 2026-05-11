@@ -212,8 +212,9 @@ def get_admin_inline_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="👥 Пользователи", callback_data=CB_ADMIN_LIST), InlineKeyboardButton(text="💳 Платежи", callback_data=CB_ADMIN_PAYMENTS)],
             [InlineKeyboardButton(text="⚙️ Настройки сервиса", callback_data=CB_ADMIN_SERVICE_SETTINGS), InlineKeyboardButton(text="🌐 Сеть", callback_data=CB_ADMIN_NETWORK_POLICY)],
-            [InlineKeyboardButton(text="📊 Статистика", callback_data=CB_ADMIN_STATS), InlineKeyboardButton(text="🩺 Состояние", callback_data=CB_ADMIN_HEALTH)],
-            [InlineKeyboardButton(text="🔄 Синхронизация", callback_data=CB_ADMIN_SYNC), InlineKeyboardButton(text="🟠 Техработы", callback_data=CB_ADMIN_MAINTENANCE)],
+            [InlineKeyboardButton(text="🖥 Ноды", callback_data=CB_ADMIN_NODES), InlineKeyboardButton(text="🩺 Состояние", callback_data=CB_ADMIN_HEALTH)],
+            [InlineKeyboardButton(text="📊 Статистика", callback_data=CB_ADMIN_STATS), InlineKeyboardButton(text="🔄 Синхронизация", callback_data=CB_ADMIN_SYNC)],
+            [InlineKeyboardButton(text="🟠 Техработы", callback_data=CB_ADMIN_MAINTENANCE)],
             [InlineKeyboardButton(text="💸 Цены", callback_data=CB_ADMIN_PRICES), InlineKeyboardButton(text="🎟 Промокоды", callback_data=CB_ADMIN_PROMOCODES)],
             [InlineKeyboardButton(text="🎁 Рефералы", callback_data=CB_ADMIN_REFERRALS), InlineKeyboardButton(text="📢 Рассылка", callback_data=CB_ADMIN_BROADCAST)],
             [InlineKeyboardButton(text="📝 Тексты", callback_data=CB_ADMIN_TEXT_OVERRIDES)],

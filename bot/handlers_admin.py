@@ -38,6 +38,7 @@ from database import (
     get_metric, get_pending_jobs_stats, get_recovery_lag_seconds,
     get_pending_admin_action, get_pending_broadcast, get_recent_audit, get_referral_admin_stats, get_referral_summary, get_user_keys, get_user_meta, list_problematic_activations, normalize_promo_code, pop_pending_admin_action,
     reset_text_override, set_app_setting, set_pending_admin_action, set_pending_broadcast, set_text_override, write_audit_log,
+    get_all_nodes_for_admin, get_node_by_id, update_node_visibility, update_node_capacity,
 )
 from helpers import (
     escape_html,
@@ -55,6 +56,9 @@ from keyboards import (
     get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb, get_broadcast_segment_kb, get_open_user_card_kb, get_problem_activations_kb,
     get_admin_network_policy_kb, get_admin_denylist_kb,
     get_admin_service_settings_kb, get_admin_text_override_item_kb, get_admin_text_overrides_kb, get_admin_add_days_confirm_kb,
+)
+from keyboards_nodes import (
+    get_admin_nodes_list_kb, get_admin_node_manage_kb, get_admin_node_capacity_edit_kb,
 )
 from ui_constants import (
     BTN_ADMIN, CB_ADMIN_BACK_MAIN, CB_ADMIN_BROADCAST,
@@ -81,6 +85,7 @@ from ui_constants import (
     CB_CANCEL_DELETE_USER, CB_CONFIRM_DEVICE_DELETE,
     CB_CANCEL_DEVICE_DELETE, CB_CONFIRM_DEVICE_REISSUE, CB_CANCEL_DEVICE_REISSUE,
     CB_CONFIRM_ADD_DAYS, CB_CANCEL_ADD_DAYS,
+    CB_ADMIN_NODES, CB_ADMIN_NODES_MANAGE_PREFIX, CB_ADMIN_NODES_VISIBILITY_TOGGLE_PREFIX, CB_ADMIN_NODES_CAPACITY_EDIT_PREFIX,
 )
 from config_validate import read_helper_policy
 from network_policy import denylist_sync, parse_cidrs, policy_metrics
@@ -3346,3 +3351,213 @@ async def ref_stats_cmd(message: types.Message):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     await message.answer(await build_ref_stats_text(), parse_mode="HTML")
+
+
+# =============================================================================
+# NODES MANAGEMENT (Phase 4)
+# =============================================================================
+
+@router.callback_query(F.data == CB_ADMIN_NODES)
+async def admin_nodes_list(cb: types.CallbackQuery):
+    """Показывает список всех нод."""
+    if not await _guard_admin_callback(cb):
+        return
+    
+    nodes = await get_all_nodes_for_admin()
+    text = "🖥 <b>Управление нодами</b>\n\n"
+    
+    if not nodes:
+        text += "❌ Ноды пока не добавлены.\n\n"
+        text += "Для добавления ноды используйте API /node/register на сервере."
+    else:
+        total_capacity = sum(n["capacity"] for n in nodes)
+        total_active = sum(n["active_configs"] for n in nodes)
+        online_count = sum(1 for n in nodes if n["status"] == "ready")
+        
+        text += f"Всего нод: <b>{len(nodes)}</b>\n"
+        text += f"Онлайн: <b>{online_count}/{len(nodes)}</b>\n"
+        text += f"Загрузка: <b>{total_active}/{total_capacity}</b>\n\n"
+        
+        for node in nodes:
+            status_emoji = "🟢" if node["status"] == "ready" else "🔴" if node["status"] in ("degraded", "offline") else "🟡"
+            visibility_emoji = "👁️" if node["is_visible"] else "🙈"
+            
+            last_seen = node["last_seen"]
+            if last_seen:
+                try:
+                    from helpers import format_iso_to_moscow
+                    last_seen_fmt = format_iso_to_moscow(last_seen)
+                except:
+                    last_seen_fmt = last_seen
+            else:
+                last_seen_fmt = "никогда"
+            
+            text += f"{status_emoji} {visibility_emoji} <b>{escape_html(node['name'])}</b>\n"
+            text += f"   IP: {escape_html(node['ip'])}:{node['port']}\n"
+            text += f"   Загрузка: {node['active_configs']}/{node['capacity']}\n"
+            text += f"   Последняя связь: {last_seen_fmt}\n\n"
+    
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=get_admin_nodes_list_kb(nodes))
+
+
+@router.callback_query(F.data.startswith(CB_ADMIN_NODES_MANAGE_PREFIX))
+async def admin_node_manage(cb: types.CallbackQuery):
+    """Управление отдельной нодой."""
+    if not await _guard_admin_callback(cb):
+        return
+    
+    try:
+        node_id = int(cb.data.split(":")[-1])
+    except (ValueError, IndexError):
+        await cb.answer("❌ Неверный ID ноды", show_alert=True)
+        return
+    
+    node = await get_node_by_id(node_id)
+    if not node:
+        await cb.answer("❌ Ноде не найдена", show_alert=True)
+        return
+    
+    status_emoji = "🟢" if node["status"] == "ready" else "🔴" if node["status"] in ("degraded", "offline") else "🟡"
+    
+    text = (
+        f"🖥 <b>Нода: {escape_html(node['name'])}</b>\n\n"
+        f"Статус: {status_emoji} {escape_html(node['status'])}\n"
+        f"IP: {escape_html(node['ip'])}:{node['port']}\n"
+        f"Видимость: {'👁️ Видима' if node['is_visible'] else '🙈 Скрыта'}\n"
+        f"Capacity: <b>{node['capacity']}</b>\n"
+        f"Активно конфигов: <b>{node['active_configs']}</b>\n\n"
+        f"Последняя связь: {format_iso_to_moscow(node['last_seen']) if node['last_seen'] else 'никогда'}\n"
+        f"Создана: {format_iso_to_moscow(node['created_at']) if node['created_at'] else 'н/д'}\n"
+    )
+    
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=get_admin_node_manage_kb(node))
+
+
+@router.callback_query(F.data.startswith(CB_ADMIN_NODES_VISIBILITY_TOGGLE_PREFIX))
+async def admin_node_toggle_visibility(cb: types.CallbackQuery):
+    """Переключает видимость ноды."""
+    if not await _guard_admin_callback(cb):
+        return
+    
+    try:
+        node_id = int(cb.data.split(":")[-1])
+    except (ValueError, IndexError):
+        await cb.answer("❌ Неверный ID ноды", show_alert=True)
+        return
+    
+    node = await get_node_by_id(node_id)
+    if not node:
+        await cb.answer("❌ Ноде не найдена", show_alert=True)
+        return
+    
+    new_visibility = not node["is_visible"]
+    await update_node_visibility(node_id, new_visibility)
+    await write_audit_log(
+        cb.from_user.id, 
+        "node_visibility_changed",
+        f"node_id={node_id}, name={node['name']}, new_visibility={new_visibility}"
+    )
+    
+    action_text = "видима" if new_visibility else "скрыта"
+    await cb.answer(f"✅ Нода '{node['name']}' теперь {action_text}")
+    
+    # Обновляем экран управления нодой
+    node = await get_node_by_id(node_id)
+    status_emoji = "🟢" if node["status"] == "ready" else "🔴" if node["status"] in ("degraded", "offline") else "🟡"
+    
+    text = (
+        f"🖥 <b>Нода: {escape_html(node['name'])}</b>\n\n"
+        f"Статус: {status_emoji} {escape_html(node['status'])}\n"
+        f"IP: {escape_html(node['ip'])}:{node['port']}\n"
+        f"Видимость: {'👁️ Видима' if node['is_visible'] else '🙈 Скрыта'}\n"
+        f"Capacity: <b>{node['capacity']}</b>\n"
+        f"Активно конфигов: <b>{node['active_configs']}</b>\n\n"
+        f"Последняя связь: {format_iso_to_moscow(node['last_seen']) if node['last_seen'] else 'никогда'}\n"
+        f"Создана: {format_iso_to_moscow(node['created_at']) if node['created_at'] else 'н/д'}\n"
+    )
+    
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=get_admin_node_manage_kb(node))
+
+
+@router.callback_query(F.data.startswith(CB_ADMIN_NODES_CAPACITY_EDIT_PREFIX))
+async def admin_node_capacity_edit(cb: types.CallbackQuery):
+    """Редактирование capacity ноды."""
+    if not await _guard_admin_callback(cb):
+        return
+    
+    data_parts = cb.data.split(":")
+    try:
+        node_id = int(data_parts[-2])
+    except (ValueError, IndexError):
+        await cb.answer("❌ Неверный ID ноды", show_alert=True)
+        return
+    
+    node = await get_node_by_id(node_id)
+    if not node:
+        await cb.answer("❌ Ноде не найдена", show_alert=True)
+        return
+    
+    # Проверяем, есть ли изменение capacity (+5, -10, etc.)
+    if len(data_parts) > 1 and data_parts[-1] in ("+5", "+10", "-5", "-10"):
+        change_str = data_parts[-1]
+        change = int(change_str)
+        new_capacity = max(1, node["capacity"] + change)
+        
+        await update_node_capacity(node_id, new_capacity)
+        await write_audit_log(
+            cb.from_user.id,
+            "node_capacity_changed",
+            f"node_id={node_id}, name={node['name']}, old_capacity={node['capacity']}, new_capacity={new_capacity}"
+        )
+        
+        await cb.answer(f"✅ Capacity изменён: {node['capacity']} → {new_capacity}")
+        
+        # Возвращаемся к экрану управления нодой
+        node = await get_node_by_id(node_id)
+        status_emoji = "🟢" if node["status"] == "ready" else "🔴" if node["status"] in ("degraded", "offline") else "🟡"
+        
+        text = (
+            f"🖥 <b>Нода: {escape_html(node['name'])}</b>\n\n"
+            f"Статус: {status_emoji} {escape_html(node['status'])}\n"
+            f"IP: {escape_html(node['ip'])}:{node['port']}\n"
+            f"Видимость: {'👁️ Видима' if node['is_visible'] else '🙈 Скрыта'}\n"
+            f"Capacity: <b>{node['capacity']}</b>\n"
+            f"Активно конфигов: <b>{node['active_configs']}</b>\n\n"
+            f"Последняя связь: {format_iso_to_moscow(node['last_seen']) if node['last_seen'] else 'никогда'}\n"
+            f"Создана: {format_iso_to_moscow(node['created_at']) if node['created_at'] else 'н/д'}\n"
+        )
+        
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=get_admin_node_manage_kb(node))
+    else:
+        # Показываем клавиатуру редактирования capacity
+        await cb.message.edit_text(
+            f"✏️ <b>Изменение capacity для ноды '{escape_html(node['name'])}'</b>\n\n"
+            f"Текущий capacity: <b>{node['capacity']}</b>\n"
+            f"Активно конфигов: <b>{node['active_configs']}</b>\n\n"
+            f"Выберите изменение:",
+            parse_mode="HTML",
+            reply_markup=get_admin_node_capacity_edit_kb(node_id)
+        )
+
+
+@router.message(Command("nodes"), IsAdmin())
+async def nodes_cmd(message: types.Message):
+    """Команда /nodes для быстрого доступа к управлению нодами."""
+    await _clear_network_policy_pending()
+    await _clear_service_settings_pending()
+    
+    nodes = await get_all_nodes_for_admin()
+    text = "🖥 <b>Управление нодами</b>\n\n"
+    
+    if not nodes:
+        text += "❌ Ноды пока не добавлены."
+    else:
+        total_capacity = sum(n["capacity"] for n in nodes)
+        total_active = sum(n["active_configs"] for n in nodes)
+        online_count = sum(1 for n in nodes if n["status"] == "ready")
+        
+        text += f"Всего нод: <b>{len(nodes)}</b>\n"
+        text += f"Онлайн: <b>{online_count}/{len(nodes)}</b>\n"
+        text += f"Загрузка: <b>{total_active}/{total_capacity}</b>"
+    
+    await message.answer(text, parse_mode="HTML", reply_markup=get_admin_nodes_list_kb(nodes))

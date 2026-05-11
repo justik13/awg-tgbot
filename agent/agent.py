@@ -12,6 +12,7 @@
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import os
 import subprocess
@@ -325,7 +326,7 @@ def apply_remove_peer(payload: dict[str, Any]) -> bool:
 
 def apply_update_denylist(payload: dict[str, Any]) -> bool:
     """
-    Обновляет denylist правила.
+    Обновляет denylist правила и применяет их через nftables.
     payload: { "rules": [str], "version": str }
     """
     rules = payload.get("rules", [])
@@ -337,13 +338,106 @@ def apply_update_denylist(payload: dict[str, Any]) -> bool:
             for rule in rules:
                 f.write(rule + "\n")
         
-        # Здесь должен быть вызов скрипта применения правил (nftables/iptables)
-        # Для MVP просто логируем
+        # Применяем правила через nftables
+        if not apply_denylist_nftables(rules):
+            log_error("update_denylist: failed to apply nftables rules")
+            return False
+        
         log_info("update_denylist: applied %d rules (version=%s)", len(rules), version)
         return True
     
     except Exception as e:
         log_error("update_denylist exception: %s", e)
+        return False
+
+
+def apply_denylist_nftables(rules: list[str]) -> bool:
+    """
+    Применяет denylist правила через nftables.
+    Создаёт таблицу, цепочку и правила для блокировки исходящего трафика.
+    """
+    table_name = "awg_denylist"
+    chain_name = "output_filter"
+    
+    try:
+        # 1. Удаляем старую таблицу если существует (для идемпотентности)
+        subprocess.run(
+            ["nft", "delete", "table", "inet", table_name],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        
+        # 2. Если правил нет - просто удаляем таблицу и выходим
+        if not rules:
+            log_info("denylist: cleared all rules (empty list)")
+            return True
+        
+        # 3. Создаём новую таблицу и цепочку
+        # Сначала создаём таблицу
+        create_table_cmd = f"table inet {table_name} {{ chain {chain_name} {{ type filter hook output priority -1; policy accept; }}"
+        
+        # Добавляем правила для каждого CIDR/IP
+        rules_cmds = []
+        for rule in rules:
+            rule = rule.strip()
+            if not rule or rule.startswith("#"):
+                continue
+            
+            # Определяем тип правила (IP/CIDR или домен)
+            try:
+                # Проверяем это IP/CIDR
+                ipaddress.ip_network(rule, strict=False)
+                # Это CIDR/IP - добавляем правило блокировки
+                rules_cmds.append(f"ip daddr {rule} drop")
+            except ValueError:
+                # Это не CIDR, возможно домен - пропускаем (должен быть уже разрешён)
+                log_warning("denylist: skipping non-CIDR rule: %s", rule)
+                continue
+        
+        # 4. Применяем все правила одной командой
+        if rules_cmds:
+            full_script = create_table_cmd
+            for rule_cmd in rules_cmds:
+                full_script += f" {chain_name} {{ {rule_cmd} }}"
+            
+            # Используем nft -f для выполнения скрипта
+            script_file = AGENT_DIR / "nft_apply.sh"
+            with open(script_file, "w") as f:
+                f.write(f"#!/bin/bash\nnft add {create_table_cmd}\n")
+                for rule_cmd in rules_cmds:
+                    f.write(f"nft add rule inet {table_name} {chain_name} {rule_cmd}\n")
+            
+            os.chmod(script_file, 0o755)
+            
+            proc = subprocess.run(
+                ["bash", str(script_file)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            
+            if proc.returncode != 0:
+                log_error("nft apply failed: %s", proc.stderr.strip())
+                return False
+            
+            # Очищаем временный файл
+            try:
+                os.remove(script_file)
+            except Exception:
+                pass
+            
+            log_info("denylist: applied %d nftables rules", len(rules_cmds))
+            return True
+        else:
+            log_info("denylist: no valid CIDR rules to apply")
+            return True
+    
+    except subprocess.TimeoutExpired:
+        log_error("denylist: nft command timed out")
+        return False
+    except Exception as e:
+        log_error("denylist: exception during nftables apply: %s", e)
         return False
 
 
