@@ -1,71 +1,90 @@
-```bash
-# Environment
+```
+# Environment variables
 .env
-.env.local
-*.env.*
 
-# Logs and temp files
+# Logs
 *.log
+
+# Temporary files
 *.tmp
-*.swp
 
-# Editors
-.vscode/
-.idea/
-
-# Dependencies
-node_modules/
-.venv/
-venv/
-__pycache__/
-.mypy_cache/
-.pytest_cache/
-dist/
-build/
-target/
-.gradle/
-
-# Compiled/Binary files
-*.pyc
-*.class
-*.o
-*.exe
-*.dll
-*.so
-*.a
-*.obj
-*.out
-
-# System files
+# OS generated files
 .DS_Store
 Thumbs.db
 
-# Coverage
-coverage/
-htmlcov/
-.coverage
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Compressed files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git/
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
+
+# Build artifacts
+dist/
+build/
+*.egg
+*.egg-info/
+.installed.cfg
+*.egg-info/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+node_modules/
+dist/
+public/dist/
+coverage/
+.nyc_output
+coverage/
+.nyc_output/
+webpack.config.js
+webpack.config.babel.js
+.babelrc
+.browserslistrc
+.eslintrc
+.jshintrc
+.editorconfig
+.gitattributes
+.gitignore
+.nvmrc
+.prettierignore
+.stylelintignore
+.stylelintrc
+.travis.yml
+appveyor.yml
+circle.yml
+docker-compose.yml
+Dockerfile
+Makefile
+Gruntfile.js
+Gulpfile.js
+gulpfile.js
+package-lock.json
+yarn.lock
 ```
