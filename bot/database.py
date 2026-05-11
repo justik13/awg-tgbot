@@ -75,7 +75,7 @@ async def open_db() -> aiosqlite.Connection:
 
 async def ensure_db_ready() -> None:
     """Initialize database schema and run Phase 1 migration if needed."""
-    from migration_phase1 import run_migration
+    from .migration_phase1 import run_migration
     
     # Run init_db first to ensure base schema exists
     await init_db()
