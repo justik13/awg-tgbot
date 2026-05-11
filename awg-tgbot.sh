@@ -1837,7 +1837,7 @@ After=network-online.target docker.service
 Wants=network-online.target docker.service
 
 [Service]
-Type=simple
+Type=exec
 WorkingDirectory=${INSTALL_DIR}
 Environment=PYTHONUNBUFFERED=1
 Environment=NODE_API_PROTOCOL=${NODE_API_PROTOCOL}
@@ -1846,7 +1846,6 @@ Environment=SSL_KEY_FILE=${SSL_KEY_FILE}
 ExecStart=${VENV_DIR}/bin/python -u -m bot.app
 Restart=always
 RestartSec=10
-WatchdogSec=30s
 User=${BOT_USER}
 Group=${BOT_USER}
 # sudo к root helper требует возможности повышения привилегий.
