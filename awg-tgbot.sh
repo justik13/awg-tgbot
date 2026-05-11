@@ -1527,8 +1527,8 @@ ensure_bot_user() {
 enforce_root_owned_code_paths() {
   local path
   mkdir -p "$INSTALL_DIR"
-  chown root:root "$INSTALL_DIR" 2>/dev/null || true
-  chmod 755 "$INSTALL_DIR" 2>/dev/null || true
+  # Не меняем владельца всей директории INSTALL_DIR, чтобы awg-bot мог писать в runtime/
+  # Устанавливаем root:root только на исполняемые скрипты и код бота (защита от модификации)
   for path in "$INSTALL_DIR/awg-tgbot.sh" "$BOT_DIR" "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging" "$VENV_DIR"; do
     [[ -e "$path" ]] || continue
     chown -R root:root "$path" 2>/dev/null || true
@@ -2199,7 +2199,56 @@ restore_repo_snapshot_after_failed_reinstall() {
 
 run_post_restart_smokecheck() {
   local failed=0 env_container env_interface policy_container policy_interface policy_error db_result runtime_python awg_check_output awg_check_rc=0 node_api_port port_in_use proc_name pid_list
+  local max_wait=30 interval=3 elapsed=0
 
+  info "Ожидание стабилизации сервиса (max ${max_wait}s)..."
+  while (( elapsed < max_wait )); do
+    if service_exists && [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" == "active" ]]; then
+      # Проверяем порт
+      node_api_port="$(get_env_value NODE_API_PORT)"
+      node_api_port="${node_api_port:-8444}"
+      if ss -tlnp 2>/dev/null | grep -qE ":${node_api_port}\\s"; then
+        # Проверяем БД
+        runtime_python="$PYTHON_BIN"
+        [[ -x "${VENV_DIR}/bin/python" ]] && runtime_python="${VENV_DIR}/bin/python"
+        db_result="$("$runtime_python" - "$BOT_DIR" "$ENV_FILE" <<'PY' 2>/dev/null || true
+import asyncio
+import os
+import sys
+from dotenv import load_dotenv
+
+bot_dir, env_file = sys.argv[1], sys.argv[2]
+install_dir = os.path.dirname(bot_dir)
+os.chdir(install_dir)
+load_dotenv(env_file, override=True)
+sys.path.insert(0, bot_dir)
+from config import DB_PATH  # noqa: E402
+from database import db_health_info  # noqa: E402
+
+info = asyncio.run(db_health_info())
+if not info.get("schema_ready"):
+    print(f"schema_not_ready:path={DB_PATH}")
+    raise SystemExit(1)
+if not info.get("runtime_ready"):
+    integrity = info.get("instance_integrity") if isinstance(info.get("instance_integrity"), dict) else {}
+    issues = integrity.get("issues") if isinstance(integrity.get("issues"), list) else []
+    suffix = "; ".join(str(item) for item in issues if str(item).strip()) or "no_integrity_details"
+    print(f"runtime_not_ready:path={DB_PATH}:{suffix}")
+    raise SystemExit(1)
+print("runtime_ready")
+PY
+)"
+        if [[ "$db_result" == "runtime_ready" ]]; then
+          ok "Smokecheck пройден: сервис активен, порт ${node_api_port} открыт, БД валидна."
+          break
+        fi
+      fi
+    fi
+    sleep "$interval"
+    (( elapsed += interval ))
+  done
+
+  # Финальная проверка состояния
   if ! service_exists || [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" != "active" ]]; then
     warn "Smokecheck: сервис ${SERVICE_NAME} не в состоянии active."
     failed=1
@@ -2252,6 +2301,7 @@ run_post_restart_smokecheck() {
     fi
   fi
 
+  # Проверка helper policy и AWG
   env_container="$(get_env_value DOCKER_CONTAINER)"
   env_interface="$(get_env_value WG_INTERFACE)"
   IFS=$'\t' read -r policy_container policy_interface policy_error < <(read_helper_policy_state)
@@ -2283,56 +2333,6 @@ run_post_restart_smokecheck() {
       warn "Проверка после перезапуска: AWG check-awg завершился ошибкой (rc=${awg_check_rc}, output=${awg_check_output:-no-output})."
       failed=1
     fi
-  fi
-
-  runtime_python="$PYTHON_BIN"
-  [[ -x "${VENV_DIR}/bin/python" ]] && runtime_python="${VENV_DIR}/bin/python"
-  db_result="$("$runtime_python" - "$BOT_DIR" "$ENV_FILE" <<'PY' 2>/dev/null || true
-import asyncio
-import os
-import sys
-from dotenv import load_dotenv
-
-bot_dir, env_file = sys.argv[1], sys.argv[2]
-install_dir = os.path.dirname(bot_dir)
-os.chdir(install_dir)
-load_dotenv(env_file, override=True)
-sys.path.insert(0, bot_dir)
-from config import DB_PATH  # noqa: E402
-from database import db_health_info  # noqa: E402
-
-info = asyncio.run(db_health_info())
-if not info.get("schema_ready"):
-    print(f"schema_not_ready:path={DB_PATH}")
-    raise SystemExit(1)
-if not info.get("runtime_ready"):
-    integrity = info.get("instance_integrity") if isinstance(info.get("instance_integrity"), dict) else {}
-    issues = integrity.get("issues") if isinstance(integrity.get("issues"), list) else []
-    suffix = "; ".join(str(item) for item in issues if str(item).strip()) or "no_integrity_details"
-    print(f"runtime_not_ready:path={DB_PATH}:{suffix}")
-    raise SystemExit(1)
-print("runtime_ready")
-PY
-)"
-  if [[ "$db_result" == schema_not_ready:path=* ]]; then
-    local schema_db_path="${db_result#schema_not_ready:path=}"
-    warn "Проверка после перезапуска: проверка БД не пройдена (schema_ready=false, path=${schema_db_path})."
-    failed=1
-  elif [[ "$db_result" == "schema_not_ready" ]]; then
-    warn "Проверка после перезапуска: проверка БД не пройдена (schema_ready=false)."
-    failed=1
-  elif [[ "$db_result" == runtime_not_ready:path=*:* ]]; then
-    local runtime_payload="${db_result#runtime_not_ready:path=}"
-    local runtime_db_path="${runtime_payload%%:*}"
-    local runtime_suffix="${runtime_payload#*:}"
-    warn "Проверка после перезапуска: проверка БД не пройдена (runtime_ready=false, path=${runtime_db_path}, ${runtime_suffix})."
-    failed=1
-  elif [[ "$db_result" == runtime_not_ready:* ]]; then
-    warn "Проверка после перезапуска: проверка БД не пройдена (runtime_ready=false, ${db_result#runtime_not_ready:})."
-    failed=1
-  elif [[ "$db_result" != "runtime_ready" ]]; then
-    warn "Проверка после перезапуска: проверка БД не пройдена (${db_result:-unknown})."
-    failed=1
   fi
 
   [[ "$failed" == "0" ]]

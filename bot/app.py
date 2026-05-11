@@ -112,11 +112,14 @@ def run_background(coro, task_name: str):
 
 async def on_startup():
     """Initialize database pool, scheduler and background tasks."""
+    global _scheduler
+    _scheduler = AsyncIOScheduler(timezone="UTC")
     await get_shared_db()
-    if _scheduler is not None:
-        _scheduler.start()
+    _scheduler.start()
     # Пример привязки к ноде:
     from .config import EGRESS_DENYLIST_REFRESH_MINUTES, NODE_ID, SYNC_ENABLED
+    from .network_policy import refresh_denylist
+    from .workers import run_autobackup, sync_agent_loop
     _schedule_node_scoped(refresh_denylist, "interval", node_id=NODE_ID, minutes=EGRESS_DENYLIST_REFRESH_MINUTES)
     _schedule_node_scoped(run_autobackup, "cron", node_id=NODE_ID, hour=3, minute=0)
     if SYNC_ENABLED:
