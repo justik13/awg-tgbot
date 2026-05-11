@@ -1,49 +1,42 @@
 ```
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
-env/
-venv/
-.venv/
-.ENV
-.env
-*.env
-.env.local
-
-# Logs
-*.log
-
-# Temporary files
-*.tmp
-*.swp
-*~
-.DS_Store
-Thumbs.db
-
-# Coverage
-.coverage
-coverage/
-htmlcov/
-
-# Virtual Environment
-.venv/
-venv/
-env/
-
-# Node.js (if any Node.js dependencies exist)
-node_modules/
-
-# Build artifacts
 build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
+.installed.cfg
+*.egg
+
+# Environment
+.env
+.env.local
+.env.*
+.venv/
+venv/
+ENV/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# Logs
+*.log
 
 # OS
 .DS_Store
