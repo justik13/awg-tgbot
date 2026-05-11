@@ -2225,15 +2225,20 @@ run_post_restart_smokecheck() {
             if [[ -d "/proc/$pid" ]]; then
               kill -KILL "$pid" 2>/dev/null || true
             fi
-            ok "Smokecheck: остаточный процесс остановлен, перезапуск сервиса..."
-            # Перезапускаем сервис после очистки
-            systemctl restart "$SERVICE_NAME" 2>/dev/null || true
-            sleep 2
-            # Проверяем снова
+            sleep 0.5
+            # Проверяем, освободился ли порт перед перезапуском сервиса
             if ! ss -tlnp 2>/dev/null | grep -qE ":${node_api_port}\\s"; then
-              ok "Smokecheck: порт ${node_api_port} освобождён после перезапуска сервиса"
+              ok "Smokecheck: остаточный процесс остановлен, порт ${node_api_port} освобождён"
             else
-              warn "Smokecheck: порт ${node_api_port} всё ещё занят после перезапуска"
+              warn "Smokecheck: порт ${node_api_port} всё ещё занят, пробуем ещё раз..."
+              # Повторная очистка
+              kill -KILL "$pid" 2>/dev/null || true
+              sleep 1
+              if ! ss -tlnp 2>/dev/null | grep -qE ":${node_api_port}\\s"; then
+                ok "Smokecheck: порт ${node_api_port} освобождён после повторной очистки"
+              else
+                warn "Smokecheck: порт ${node_api_port} всё ещё занят после очистки"
+              fi
             fi
           else
             warn "Smokecheck: NODE_API_PORT=${node_api_port} занят другим процессом: ${proc_name} (PID=${pid})"

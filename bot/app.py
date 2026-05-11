@@ -393,7 +393,7 @@ async def main() -> None:
         if actual_node_api_port != NODE_API_PORT:
             logger.warning("NODE_API_PORT изменён с %d на %d из-за занятости порта", NODE_API_PORT, actual_node_api_port)
             # Сохраняем фактический порт в конфиг для использования в smokecheck и других функциях
-            config_module.NODE_API_PORT = actual_node_api_port
+            config_module.update_node_api_port(actual_node_api_port)
         
         worker_pool.start(
             [

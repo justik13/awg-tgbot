@@ -453,17 +453,39 @@ def find_free_port(start_port: int = 8444, max_attempts: int = 20) -> int:
     Находит первый свободный порт начиная с указанного.
     Возвращает свободный порт или исходный, если не удалось найти.
     """
+    import subprocess
+    
     for attempt in range(max_attempts):
         port = start_port + attempt
         try:
-            # Проверяем, свободен ли порт
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            result = sock.connect_ex(('127.0.0.1', port))
-            sock.close()
+            # Сначала проверяем через ss - более надёжно
+            result = subprocess.run(
+                ["ss", "-tlnp"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            port_in_use = False
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if f":{port}" in line and "LISTEN" in line:
+                        port_in_use = True
+                        break
             
-            if result != 0:  # Порт свободен
+            # Если ss не показал порт - пробуем bind для подтверждения
+            if not port_in_use:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    sock.bind(('0.0.0.0', port))
+                    sock.close()
+                    return port  # Порт действительно свободен
+                except OSError:
+                    port_in_use = True
+            
+            if not port_in_use:
                 return port
+                
         except Exception:
             pass
     
@@ -495,9 +517,14 @@ async def start_node_api_server(app: web.Application, port: int) -> int:
     Возвращает фактически использованный порт.
     """
     from aiohttp.web_runner import AppRunner, TCPSite
+    import time
     
     # Сначала пробуем очистить порт от остаточных процессов
+    logger.info("Проверка порта %d на наличие остаточных процессов...", port)
     cleanup_port_processes(port)
+    
+    # Даём время на остановку процессов
+    time.sleep(0.5)
     
     # Пробуем найти свободный порт (может быть тот же самый)
     actual_port = find_free_port(port)
@@ -507,6 +534,8 @@ async def start_node_api_server(app: web.Application, port: int) -> int:
             "Порт %d был занят, используем свободный порт %d",
             port, actual_port
         )
+    else:
+        logger.info("Порт %d свободен", port)
     
     runner = AppRunner(app)
     await runner.setup()
@@ -516,14 +545,32 @@ async def start_node_api_server(app: web.Application, port: int) -> int:
         await site.start()
     except OSError as e:
         if e.errno == 98:  # Address already in use
-            logger.error(
-                "NODE API PORT CONFLICT: порт %d занят другим сервисом. "
-                "Измените NODE_API_PORT в .env на свободный порт и перезапустите бота.",
+            # Пробуем ещё раз очистить порт и перезапустить
+            logger.warning(
+                "Порт %d всё ещё занят после очистки. Повторная попытка...",
                 actual_port
             )
+            cleanup_port_processes(actual_port)
+            time.sleep(1)
+            
+            # Пробуем найти другой свободный порт
+            new_port = find_free_port(actual_port + 1)
+            if new_port != actual_port:
+                logger.info("Переключаемся на порт %d", new_port)
+                await site.stop()
+                site = TCPSite(runner, "0.0.0.0", new_port)
+                actual_port = new_port
+                await site.start()
+            else:
+                logger.error(
+                    "NODE API PORT CONFLICT: порт %d занят другим сервисом. "
+                    "Измените NODE_API_PORT в .env на свободный порт и перезапустите бота.",
+                    actual_port
+                )
+                raise SystemExit(1) from e
         else:
             logger.error("NODE API START ERROR: %s", e)
-        raise SystemExit(1) from e
+            raise SystemExit(1) from e
     
     logger.info("Node API server started on port %d", actual_port)
     
