@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     last_seen TEXT,
     params_hash TEXT,
     denylist_version TEXT DEFAULT 'v0',
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT
 );
 """
 
@@ -329,6 +330,12 @@ async def _ensure_schema(db: aiosqlite.Connection) -> None:
     """Create tables and indexes if they don't exist."""
     # Create nodes table
     await db.execute(CREATE_NODES_TABLE)
+    
+    # If table already exists, add missing columns for updates using ensure_column
+    await ensure_column(db, "nodes", "updated_at", "TEXT")
+    await ensure_column(db, "nodes", "last_seen", "TEXT")
+    await ensure_column(db, "nodes", "api_token_hash", "TEXT")
+    await ensure_column(db, "nodes", "params_hash", "TEXT")
     
     # Create devices table
     await db.execute(CREATE_DEVICES_TABLE)
@@ -620,6 +627,13 @@ async def run_migration(dry_run: bool = False) -> dict[str, Any]:
             
             # Mark legacy node ready
             await _mark_legacy_node_ready(db)
+            
+            # Update existing records to have last_seen and updated_at values
+            await db.execute("""
+                UPDATE nodes 
+                SET last_seen = created_at, updated_at = created_at 
+                WHERE last_seen IS NULL OR updated_at IS NULL
+            """)
             
             # Commit transaction
             await db.commit()

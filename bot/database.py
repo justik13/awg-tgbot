@@ -886,7 +886,8 @@ async def get_node_by_id(node_id: int) -> dict[str, Any] | None:
     row = await fetchone(
         """
         SELECT id, name, ip, port, s1, s2, s3, s4, h1, h2, h3, h4,
-               country, flag_emoji, is_visible, capacity, active_configs, status, api_token, server_public_key
+               country, flag_emoji, is_visible, capacity, active_configs, status, api_token, server_public_key,
+               created_at, updated_at, last_seen
         FROM nodes
         WHERE id = ?
         """,
@@ -894,6 +895,8 @@ async def get_node_by_id(node_id: int) -> dict[str, Any] | None:
     )
     if not row:
         return None
+    
+    # Возвращаем словарь со всеми полями, включая новые
     return {
         "id": row[0],
         "name": row[1],
@@ -914,7 +917,10 @@ async def get_node_by_id(node_id: int) -> dict[str, Any] | None:
         "active_configs": row[16],
         "status": row[17],
         "api_token": row[18],
-        "server_public_key": row[19] or "",  # Fallback на пустую строку для legacy-нод
+        "server_public_key": row[19] or "",
+        "created_at": row[20],  # <-- Добавлено
+        "updated_at": row[21],  # <-- Добавлено
+        "last_seen": row[22],   # <-- Добавлено
     }
 
 
