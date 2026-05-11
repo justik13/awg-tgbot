@@ -8,7 +8,7 @@ from typing import Any
 from aiogram import BaseMiddleware, types
 
 from .config import logger
-from database import increment_metric, set_metric
+from .database import increment_metric, set_metric
 
 Handler = Callable[[Any, dict[str, Any]], Awaitable[Any]]
 

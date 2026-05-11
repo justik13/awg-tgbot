@@ -1,7 +1,7 @@
 from .config import get_download_url, get_support_username
 from .config import CONFIGS_PER_USER
-from content_settings import get_setting, get_text
-from helpers import escape_html
+from .content_settings import get_setting, get_text
+from .helpers import escape_html
 
 
 async def get_instruction_text() -> str:

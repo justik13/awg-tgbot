@@ -4,7 +4,7 @@
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from ui_constants import (
+from .ui_constants import (
     CB_ADMIN_NODES,
     CB_ADMIN_NODES_MANAGE_PREFIX,
     CB_ADMIN_NODES_VISIBILITY_TOGGLE_PREFIX,

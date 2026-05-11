@@ -7,9 +7,9 @@ from typing import Any
 
 import aiosqlite
 
-from config import DB_PATH, logger
-from helpers import utc_now_naive
-from security_utils import decrypt_text, encrypt_text
+from .config import DB_PATH, logger
+from .helpers import utc_now_naive
+from .security_utils import decrypt_text, encrypt_text
 
 _shared_db: aiosqlite.Connection | None = None
 SAFE_TG_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{1,32}$")
@@ -759,7 +759,7 @@ async def get_user_keys(user_id: int) -> list[tuple[int, int, str, str]]:
         (user_id, now_iso),
     )
     from .awg_backend import build_client_config, build_vpn_payload, encode_vpn_key
-    from config import SERVER_IP, SERVER_PUBLIC_KEY
+    from .config import SERVER_IP, SERVER_PUBLIC_KEY
 
     result: list[tuple[int, int, str, str]] = []
     for key_id, device_num, ip, client_private_key, public_key, psk_key in rows:
@@ -1221,7 +1221,7 @@ async def get_user_max_devices(user_id: int) -> int:
     )
     if row and row[0]:
         return int(row[0])
-    from config import CONFIGS_PER_USER
+    from .config import CONFIGS_PER_USER
     return CONFIGS_PER_USER
 
 

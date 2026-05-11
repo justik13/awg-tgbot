@@ -19,7 +19,7 @@ from .config import (
     VPN_SUBNET_PREFIX,
     logger,
 )
-from database import get_app_setting, get_text_override
+from .database import get_app_setting, get_text_override
 
 TEXT_DEFAULTS: dict[str, str] = {
     "start": (

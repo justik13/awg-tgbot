@@ -21,7 +21,7 @@ from aiohttp.web import Request, StreamResponse
 from typing import Callable, Awaitable
 
 from .config import logger, ADMIN_ID, API_TOKEN
-from database import open_db, fetchone, execute, enqueue_node_command, get_pending_commands
+from .database import open_db, fetchone, execute, enqueue_node_command, get_pending_commands
 import aiohttp
 
 
