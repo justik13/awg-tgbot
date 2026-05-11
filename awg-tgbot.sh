@@ -481,6 +481,65 @@ cleanup_transient_install_state() {
 
   return 0
 }
+
+# Очистка процессов на указанном порту (python/python3/node)
+cleanup_port_processes() {
+  local port="${1:-8444}"
+  local pids pid_info proc_name
+  info "Проверка порта ${port} на наличие остаточных процессов..."
+  
+  # Находим процессы на порту
+  pids="$(ss -tlnp 2>/dev/null | grep -E ":${port}\\s" | grep -oP 'pid=\K[0-9]+' | sort -u || true)"
+  
+  if [[ -n "$pids" ]]; then
+    for pid in $pids; do
+      if [[ -d "/proc/$pid" ]]; then
+        proc_name="$(cat /proc/$pid/comm 2>/dev/null || true)"
+        # Проверяем, относится ли процесс к python/node (не бот)
+        if [[ "$proc_name" =~ ^(python|python3|node)$ ]]; then
+          pid_info="$(ps -p "$pid" -o pid,cmd --no-headers 2>/dev/null || true)"
+          warn "Обнаружен остаточный процесс на порту ${port}: PID=${pid}, cmd=${pid_info}"
+          info "Остановка процесса PID=${pid}..."
+          kill -TERM "$pid" 2>/dev/null || true
+          sleep 1
+          # Если процесс всё ещё жив - принудительная остановка
+          if [[ -d "/proc/$pid" ]]; then
+            kill -KILL "$pid" 2>/dev/null || true
+            ok "Процесс PID=${pid} уничтожен принудительно"
+          else
+            ok "Процесс PID=${pid} остановлен"
+          fi
+        else
+          warn "На порту ${port} обнаружен процесс ${proc_name} (PID=${pid}), не относящийся к боту. Проверьте вручную."
+        fi
+      fi
+    done
+  else
+    info "Порт ${port} свободен"
+  fi
+  return 0
+}
+
+# Поиск первого свободного порта начиная с указанного
+find_free_port() {
+  local start_port="${1:-8444}"
+  local port="$start_port"
+  local max_attempts=20
+  local attempts=0
+  
+  while (( attempts < max_attempts )); do
+    if ! ss -tlnp 2>/dev/null | grep -qE ":${port}\\s"; then
+      printf '%s' "$port"
+      return 0
+    fi
+    port=$((port + 1))
+    attempts=$((attempts + 1))
+  done
+  
+  # Если не нашли свободный порт - возвращаем исходный
+  printf '%s' "$start_port"
+  return 1
+}
 fetch_remote_commit_info() {
   local payload="" parsed=""
   payload="$(curl -fsSL "$COMMIT_API_URL" 2>/dev/null || true)"
@@ -1332,7 +1391,7 @@ write_common_env() {
 }
 
 ensure_selfhost_network_defaults() {
-  local current=""
+  local current="" free_port=""
   current="$(get_env_value EGRESS_DENYLIST_ENABLED)"
   [[ -n "$current" ]] || set_env_value EGRESS_DENYLIST_ENABLED "$SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT"
   current="$(get_env_value EGRESS_DENYLIST_MODE)"
@@ -1345,7 +1404,29 @@ ensure_selfhost_network_defaults() {
   [[ -n "$current" ]] || set_env_value AUTO_BACKUP_KEEP_COUNT "$SELFHOST_AUTO_BACKUP_KEEP_COUNT_DEFAULT"
   # Node API port для multi-server синхронизации
   current="$(get_env_value NODE_API_PORT)"
-  [[ -n "$current" ]] || set_env_value NODE_API_PORT "8444"
+  if [[ -z "$current" ]]; then
+    # Очистка процессов на порту перед установкой порта по умолчанию
+    cleanup_port_processes "8444"
+    set_env_value NODE_API_PORT "8444"
+  else
+    # Проверка занятости порта и автоматический подбор свободного
+    if ss -tlnp 2>/dev/null | grep -qE ":${current}\\s"; then
+      warn "NODE_API_PORT=${current} занят. Поиск свободного порта..."
+      cleanup_port_processes "$current"
+      # Если порт всё ещё занят - ищем свободный
+      if ss -tlnp 2>/dev/null | grep -qE ":${current}\\s"; then
+        free_port="$(find_free_port "$current")"
+        if [[ "$free_port" != "$current" ]]; then
+          ok "Найден свободный порт: ${free_port}"
+          set_env_value NODE_API_PORT "$free_port"
+        else
+          warn "Не удалось найти свободный порт в диапазоне. Используем ${current}"
+        fi
+      else
+        ok "Порт ${current} освобождён после очистки процессов"
+      fi
+    fi
+  fi
 }
 
 autobackup_enabled() {
@@ -2117,7 +2198,7 @@ restore_repo_snapshot_after_failed_reinstall() {
 }
 
 run_post_restart_smokecheck() {
-  local failed=0 env_container env_interface policy_container policy_interface policy_error db_result runtime_python awg_check_output awg_check_rc=0 node_api_port port_in_use
+  local failed=0 env_container env_interface policy_container policy_interface policy_error db_result runtime_python awg_check_output awg_check_rc=0 node_api_port port_in_use proc_name pid_list
 
   if ! service_exists || [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" != "active" ]]; then
     warn "Smokecheck: сервис ${SERVICE_NAME} не в состоянии active."
@@ -2129,9 +2210,41 @@ run_post_restart_smokecheck() {
   node_api_port="${node_api_port:-8444}"
   if ss -tlnp 2>/dev/null | grep -qE ":${node_api_port}\\s"; then
     port_in_use="$(ss -tlnp 2>/dev/null | grep -E ":${node_api_port}\\s" | head -1)"
-    warn "Smokecheck: NODE_API_PORT=${node_api_port} занят другим процессом: ${port_in_use}"
-    warn "Рекомендация: измените NODE_API_PORT в .env на свободный порт (например, 8445) и перезапустите бота."
-    # Не блокируем установку, но предупреждаем
+    # Получаем PID процесса
+    pid_list="$(echo "$port_in_use" | grep -oP 'pid=\K[0-9]+' || true)"
+    if [[ -n "$pid_list" ]]; then
+      for pid in $pid_list; do
+        if [[ -d "/proc/$pid" ]]; then
+          proc_name="$(cat /proc/$pid/comm 2>/dev/null || true)"
+          # Если процесс python/node - это может быть остаточный процесс бота
+          if [[ "$proc_name" =~ ^(python|python3|node)$ ]]; then
+            warn "Smokecheck: обнаружен остаточный процесс на порту ${node_api_port}: PID=${pid}, cmd=${proc_name}"
+            info "Smokecheck: остановка остаточного процесса PID=${pid}..."
+            kill -TERM "$pid" 2>/dev/null || true
+            sleep 1
+            if [[ -d "/proc/$pid" ]]; then
+              kill -KILL "$pid" 2>/dev/null || true
+            fi
+            ok "Smokecheck: остаточный процесс остановлен, перезапуск сервиса..."
+            # Перезапускаем сервис после очистки
+            systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+            sleep 2
+            # Проверяем снова
+            if ! ss -tlnp 2>/dev/null | grep -qE ":${node_api_port}\\s"; then
+              ok "Smokecheck: порт ${node_api_port} освобождён после перезапуска сервиса"
+            else
+              warn "Smokecheck: порт ${node_api_port} всё ещё занят после перезапуска"
+            fi
+          else
+            warn "Smokecheck: NODE_API_PORT=${node_api_port} занят другим процессом: ${proc_name} (PID=${pid})"
+            warn "Рекомендация: измените NODE_API_PORT в .env на свободный порт (например, 8445) и перезапустите бота."
+          fi
+        fi
+      done
+    else
+      warn "Smokecheck: NODE_API_PORT=${node_api_port} занят другим процессом: ${port_in_use}"
+      warn "Рекомендация: измените NODE_API_PORT в .env на свободный порт (например, 8445) и перезапустите бота."
+    fi
   fi
 
   env_container="$(get_env_value DOCKER_CONTAINER)"
