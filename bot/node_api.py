@@ -20,7 +20,7 @@ from aiohttp import web
 from aiohttp.web import Request, StreamResponse
 from typing import Callable, Awaitable
 
-from config import logger, ADMIN_ID, BOT_TOKEN
+from .config import logger, ADMIN_ID, API_TOKEN
 from database import open_db, fetchone, execute, enqueue_node_command, get_pending_commands
 import aiohttp
 
@@ -345,13 +345,13 @@ async def handle_heartbeat(request: web.Request) -> web.Response:
 
 async def send_node_alert(message: str) -> None:
     """Отправляет уведомление админу о проблемах с нодой."""
-    if not ADMIN_ID or not BOT_TOKEN:
-        logger.warning("Cannot send node alert: ADMIN_ID or BOT_TOKEN not configured")
+    if not ADMIN_ID or not API_TOKEN:
+        logger.warning("Cannot send node alert: ADMIN_ID or API_TOKEN not configured")
         return
     
     try:
         async with aiohttp.ClientSession() as session:
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            url = f"https://api.telegram.org/bot{API_TOKEN}/sendMessage"
             payload = {
                 "chat_id": ADMIN_ID,
                 "text": message,

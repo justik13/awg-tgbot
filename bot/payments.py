@@ -8,9 +8,9 @@ from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import LabeledPrice, PreCheckoutQuery
 
-from awg_backend import check_awg_container, issue_subscription
-import config
-from config import (
+from .awg_backend import check_awg_container, issue_subscription
+from . import config
+from .config import (
     AWG_HELPER_POLICY_PATH,
     DOCKER_CONTAINER,
     ADMIN_ID,

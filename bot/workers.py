@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from config import logger
+from .config import logger
 
 WorkerCoroutine = Callable[[], Awaitable[None]]
 WorkerCleanup = Callable[[], Awaitable[None]]

@@ -4,8 +4,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from awg_backend import issue_subscription
-from config import logger
+from .awg_backend import issue_subscription
+from .config import logger
 from content_settings import get_setting, get_text
 from helpers import escape_html
 from database import (

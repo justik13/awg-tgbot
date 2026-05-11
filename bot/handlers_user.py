@@ -6,8 +6,8 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-import config
-from config import (
+from . import config
+from .config import (
     ADMIN_ID,
     SERVER_NAME,
     USER_REISSUE_COOLDOWN_SECONDS,
@@ -16,9 +16,9 @@ from config import (
     get_support_username,
     maybe_set_support_username,
 )
-from awg_backend import get_awg_peers
-from awg_backend import issue_subscription
-from awg_backend import reissue_user_device
+from .awg_backend import get_awg_peers
+from .awg_backend import issue_subscription
+from .awg_backend import reissue_user_device
 from database import (
     activate_promo_code,
     clear_pending_admin_action,
@@ -106,7 +106,7 @@ from referrals import build_referral_inviter_banner_text, capture_referral_start
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 from payments import clear_pending_invoice_for_user
 from security_utils import encrypt_text, decrypt_text
-from awg_backend import generate_keypair, generate_psk, build_client_config, encode_vpn_key, build_vpn_payload
+from .awg_backend import generate_keypair, generate_psk, build_client_config, encode_vpn_key, build_vpn_payload
 from database import (
     get_user_devices,
     create_device,

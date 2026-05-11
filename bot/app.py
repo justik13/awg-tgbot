@@ -12,7 +12,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from aiohttp.web_runner import AppRunner, TCPSite
 
-from awg_backend import (
+from .awg_backend import (
     bootstrap_protected_peers,
     check_awg_container,
     cleanup_expired_subscriptions,
@@ -23,7 +23,7 @@ from awg_backend import (
     run_docker,
     sync_traffic_counters,
 )
-from config import (
+from .config import (
     ADMIN_ID,
     API_TOKEN,
     BROADCAST_BATCH_DELAY_SECONDS,

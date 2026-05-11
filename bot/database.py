@@ -758,7 +758,7 @@ async def get_user_keys(user_id: int) -> list[tuple[int, int, str, str]]:
         """,
         (user_id, now_iso),
     )
-    from awg_backend import build_client_config, build_vpn_payload, encode_vpn_key
+    from .awg_backend import build_client_config, build_vpn_payload, encode_vpn_key
     from config import SERVER_IP, SERVER_PUBLIC_KEY
 
     result: list[tuple[int, int, str, str]] = []
