@@ -2930,6 +2930,11 @@ remove_everything() {
   systemctl reset-failed || true
   rm -f "$SELF_SYMLINK"
   rm -f "$AWG_HELPER_SUDOERS" "$AWG_HELPER_TARGET"
+  rm -f "$AWG_HELPER_POLICY"
+  rm -f /etc/logrotate.d/awg-tgbot
+  if id -u "$BOT_USER" >/dev/null 2>&1; then
+    userdel "$BOT_USER" 2>/dev/null || true
+  fi
   rm -rf "$INSTALL_DIR" "$APP_LOG_DIR"
   rm -f "$INSTALL_LOG"
   # Очистка остаточных файлов Node Agent
