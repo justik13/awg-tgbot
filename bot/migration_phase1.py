@@ -331,17 +331,11 @@ async def _ensure_schema(db: aiosqlite.Connection) -> None:
     # Create nodes table
     await db.execute(CREATE_NODES_TABLE)
     
-    # If table already exists, add missing columns for updates
-    async with db.execute("PRAGMA table_info(nodes)") as cursor:
-        cols = [row[1] for row in await cursor.fetchall()]
-    if 'updated_at' not in cols:
-        await db.execute("ALTER TABLE nodes ADD COLUMN updated_at TEXT")
-    if 'last_seen' not in cols:
-        await db.execute("ALTER TABLE nodes ADD COLUMN last_seen TEXT")
-    if 'api_token_hash' not in cols:
-        await db.execute("ALTER TABLE nodes ADD COLUMN api_token_hash TEXT")
-    if 'params_hash' not in cols:
-        await db.execute("ALTER TABLE nodes ADD COLUMN params_hash TEXT")
+    # If table already exists, add missing columns for updates using ensure_column
+    await ensure_column(db, "nodes", "updated_at", "TEXT")
+    await ensure_column(db, "nodes", "last_seen", "TEXT")
+    await ensure_column(db, "nodes", "api_token_hash", "TEXT")
+    await ensure_column(db, "nodes", "params_hash", "TEXT")
     
     # Create devices table
     await db.execute(CREATE_DEVICES_TABLE)
