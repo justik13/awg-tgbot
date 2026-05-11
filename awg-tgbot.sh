@@ -3804,34 +3804,17 @@ EOF
   fi
 
   # =============================================================================
-  # ПРОВЕРКА ЗАВИСИМОСТЕЙ И АВТОМАТИЧЕСКАЯ УСТАНОВКА
+  # ПРОВЕРКА ЗАВИСИМОСТЕЙ
   # =============================================================================
   
-  # Проверяем наличие awg и устанавливаем автоматически если отсутствует
+  # Проверяем наличие awg - только проверка, без автоматической установки
   if ! command -v awg &> /dev/null; then
     warn "Утилита 'awg' (AmneziaWG) не найдена в PATH"
-    info "Попытка автоматической установки AmneziaWG..."
-    
-    # Попытка установить через ту же функцию что и основная установка
-    if type install_awg_helper &>/dev/null; then
-      if install_awg_helper; then
-        ok "AmneziaWG установлен успешно"
-      else
-        error "Не удалось автоматически установить AmneziaWG"
-        warn ""
-        warn "Для ручной установки выполните:"
-        warn "  curl -fsSL https://raw.githubusercontent.com/justik13/awg-tgbot/multi/awg-tgbot.sh | sudo bash -s -- install-awg"
-        warn ""
-        warn "Продолжаю настройку, но агент не сможет работать без awg."
-      fi
-    else
-      warn "Функция install_awg_helper недоступна в данном контексте"
-      warn ""
-      warn "Для установки AmneziaWG выполните вручную:"
-      warn "  curl -fsSL https://raw.githubusercontent.com/justik13/awg-tgbot/multi/awg-tgbot.sh | sudo bash -s -- install-awg"
-      warn ""
-      warn "Продолжаю настройку, но агент не сможет работать без awg."
-    fi
+    warn ""
+    warn "Для установки AmneziaWG выполните вручную:"
+    warn "  curl -fsSL https://raw.githubusercontent.com/justik13/awg-tgbot/multi/awg-tgbot.sh | sudo bash -s -- install-awg"
+    warn ""
+    warn "Продолжаю настройку, но агент не сможет работать без awg."
   fi
 
   # Проверяем наличие интерфейса awg0 и создаём если отсутствует
