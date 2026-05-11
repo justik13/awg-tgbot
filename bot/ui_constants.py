@@ -104,6 +104,12 @@ CB_ADMIN_BACK_MAIN = "a:bk:m"
 CB_ADMIN_REFRESH_REFERRALS = "a:rf:r"
 CB_ADMIN_REFRESH_HEALTH = "a:rf:h"
 
+# Nodes management callbacks
+CB_ADMIN_NODES = "a:nd"
+CB_ADMIN_NODES_MANAGE_PREFIX = "a:nd:m:"
+CB_ADMIN_NODES_VISIBILITY_TOGGLE_PREFIX = "a:nd:v:"
+CB_ADMIN_NODES_CAPACITY_EDIT_PREFIX = "a:nd:c:"
+
 CB_BROADCAST_CONFIRM = "broadcast_confirm"
 CB_BROADCAST_CANCEL = "broadcast_cancel"
 CB_BROADCAST_SEGMENT_PREFIX = "broadcast_segment:"

@@ -1111,6 +1111,54 @@ async def get_active_nodes() -> list[dict[str, Any]]:
     return result
 
 
+async def get_all_nodes_for_admin() -> list[dict[str, Any]]:
+    """
+    Возвращает полный список всех нод для админского UI.
+    Включает все ноды независимо от статуса и видимости.
+    """
+    rows = await fetchall(
+        """
+        SELECT id, name, ip, port, status, is_visible, capacity, active_configs,
+               last_seen, created_at, params_hash, api_token
+        FROM nodes
+        ORDER BY created_at DESC
+        """
+    )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        result.append({
+            "id": row[0],
+            "name": row[1],
+            "ip": row[2],
+            "port": row[3],
+            "status": row[4],
+            "is_visible": bool(row[5]),
+            "capacity": row[6],
+            "active_configs": row[7],
+            "last_seen": row[8] or "",
+            "created_at": row[9],
+            "params_hash": row[10] or "",
+            "api_token": row[11] or "",
+        })
+    return result
+
+
+async def update_node_visibility(node_id: int, is_visible: bool) -> None:
+    """Обновляет видимость ноды."""
+    await execute(
+        "UPDATE nodes SET is_visible = ? WHERE id = ?",
+        (1 if is_visible else 0, node_id)
+    )
+
+
+async def update_node_capacity(node_id: int, capacity: int) -> None:
+    """Обновляет capacity ноды."""
+    await execute(
+        "UPDATE nodes SET capacity = ? WHERE id = ?",
+        (capacity, node_id)
+    )
+
+
 async def get_device_by_user_and_slot(user_id: int, slot_number: int) -> dict[str, Any] | None:
     """Возвращает устройство пользователя по номеру слота."""
     row = await fetchone(
