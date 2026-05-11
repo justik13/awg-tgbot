@@ -123,10 +123,25 @@ async def fetchval(sql: str, params: tuple[Any, ...] = (), default: Any = 0) -> 
     return row[0]
 
 
-async def execute(sql: str, params: tuple[Any, ...] = ()) -> None:
-    db = await get_shared_db()
-    await db.execute(sql, params)
-    await db.commit()
+async def execute(sql: str, params: tuple[Any, ...] = (), retries: int = 3, delay: float = 0.5) -> None:
+    """Execute SQL with retry on 'database is locked' errors."""
+    import asyncio
+    
+    for attempt in range(retries):
+        try:
+            db = await get_shared_db()
+            await db.execute(sql, params)
+            await db.commit()
+            return
+        except Exception as e:
+            error_str = str(e)
+            if "database is locked" in error_str and attempt < retries - 1:
+                wait = delay * (2 ** attempt)
+                logger.warning(f"DB locked, retry {attempt+1}/{retries} in {wait}s: {error_str}")
+                await asyncio.sleep(wait)
+            else:
+                logger.error(f"DB execute failed after {attempt+1} attempts: {e}")
+                raise
 
 
 async def ensure_column(db: aiosqlite.Connection, table_name: str, column_name: str, column_def: str) -> None:

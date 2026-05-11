@@ -2,6 +2,32 @@ import json
 from ipaddress import ip_network
 from pathlib import Path
 import re
+import os
+
+
+def validate_multi_config(cfg: dict) -> dict:
+    """Валидация параметров мульти-нодовой конфигурации."""
+    cfg.setdefault("NODE_ID", os.uname().nodename.split(".")[0])
+    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", cfg["NODE_ID"]):
+        raise ValueError(f"NODE_ID невалиден: {cfg['NODE_ID']}")
+
+    cfg.setdefault("SYNC_ENABLED", "0")
+    cfg["SYNC_ENABLED"] = cfg["SYNC_ENABLED"].lower() in ("1", "true", "yes")
+
+    if cfg["SYNC_ENABLED"]:
+        secret = cfg.get("SYNC_SECRET", "")
+        if len(secret) < 16:
+            raise ValueError("SYNC_SECRET обязателен (мин. 16 символов) при SYNC_ENABLED=1")
+        peers = cfg.get("SYNC_PEERS", "")
+        if peers:
+            for p in peers.split(","):
+                p = p.strip()
+                if not re.match(r"^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$", p):
+                    raise ValueError(f"SYNC_PEERS содержит невалидный адрес: {p}")
+    else:
+        cfg["SYNC_PEERS"] = ""
+        cfg["SYNC_SECRET"] = ""
+    return cfg
 
 
 def read_helper_policy(path: Path) -> tuple[str, str, str]:

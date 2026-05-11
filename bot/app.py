@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import STATE_RUNNING
@@ -59,7 +60,7 @@ from .database import (
 from .handlers_admin import router as admin_router
 from .handlers_user import router as user_router
 from .middlewares import DuplicateCallbackGuardMiddleware, DuplicateMessageGuardMiddleware, RateLimitMiddleware
-from .network_policy import denylist_should_refresh, denylist_sync
+from .network_policy import denylist_should_refresh, denylist_sync, refresh_denylist
 from .node_api import create_node_api_app, start_node_api_server, stop_node_api_server
 from .payments import payment_recovery_worker
 from .payments import router as payments_router
@@ -67,6 +68,75 @@ from .ui_constants import is_admin_callback_data
 from .ui_constants import CB_SHOW_BUY_MENU
 from .workers import WorkerPool, WorkerSpec
 from .helpers import format_iso_to_moscow
+
+
+# Node-scoped scheduler and background tasks
+_scheduler: AsyncIOScheduler | None = None
+_background_tasks: set[asyncio.Task] = set()
+_task_logger = logging.getLogger(__name__)
+
+
+def _schedule_node_scoped(job_func, trigger: str, node_id: str, **kwargs):
+    """Регистрирует job только если текущая нода отвечает за его выполнение."""
+    from .config import NODE_ID as config_node_id
+    current_node = getattr(config_node_id, "NODE_ID", "default") if hasattr(config_node_id, "NODE_ID") else "default"
+    # Try to get NODE_ID from config module directly
+    try:
+        from . import config as cfg
+        current_node = getattr(cfg, "NODE_ID", "default")
+    except Exception:
+        current_node = "default"
+    
+    if current_node != node_id and node_id != "all":
+        return
+    if _scheduler is None:
+        _task_logger.warning("Scheduler not initialized, skipping job registration for %s", job_func.__name__)
+        return
+    _scheduler.add_job(job_func, trigger, id=f"{node_id}_{job_func.__name__}", replace_existing=True, **kwargs)
+
+
+async def _safe_background_wrapper(coro, task_name: str):
+    try:
+        await coro
+    except asyncio.CancelledError:
+        _task_logger.info(f"[{task_name}] cancelled")
+    except Exception as e:
+        _task_logger.error(f"[{task_name}] unhandled: {e}", exc_info=True)
+
+
+def run_background(coro, task_name: str):
+    task = asyncio.create_task(_safe_background_wrapper(coro, task_name), name=task_name)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def on_startup():
+    """Initialize database pool, scheduler and background tasks."""
+    global _scheduler
+    _scheduler = AsyncIOScheduler(timezone="UTC")
+    await get_shared_db()
+    _scheduler.start()
+    # Пример привязки к ноде:
+    from .config import EGRESS_DENYLIST_REFRESH_MINUTES, NODE_ID, SYNC_ENABLED
+    from .network_policy import refresh_denylist
+    from .workers import run_autobackup, sync_agent_loop
+    _schedule_node_scoped(refresh_denylist, "interval", node_id=NODE_ID, minutes=EGRESS_DENYLIST_REFRESH_MINUTES)
+    _schedule_node_scoped(run_autobackup, "cron", node_id=NODE_ID, hour=3, minute=0)
+    if SYNC_ENABLED:
+        run_background(sync_agent_loop(), "sync_agent")
+    _task_logger.info("Startup complete. Scheduler and background tasks initialized.")
+
+
+async def on_shutdown():
+    """Graceful shutdown: cancel pending tasks and stop scheduler."""
+    _task_logger.info("Shutting down: cancelling background tasks...")
+    for task in _background_tasks:
+        task.cancel()
+    await asyncio.gather(*_background_tasks, return_exceptions=True)
+    if _scheduler is not None:
+        _scheduler.shutdown(wait=False)
+    await close_shared_db()
+    _task_logger.info("Shutdown complete.")
 
 
 @dataclass(frozen=True)

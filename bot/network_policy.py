@@ -95,7 +95,7 @@ async def denylist_sync(run_docker) -> None:
         return
     payload = "\n".join(sorted(set(resolved + cidr_values)))
     try:
-        await run_docker(["denylist-sync", "--vpn-subnet", vpn_subnet, "--mode", mode], input_data=payload)
+        await run_docker(["denylist-sync", "--vpn-subnet", vpn_subnet, "--mode", mode], input_=payload)
         await set_metric("denylist_last_sync_ok", 1)
         await set_metric("denylist_last_sync_ts", int(datetime.utcnow().timestamp()))
         await set_metric("denylist_entries", len([line for line in payload.splitlines() if line.strip()]))
@@ -122,6 +122,13 @@ async def denylist_should_refresh() -> bool:
     if last_ts <= 0:
         return True
     return datetime.utcnow() >= datetime.utcfromtimestamp(last_ts) + timedelta(minutes=max(refresh_minutes, 1))
+
+
+async def refresh_denylist() -> None:
+    """Wrapper for denylist_sync to be used by scheduler."""
+    from .awg_backend import run_docker
+    if await denylist_should_refresh():
+        await denylist_sync(run_docker)
 
 
 async def policy_metrics() -> dict[str, int]:
