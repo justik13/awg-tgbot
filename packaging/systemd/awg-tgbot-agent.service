@@ -1,0 +1,20 @@
+[Unit]
+Description=AWG Telegram Bot Node Agent (Sync)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/amnezia/agent
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/awg-tgbot/agent.env
+ExecStart=/usr/bin/python3 -u /opt/amnezia/agent/agent.py
+Restart=always
+RestartSec=10
+User=root
+Group=root
+StandardOutput=append:/var/log/awg-tgbot-agent.log
+StandardError=append:/var/log/awg-tgbot-agent.log
+
+[Install]
+WantedBy=multi-user.target

@@ -3705,6 +3705,10 @@ install_node_flow() {
   # Атомарная запись через временный файл
   local tmp_agent_conf
   tmp_agent_conf="$(mktemp)"
+  
+  # Формируем MAIN_API_URL из BOT_API_HOST
+  local main_api_url="https://${bot_api_host}:8443"
+  
   cat > "$tmp_agent_conf" <<EOF
 NODE_TOKEN=$node_token
 SYNC_MODE=multi
@@ -3713,10 +3717,80 @@ BOT_API_HOST=$bot_api_host
 BOT_API_PORT=8080
 SYNC_INTERVAL=30
 LOG_FILE=/var/log/awg-tgbot-agent.log
+MAIN_API_URL=$main_api_url
 EOF
   chmod 600 "$tmp_agent_conf"
   mv -f "$tmp_agent_conf" "$agent_conf"
   info "Конфиг агента создан: $agent_conf"
+
+  # =============================================================================
+  # ЗАПУСК АГЕНТА КАК SYSTEMD-СЕРВИСА
+  # =============================================================================
+  info "Запуск сервиса агента синхронизации..."
+
+  local agent_service_file="/etc/systemd/system/awg-tgbot-agent.service"
+  local agent_service_source="${SCRIPT_DIR}/packaging/systemd/awg-tgbot-agent.service"
+
+  # Копируем unit-файл если он есть в репозитории
+  if [[ -f "$agent_service_source" ]]; then
+    cp -f "$agent_service_source" "$agent_service_file"
+    info "Systemd unit скопирован: $agent_service_file"
+  else
+    # Создаём unit-файл вручную если исходник не найден
+    cat > "$agent_service_file" <<'UNIT'
+[Unit]
+Description=AWG Telegram Bot Node Agent (Sync)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/amnezia/agent
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/awg-tgbot/agent.env
+ExecStart=/usr/bin/python3 -u /opt/amnezia/agent/agent.py
+Restart=always
+RestartSec=10
+User=root
+Group=root
+StandardOutput=append:/var/log/awg-tgbot-agent.log
+StandardError=append:/var/log/awg-tgbot-agent.log
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    info "Systemd unit создан: $agent_service_file"
+  fi
+
+  # Перезагружаем конфигурацию systemd
+  systemctl daemon-reload
+  ok "Systemd daemon-reloaded"
+
+  # Включаем автозапуск при загрузке
+  systemctl enable awg-tgbot-agent.service 2>/dev/null || true
+  ok "Сервис добавлен в автозапуск"
+
+  # Запускаем сервис
+  if systemctl start awg-tgbot-agent.service; then
+    ok "Сервис awg-tgbot-agent запущен"
+  else
+    warn "Не удалось запустить сервис awg-tgbot-agent"
+  fi
+
+  # Проверяем статус сервиса
+  sleep 2
+  if systemctl is-active --quiet awg-tgbot-agent.service; then
+    ok "Сервис awg-tgbot-agent работает (active)"
+    ok "Нода начала синхронизацию с главным сервером"
+  else
+    local status_output
+    status_output="$(systemctl status awg-tgbot-agent.service --no-pager 2>&1 || true)"
+    warn "Сервис awg-tgbot-agent не активен. Статус:"
+    echo "$status_output" >&2
+    warn "Попробуйте вручную: systemctl start awg-tgbot-agent"
+    warn "Для диагностики: journalctl -u awg-tgbot-agent -n 50"
+  fi
+
   local bot_cid
   bot_cid=$(docker ps -q -f name=awg-tgbot 2>/dev/null)
   if [[ -n "$bot_cid" ]]; then
@@ -3728,8 +3802,6 @@ EOF
     else
       warn "Не удалось передать токен в контейнер. Убедитесь, что volume /etc/awg-tgbot подключён к /app/data."
     fi
-  else
-    warn "Контейнер awg-tgbot не запущен. Агент настроен. Синхронизация начнётся после запуска бота."
   fi
   info "=== Node (Agent + sync) завершён успешно ==="
   return 0
