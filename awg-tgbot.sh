@@ -2200,7 +2200,11 @@ restore_repo_snapshot_after_failed_reinstall() {
 run_post_restart_smokecheck() {
   local failed=0 env_container env_interface policy_container policy_interface policy_error db_result runtime_python awg_check_output awg_check_rc=0 node_api_port port_in_use proc_name pid_list
 
-  if ! service_exists || [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" != "active" ]]; then
+  # Проверка systemctl доступна
+  if ! require_command systemctl; then
+    warn "Smokecheck: systemctl недоступен, проверка сервиса пропущена."
+    # Продолжаем проверку без systemctl
+  elif ! service_exists || [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" != "active" ]]; then
     warn "Smokecheck: сервис ${SERVICE_NAME} не в состоянии active."
     failed=1
   fi
@@ -2229,6 +2233,15 @@ run_post_restart_smokecheck() {
             # Проверяем, освободился ли порт перед перезапуском сервиса
             if ! ss -tlnp 2>/dev/null | grep -qE ":${node_api_port}\\s"; then
               ok "Smokecheck: остаточный процесс остановлен, порт ${node_api_port} освобождён"
+              # Перезапускаем сервис чтобы он корректно инициализировался на очищенном порту
+              info "Smokecheck: перезапуск сервиса для корректной инициализации..."
+              systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+              sleep 3
+              # Проверяем что сервис активен после перезапуска
+              if [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" != "active" ]]; then
+                warn "Smokecheck: сервис не активен после перезапуска."
+                failed=1
+              fi
             else
               warn "Smokecheck: порт ${node_api_port} всё ещё занят, пробуем ещё раз..."
               # Повторная очистка
@@ -2236,6 +2249,15 @@ run_post_restart_smokecheck() {
               sleep 1
               if ! ss -tlnp 2>/dev/null | grep -qE ":${node_api_port}\\s"; then
                 ok "Smokecheck: порт ${node_api_port} освобождён после повторной очистки"
+                # Перезапускаем сервис
+                info "Smokecheck: перезапуск сервиса для корректной инициализации..."
+                systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+                sleep 3
+                # Проверяем что сервис активен после перезапуска
+                if [[ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" != "active" ]]; then
+                  warn "Smokecheck: сервис не активен после перезапуска."
+                  failed=1
+                fi
               else
                 warn "Smokecheck: порт ${node_api_port} всё ещё занят после очистки"
               fi
@@ -2332,6 +2354,20 @@ PY
     failed=1
   elif [[ "$db_result" != "runtime_ready" ]]; then
     warn "Проверка после перезапуска: проверка БД не пройдена (${db_result:-unknown})."
+    # Дополнительная диагностика: пробуем прочитать БД напрямую
+    local db_path_val
+    db_path_val="$(get_env_value DB_PATH)"
+    if [[ -n "$db_path_val" && -f "$db_path_val" ]]; then
+      local db_size
+      db_size="$(stat -c%s "$db_path_val" 2>/dev/null || echo "unknown")"
+      warn "Диагностика БД: файл существует, размер=${db_size} bytes."
+      # Проверяем, может ли Python подключиться к БД
+      local db_check
+      db_check="$("$PYTHON_BIN" -c "import sqlite3; conn=sqlite3.connect('${db_path_val}'); print('ok' if conn.execute('SELECT 1').fetchone() else 'fail'); conn.close()" 2>&1 || echo "error")"
+      warn "Диагностика БД: подключение Python=${db_check}."
+    else
+      warn "Диагностика БД: файл БД не найден (DB_PATH=${db_path_val:-not_set})."
+    fi
     failed=1
   fi
 

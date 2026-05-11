@@ -700,7 +700,8 @@ async def run_runtime_smokecheck() -> dict[str, object]:
 
     # Проверка порта Node API
     import socket
-    node_api_port = NODE_API_PORT
+    from .config import NODE_API_PORT as config_node_api_port
+    node_api_port = config_node_api_port
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(2)
     try:
@@ -714,13 +715,34 @@ async def run_runtime_smokecheck() -> dict[str, object]:
                 "hint": ""
             })
         else:
-            # Порт закрыт - возможно сервер не запущен
-            checks.append({
-                "name": f"Node API порт {node_api_port}",
-                "state": "warning",
-                "detail": f"порт закрыт (код ошибки: {result})",
-                "hint": "проверьте, запущен ли Node API сервер"
-            })
+            # Порт закрыт - возможно сервер не запущен или используется другой порт
+            # Пробуем найти активный порт через app context если доступен
+            from .app import get_node_api_port
+            actual_port = get_node_api_port()
+            if actual_port and actual_port != node_api_port:
+                # Пробуем подключиться к фактическому порту
+                result2 = sock.connect_ex(('127.0.0.1', actual_port))
+                if result2 == 0:
+                    checks.append({
+                        "name": f"Node API порт {actual_port}",
+                        "state": "ok",
+                        "detail": f"порт открыт (автоподбор с {node_api_port})",
+                        "hint": ""
+                    })
+                else:
+                    checks.append({
+                        "name": f"Node API порт {actual_port}",
+                        "state": "warning",
+                        "detail": f"порт закрыт (автоподбор с {node_api_port}, код ошибки: {result2})",
+                        "hint": "проверьте, запущен ли Node API сервер"
+                    })
+            else:
+                checks.append({
+                    "name": f"Node API порт {node_api_port}",
+                    "state": "warning",
+                    "detail": f"порт закрыт (код ошибки: {result})",
+                    "hint": "проверьте, запущен ли Node API сервер"
+                })
     except Exception as e:
         checks.append({
             "name": f"Node API порт {node_api_port}",
