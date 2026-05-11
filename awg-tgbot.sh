@@ -1765,10 +1765,14 @@ restore_bot_log_after_failed_reinstall() {
   rm -f "$APP_LOG_FILE" 2>/dev/null || true
   if ! mv "$pending_archive" "$APP_LOG_FILE" 2>/dev/null; then
     warn "Не удалось восстановить предыдущий bot.log после неудачной переустановки (${pending_archive})."
+    # Очистка временного архива лога если не удалось восстановить
+    rm -f "$pending_archive" 2>/dev/null || true
     return 0
   fi
   chown "${BOT_USER}:${BOT_USER}" "$APP_LOG_FILE" 2>/dev/null || true
   chmod 640 "$APP_LOG_FILE" 2>/dev/null || true
+  # Очистка временного архива лога после успешного восстановления
+  rm -f "$pending_archive" 2>/dev/null || true
 }
 
 show_status() {
@@ -2327,6 +2331,14 @@ rollback_failed_reinstall() {
   else
     warn "Переустановка не удалась; rollback выполнен частично (repo=${restore_repo_ok}, runtime=${restore_runtime_ok}, state=${restore_meta_ok}, deps=${deps_ok}, helper policy=${helper_sync_ok}, service_state=${service_state_restore_ok}, post-rollback проверка=${post_rollback_smoke_ok})."
   fi
+
+  # Очистка snapshot директорий после завершения rollback
+  if [[ -n "$repo_snapshot_dir" && -d "$repo_snapshot_dir" ]]; then
+    rm -rf "$repo_snapshot_dir" || true
+  fi
+  if [[ -n "$runtime_snapshot_dir" && -d "$runtime_snapshot_dir" ]]; then
+    rm -rf "$runtime_snapshot_dir" || true
+  fi
 }
 
 create_local_backup() {
@@ -2802,6 +2814,11 @@ remove_everything() {
   rm -f "$AWG_HELPER_SUDOERS" "$AWG_HELPER_TARGET"
   rm -rf "$INSTALL_DIR" "$APP_LOG_DIR"
   rm -f "$INSTALL_LOG"
+  # Очистка остаточных файлов Node Agent
+  rm -rf "/etc/awg-tgbot"
+  rm -f "/var/log/awg-tgbot-agent.log"
+  # Очистка safety snapshot директорий
+  rm -rf "${SAFETY_SNAPSHOT_PREFIX}"-* 2>/dev/null || true
   return 0
 }
 
