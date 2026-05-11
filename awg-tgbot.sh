@@ -1625,8 +1625,13 @@ ensure_venv_and_requirements() {
 }
 
 ensure_bot_user() {
+  # Создаём системную группу awg-bot, если она не существует
+  if ! getent group "$BOT_USER" >/dev/null 2>&1; then
+    groupadd --system "$BOT_USER" || return 1
+  fi
+  # Создаём системного пользователя awg-bot, если он не существует
   if ! id -u "$BOT_USER" >/dev/null 2>&1; then
-    useradd --system --home "$INSTALL_DIR" --shell /usr/sbin/nologin "$BOT_USER" || return 1
+    useradd --system --home "$INSTALL_DIR" --shell /usr/sbin/nologin --gid "$BOT_USER" "$BOT_USER" || return 1
   fi
   ensure_bot_not_in_docker_group
   enforce_root_owned_code_paths
@@ -1653,7 +1658,11 @@ prepare_runtime_access_paths() {
   mkdir -p "$RUNTIME_DIR"
   chown "$BOT_USER:$BOT_USER" "$RUNTIME_DIR" 2>/dev/null || true
   chmod 750 "$RUNTIME_DIR" 2>/dev/null || true
-  mkdir -p "$APP_LOG_DIR"
+  mkdir -p "$INSTALL_DIR" "$RUNTIME_DIR" "$APP_LOG_DIR"
+  # Назначаем пользователя awg-bot на директорию /opt/amnezia/bot и её подпапки
+  chown -R root:"$BOT_USER" "$INSTALL_DIR" 2>/dev/null || true
+  chmod 750 "$INSTALL_DIR" 2>/dev/null || true
+  # runtime/ должна быть полностью доступна пользователю awg-bot для записи
   touch "$APP_LOG_FILE"
   chown -R "$BOT_USER:$BOT_USER" "$APP_LOG_DIR" 2>/dev/null || true
   chmod 750 "$APP_LOG_DIR" 2>/dev/null || true
