@@ -385,7 +385,15 @@ async def main() -> None:
         scheduler.start()
         
         # Запускаем Node API сервер параллельно с ботом
-        await start_node_api_server(node_api_app, NODE_API_PORT)
+        # Функция теперь возвращает фактический порт (может отличаться от NODE_API_PORT если был занят)
+        actual_node_api_port = await start_node_api_server(node_api_app, NODE_API_PORT)
+        
+        # Обновляем конфигурацию с фактическим портом для использования в других частях
+        from . import config as config_module
+        if actual_node_api_port != NODE_API_PORT:
+            logger.warning("NODE_API_PORT изменён с %d на %d из-за занятости порта", NODE_API_PORT, actual_node_api_port)
+            # Сохраняем фактический порт в конфиг для использования в smokecheck и других функциях
+            config_module.NODE_API_PORT = actual_node_api_port
         
         worker_pool.start(
             [
