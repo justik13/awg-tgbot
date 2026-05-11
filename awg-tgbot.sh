@@ -1214,6 +1214,12 @@ PY
 
 generate_ssl_certificates() {
   info "Генерация SSL сертификатов для HTTPS (без домена)..."
+  
+  # Убедимся, что группа и пользователь awg-bot существуют перед использованием в chown
+  if ! getent group "$BOT_USER" >/dev/null 2>&1; then
+    groupadd --system "$BOT_USER" || true
+  fi
+  
   mkdir -p "$SSL_DIR"
   
   # Проверка существующих сертификатов
@@ -2161,6 +2167,7 @@ install_or_reinstall_flow() {
   write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
   ensure_selfhost_network_defaults
   ensure_fernet_key
+  ensure_bot_user || die "Не удалось подготовить service пользователя."
   generate_ssl_certificates || die "Не удалось сгенерировать SSL сертификаты."
 
   if [[ "$choice" == "1" ]]; then
