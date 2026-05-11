@@ -1624,7 +1624,7 @@ Wants=network-online.target docker.service
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
 Environment=PYTHONUNBUFFERED=1
-ExecStart=${VENV_DIR}/bin/python -u ${BOT_DIR}/app.py
+ExecStart=${VENV_DIR}/bin/python -u -m bot.app
 Restart=always
 RestartSec=3
 User=${BOT_USER}
