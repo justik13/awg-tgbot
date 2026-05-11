@@ -26,7 +26,7 @@ from .config import (
     save_env_value,
     set_stars_price,
 )
-from database import (
+from .database import (
     clear_pending_admin_action, clear_pending_broadcast, count_problematic_activations, create_broadcast_job, create_promo_code, db_health_info, disable_promo_code, fetchall, fetchone, fetchval,
     InvalidBroadcastSegmentError,
     get_broadcast_segment_user_count,
@@ -40,7 +40,7 @@ from database import (
     reset_text_override, set_app_setting, set_pending_admin_action, set_pending_broadcast, set_text_override, write_audit_log,
     get_all_nodes_for_admin, get_node_by_id, update_node_visibility, update_node_capacity,
 )
-from helpers import (
+from .helpers import (
     escape_html,
     format_iso_to_moscow,
     format_moscow_datetime,
@@ -49,18 +49,18 @@ from helpers import (
     get_status_text,
     utc_now_naive,
 )
-from device_activity import render_device_activity_line
-from traffic import format_bytes_compact, render_device_traffic_line
-from keyboards import (
+from .device_activity import render_device_activity_line
+from .traffic import format_bytes_compact, render_device_traffic_line
+from .keyboards import (
     get_admin_confirm_kb, get_admin_inline_kb, get_admin_maintenance_kb, get_admin_payments_kb, get_admin_price_confirm_kb, get_admin_prices_kb, get_admin_promocodes_kb,
     get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb, get_broadcast_segment_kb, get_open_user_card_kb, get_problem_activations_kb,
     get_admin_network_policy_kb, get_admin_denylist_kb,
     get_admin_service_settings_kb, get_admin_text_override_item_kb, get_admin_text_overrides_kb, get_admin_add_days_confirm_kb,
 )
-from keyboards_nodes import (
+from .keyboards_nodes import (
     get_admin_nodes_list_kb, get_admin_node_manage_kb, get_admin_node_capacity_edit_kb,
 )
-from ui_constants import (
+from .ui_constants import (
     BTN_ADMIN, CB_ADMIN_BACK_MAIN, CB_ADMIN_BROADCAST,
     CB_ADMIN_NOOP,
     CB_ADMIN_COMMANDS, CB_ADMIN_FIND_CHARGE, CB_ADMIN_HEALTH, CB_ADMIN_LAST_PAYMENT, CB_ADMIN_LIST, CB_ADMIN_MAINTENANCE, CB_ADMIN_MAINTENANCE_OFF, CB_ADMIN_MAINTENANCE_ON,
@@ -87,10 +87,10 @@ from ui_constants import (
     CB_CONFIRM_ADD_DAYS, CB_CANCEL_ADD_DAYS,
     CB_ADMIN_NODES, CB_ADMIN_NODES_MANAGE_PREFIX, CB_ADMIN_NODES_VISIBILITY_TOGGLE_PREFIX, CB_ADMIN_NODES_CAPACITY_EDIT_PREFIX,
 )
-from config_validate import read_helper_policy
-from network_policy import denylist_sync, parse_cidrs, policy_metrics
-from content_settings import TEXT_DEFAULTS, get_setting, get_text, validate_text_template
-from payments import manual_retry_activation
+from .config_validate import read_helper_policy
+from .network_policy import denylist_sync, parse_cidrs, policy_metrics
+from .content_settings import TEXT_DEFAULTS, get_setting, get_text, validate_text_template
+from .payments import manual_retry_activation
 
 router = Router()
 admin_command_rate_limit: dict[str, object] = {}

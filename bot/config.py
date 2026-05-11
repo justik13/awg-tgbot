@@ -1,16 +1,16 @@
 import logging
 import os
 
-from config_defaults import DEFAULT_ENV
-from config_detect import (
+from .config_defaults import DEFAULT_ENV
+from .config_detect import (
     detect_awg_from_container,
     detect_public_host,
     find_awg_container,
     resolve_public_ipv4,
 )
-from config_env import env_float, env_int, env_with_runtime_default, save_env_value_raw
-from config_validate import validate_helper_policy, validate_required_env
-from config_validate import validate_awg_obfuscation_settings, validate_client_allowed_ips, validate_persistent_keepalive
+from .config_env import env_float, env_int, env_with_runtime_default, save_env_value_raw
+from .config_validate import validate_helper_policy, validate_required_env
+from .config_validate import validate_awg_obfuscation_settings, validate_client_allowed_ips, validate_persistent_keepalive
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 logger = logging.getLogger(__name__)

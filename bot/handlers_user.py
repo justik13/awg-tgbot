@@ -19,7 +19,7 @@ from .config import (
 from .awg_backend import get_awg_peers
 from .awg_backend import issue_subscription
 from .awg_backend import reissue_user_device
-from database import (
+from .database import (
     activate_promo_code,
     clear_pending_admin_action,
     ensure_user_exists,
@@ -36,9 +36,9 @@ from database import (
     persistent_guard_hit,
     write_audit_log,
 )
-from device_activity import render_device_activity_line
-from traffic import format_bytes_compact, render_device_traffic_line
-from helpers import (
+from .device_activity import render_device_activity_line
+from .traffic import format_bytes_compact, render_device_traffic_line
+from .helpers import (
     escape_html,
     format_moscow_datetime,
     format_remaining_time,
@@ -47,7 +47,7 @@ from helpers import (
     subscription_is_active,
     utc_now_naive,
 )
-from keyboards import (
+from .keyboards import (
     get_buy_inline_kb,
     get_config_post_conf_kb,
     get_configs_empty_kb,
@@ -63,13 +63,13 @@ from keyboards import (
     get_support_subpage_back_kb,
     get_user_reissue_confirm_kb,
 )
-from texts import (
+from .texts import (
     get_activation_status_text,
     get_instruction_with_policy_text,
     get_support_full_text,
     get_support_short_text,
 )
-from ui_constants import (
+from .ui_constants import (
     BTN_BUY,
     BTN_CONFIGS,
     BTN_PROFILE,
@@ -101,13 +101,12 @@ from ui_constants import (
     CB_USER_REISSUE_CANCEL,
     CB_USER_REISSUE_CONFIRM,
 )
-from content_settings import get_setting, get_text
-from referrals import build_referral_inviter_banner_text, capture_referral_start, get_referral_screen_data
-from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
-from payments import clear_pending_invoice_for_user
-from security_utils import encrypt_text, decrypt_text
-from .awg_backend import generate_keypair, generate_psk, build_client_config, encode_vpn_key, build_vpn_payload
-from database import (
+from .content_settings import get_setting, get_text
+from .referrals import build_referral_inviter_banner_text, capture_referral_start, get_referral_screen_data
+from .maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
+from .payments import clear_pending_invoice_for_user
+from .security_utils import encrypt_text, decrypt_text
+from .database import (
     get_user_devices,
     create_device,
     get_active_nodes,

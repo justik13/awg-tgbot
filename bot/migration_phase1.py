@@ -24,8 +24,8 @@ from typing import Any
 import aiosqlite
 
 from .config import DB_PATH, ENCRYPTION_SECRET, SERVER_IP, logger
-from database import ensure_column, get_shared_db, open_db
-from security_utils import encrypt_text
+from .database import ensure_column, get_shared_db, open_db
+from .security_utils import encrypt_text
 
 
 # =============================================================================
@@ -241,7 +241,7 @@ async def run_migration_dry_run() -> dict[str, Any]:
                     })
             
             # Check for config overflow
-            from config import CONFIGS_PER_USER
+            from .config import CONFIGS_PER_USER
             for user_id, configs in user_configs.items():
                 if len(configs) > CONFIGS_PER_USER:
                     report["config_overflow_warnings"].append({
@@ -421,7 +421,7 @@ async def _migrate_existing_configs(
     Uses SAVEPOINT for each user to ensure atomicity per user.
     Returns migration stats.
     """
-    from config import CONFIGS_PER_USER
+    from .config import CONFIGS_PER_USER
     
     stats = {
         "users_processed": 0,
@@ -505,7 +505,7 @@ async def _migrate_existing_configs(
 
 async def _update_users_table(db: aiosqlite.Connection) -> None:
     """Update users table with max_devices and subscription_expires_at."""
-    from config import CONFIGS_PER_USER
+    from .config import CONFIGS_PER_USER
     
     # Update max_devices for all users
     await db.execute("""

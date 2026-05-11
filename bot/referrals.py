@@ -6,9 +6,9 @@ from typing import Any, Literal
 
 from .awg_backend import issue_subscription
 from .config import logger
-from content_settings import get_setting, get_text
-from helpers import escape_html
-from database import (
+from .content_settings import get_setting, get_text
+from .helpers import escape_html
+from .database import (
     create_referral_recurring_reward_once,
     create_referral_reward_once,
     ensure_referral_code,

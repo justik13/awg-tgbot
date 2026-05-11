@@ -23,8 +23,8 @@ from .config import (
     WG_INTERFACE,
     logger,
 )
-from config_validate import read_helper_policy
-from database import (
+from .config_validate import read_helper_policy
+from .database import (
     claim_payment_and_job_for_provisioning,
     db_health_info,
     ensure_user_exists,
@@ -45,18 +45,18 @@ from database import (
     write_audit_log,
     get_user_keys,
 )
-from helpers import utc_now_naive
-from keyboards import get_buy_confirm_kb, get_post_payment_kb
-from content_settings import get_text
-from referrals import (
+from .helpers import utc_now_naive
+from .keyboards import get_buy_confirm_kb, get_post_payment_kb
+from .content_settings import get_text
+from .referrals import (
     apply_referral_recurring_inviter_reward,
     apply_referral_rewards_on_first_payment,
     notify_inviter_about_referral_recurring_reward,
     notify_inviter_about_referral_reward,
 )
-from texts import get_payment_result_text
-from ui_constants import CB_BUY_30, CB_BUY_7, CB_BUY_90, CB_BUY_PAY_30, CB_BUY_PAY_7, CB_BUY_PAY_90
-from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
+from .texts import get_payment_result_text
+from .ui_constants import CB_BUY_30, CB_BUY_7, CB_BUY_90, CB_BUY_PAY_30, CB_BUY_PAY_7, CB_BUY_PAY_90
+from .maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 
 router = Router()
 purchase_rate_limit: dict[int, object] = {}

@@ -6,8 +6,8 @@ import ipaddress
 import socket
 
 from .config import logger
-from content_settings import get_setting
-from database import get_metric, increment_metric, set_metric, write_audit_log
+from .content_settings import get_setting
+from .database import get_metric, increment_metric, set_metric, write_audit_log
 
 DENYLIST_DNS_TIMEOUT_SECONDS = 2.0
 DENYLIST_MAX_RESOLVED_CIDRS = 4096

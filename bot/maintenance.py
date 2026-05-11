@@ -1,4 +1,4 @@
-from content_settings import get_setting, get_text
+from .content_settings import get_setting, get_text
 
 
 async def is_purchase_maintenance_enabled() -> bool:

@@ -16,13 +16,13 @@ from .config import (
     PENDING_KEY_TTL_SECONDS, PERSISTENT_KEEPALIVE, PRIMARY_DNS, SECONDARY_DNS, SERVER_IP, SERVER_NAME, SERVER_PUBLIC_KEY,
     VPN_SUBNET_PREFIX, WG_INTERFACE, AWG_HELPER_PATH, AWG_HELPER_USE_SUDO, logger,
 )
-from database import (
+from .database import (
     add_protected_peer, count_protected_peers, db_health_info, ensure_user_exists, fetchall,
     get_bot_managed_known_public_keys, get_protected_public_keys, get_reserved_ips_from_db, get_reserved_ips_from_db_conn,
     get_valid_db_public_keys, increment_metric, open_db, sync_traffic_counters_from_runtime_peers, write_audit_log,
 )
-from helpers import is_valid_awg_public_key, parse_server_host_port, utc_now_naive
-from security_utils import decrypt_text, encrypt_text
+from .helpers import is_valid_awg_public_key, parse_server_host_port, utc_now_naive
+from .security_utils import decrypt_text, encrypt_text
 
 subscription_lock = asyncio.Lock()
 _peers_cache: dict[str, Any] = {"expires_at": None, "data": None}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from helpers import format_moscow_datetime
+from .helpers import format_moscow_datetime
 
 RECENT_HANDSHAKE_WINDOW = timedelta(hours=24)
 
