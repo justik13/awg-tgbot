@@ -63,6 +63,14 @@ AUTO_BACKUP_TIMER_FILE="/etc/systemd/system/${AUTO_BACKUP_TIMER_NAME}"
 BACKUP_ROOT="${INSTALL_DIR}/backups"
 SAFETY_SNAPSHOT_PREFIX="${INSTALL_DIR}/.safety-snapshot"
 
+# SSL/TLS Configuration paths
+SSL_DIR="${RUNTIME_DIR}/ssl"
+SSL_CERT_FILE="${SSL_DIR}/server.crt"
+SSL_KEY_FILE="${SSL_DIR}/server.key"
+SSL_CA_FILE="${SSL_DIR}/ca.crt"
+SSL_VALIDITY_DAYS=3650
+NODE_API_PROTOCOL="https"
+
 DETECTED_CONTAINER=""
 DETECTED_INTERFACE=""
 DETECTED_CONFIG_PATH=""
@@ -1204,6 +1212,73 @@ PY
   set_env_value FERNET_KEY "$key"
 }
 
+generate_ssl_certificates() {
+  info "Генерация SSL сертификатов для HTTPS (без домена)..."
+  mkdir -p "$SSL_DIR"
+  
+  # Проверка существующих сертификатов
+  if [[ -f "$SSL_CERT_FILE" && -f "$SSL_KEY_FILE" && -f "$SSL_CA_FILE" ]]; then
+    info "SSL сертификаты уже существуют, пропускаем генерацию"
+    return 0
+  fi
+  
+  # Генерация корневого CA ключа и сертификата
+  openssl genrsa -out "${SSL_DIR}/ca.key" 4096 2>/dev/null
+  openssl req -new -x509 -days "$SSL_VALIDITY_DAYS" \
+    -key "${SSL_DIR}/ca.key" \
+    -out "$SSL_CA_FILE" \
+    -subj "/CN=AWG-TGBOT-CA/O=AWG-TGBOT/C=RU" \
+    2>/dev/null
+  
+  # Генерация серверного ключа
+  openssl genrsa -out "$SSL_KEY_FILE" 2048 2>/dev/null
+  
+  # Генерация CSR для сервера
+  openssl req -new -key "$SSL_KEY_FILE" \
+    -out "${SSL_DIR}/server.csr" \
+    -subj "/CN=awg-tgbot-local/O=AWG-TGBOT/C=RU" \
+    2>/dev/null
+  
+  # Подписание серверного сертификата корневым CA
+  cat > "${SSL_DIR}/v3.ext" <<EOF
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+DNS.2 = awg-tgbot
+IP.1 = 127.0.0.1
+IP.2 = ::1
+EOF
+  
+  openssl x509 -req -days "$SSL_VALIDITY_DAYS" \
+    -in "${SSL_DIR}/server.csr" \
+    -CA "$SSL_CA_FILE" \
+    -CAkey "${SSL_DIR}/ca.key" \
+    -CAcreateserial \
+    -out "$SSL_CERT_FILE" \
+    -extfile "${SSL_DIR}/v3.ext" \
+    2>/dev/null
+  
+  # Очистка временных файлов
+  rm -f "${SSL_DIR}/server.csr" "${SSL_DIR}/v3.ext" "${SSL_DIR}/ca.key"
+  
+  # Установка безопасных прав
+  chmod 600 "$SSL_KEY_FILE"
+  chmod 644 "$SSL_CERT_FILE" "$SSL_CA_FILE"
+  chown -R root:"$BOT_USER" "$SSL_DIR"
+  chmod 750 "$SSL_DIR"
+  
+  ok "SSL сертификаты сгенерированы: ${SSL_DIR}"
+  info "  - Серверный сертификат: $SSL_CERT_FILE (10 лет)"
+  info "  - Серверный ключ: $SSL_KEY_FILE"
+  info "  - CA сертификат: $SSL_CA_FILE (для импорта на клиентах)"
+  
+  return 0
+}
+
 setup_logrotate() {
   cat > /etc/logrotate.d/awg-tgbot <<ROTATE
 ${APP_LOG_FILE} {
@@ -1214,6 +1289,7 @@ ${APP_LOG_FILE} {
   missingok
   notifempty
   copytruncate
+  size 50M
   su ${BOT_USER} ${BOT_USER}
 }
 ${INSTALL_LOG} {
@@ -1224,10 +1300,23 @@ ${INSTALL_LOG} {
   missingok
   notifempty
   copytruncate
+  size 100M
   su root root
+}
+${RUNTIME_DIR}/*.log {
+  daily
+  rotate 7
+  compress
+  delaycompress
+  missingok
+  notifempty
+  copytruncate
+  size 20M
+  su ${BOT_USER} ${BOT_USER}
 }
 ROTATE
   chmod 644 /etc/logrotate.d/awg-tgbot
+  ok "Logrotate настроен для ротации логов"
 }
 
 print_startup_summary() {
@@ -1348,6 +1437,22 @@ PY
   printf '%s' "$secret"
 }
 
+ensure_node_token() {
+  local current token
+  current="$(get_env_value NODE_TOKEN)"
+  if [[ -n "$current" ]]; then printf '%s' "$current"; return 0; fi
+  if require_command openssl; then
+    token="$(openssl rand -hex 32)"
+  else
+    token="$($PYTHON_BIN - <<'PY'
+import secrets
+print(secrets.token_hex(32))
+PY
+)"
+  fi
+  printf '%s' "$token"
+}
+
 prompt_api_token() {
   local __resultvar="$1" __token="" __default=""
   __default="$(get_env_value API_TOKEN)"
@@ -1376,11 +1481,16 @@ prompt_admin_id() {
 
 write_common_env() {
   local api_token="$1" admin_id="$2" server_name="$3" secret="$4"
-  local db_path=""
+  local db_path="" node_token=""
   set_env_value API_TOKEN "$api_token"
   set_env_value ADMIN_ID "$admin_id"
   set_env_value SERVER_NAME "$server_name"
   set_env_value ENCRYPTION_SECRET "$secret"
+  # Генерация NODE_TOKEN если не задан
+  node_token="$(ensure_node_token)"
+  set_env_value NODE_TOKEN "$node_token"
+  # Настройка HTTPS для Node API по умолчанию
+  set_env_value NODE_API_PROTOCOL "$NODE_API_PROTOCOL"
   db_path="$(get_env_value DB_PATH)"
   if [[ -n "$db_path" ]]; then
     set_env_value DB_PATH "$db_path"
@@ -1705,9 +1815,13 @@ Wants=network-online.target docker.service
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
 Environment=PYTHONUNBUFFERED=1
+Environment=NODE_API_PROTOCOL=${NODE_API_PROTOCOL}
+Environment=SSL_CERT_FILE=${SSL_CERT_FILE}
+Environment=SSL_KEY_FILE=${SSL_KEY_FILE}
 ExecStart=${VENV_DIR}/bin/python -u -m bot.app
 Restart=always
-RestartSec=3
+RestartSec=10
+WatchdogSec=30s
 User=${BOT_USER}
 Group=${BOT_USER}
 # sudo к root helper требует возможности повышения привилегий.
@@ -1717,6 +1831,9 @@ ProtectSystem=full
 ProtectHome=true
 StandardOutput=append:${APP_LOG_FILE}
 StandardError=append:${APP_LOG_FILE}
+# Ограничение ресурсов для production на 100+ пользователей
+MemoryMax=1G
+CPUQuota=200%
 
 [Install]
 WantedBy=multi-user.target
@@ -2035,6 +2152,7 @@ install_or_reinstall_flow() {
   write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
   ensure_selfhost_network_defaults
   ensure_fernet_key
+  generate_ssl_certificates || die "Не удалось сгенерировать SSL сертификаты."
 
   if [[ "$choice" == "1" ]]; then
     write_detected_awg_env
