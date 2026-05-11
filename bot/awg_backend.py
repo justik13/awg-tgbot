@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import re
 from typing import Any
 
-from config import (
+from .config import (
     ADMIN_ID, AWG_H1, AWG_H2, AWG_H3, AWG_H4, AWG_I1, AWG_I2, AWG_I3, AWG_I4, AWG_I5,
     AWG_JC, AWG_JMAX, AWG_JMIN, AWG_PEERS_CACHE_TTL_SECONDS, AWG_PROTOCOL_VERSION, AWG_S1, AWG_S2, AWG_S3,
     AWG_S4, AWG_TRANSPORT_PROTO, CLIENT_ALLOWED_IPS, CLIENT_MTU, CONFIGS_PER_USER, DOCKER_CONTAINER,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import string
 from typing import Any, Callable
 
-from config import (
+from .config import (
     CONFIGS_PER_USER,
     EGRESS_DENYLIST_CIDRS,
     EGRESS_DENYLIST_DOMAINS,

@@ -5,7 +5,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-from config import ENCRYPTION_SECRET, logger
+from .config import ENCRYPTION_SECRET, logger
 
 
 PBKDF2_ITERATIONS = int(os.getenv("ENCRYPTION_PBKDF2_ITERATIONS", "390000"))

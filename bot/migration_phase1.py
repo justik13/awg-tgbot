@@ -23,7 +23,7 @@ from typing import Any
 
 import aiosqlite
 
-from config import DB_PATH, ENCRYPTION_SECRET, SERVER_IP, logger
+from .config import DB_PATH, ENCRYPTION_SECRET, SERVER_IP, logger
 from database import ensure_column, get_shared_db, open_db
 from security_utils import encrypt_text
 

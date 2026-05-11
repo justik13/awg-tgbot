@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import ipaddress
 import socket
 
-from config import logger
+from .config import logger
 from content_settings import get_setting
 from database import get_metric, increment_metric, set_metric, write_audit_log
 

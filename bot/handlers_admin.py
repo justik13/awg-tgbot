@@ -4,19 +4,19 @@ import ipaddress
 import re
 import secrets
 
-import config
+from . import config
 
 from aiogram import F, Router, types
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import BaseFilter, Command, CommandObject
 
-from awg_backend import (
+from .awg_backend import (
     check_awg_container, count_free_ip_slots, delete_user_everywhere,
     delete_user_device, get_awg_peers, get_orphan_awg_peers, issue_subscription, reconcile_active_awg_state,
     reconcile_pending_awg_state, reissue_user_device, revoke_user_access, run_docker, sync_traffic_counters,
 )
-from config import (
+from .config import (
     ADMIN_COMMAND_COOLDOWN_SECONDS,
     ADMIN_ID,
     AWG_HELPER_POLICY_PATH,
