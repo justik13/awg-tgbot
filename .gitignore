@@ -1,38 +1,69 @@
 ```
-# Python
+# Dependencies
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-venv/
-.venv/
-.ENV
-.ENV.*
-.python-version
 .pytest_cache/
 .mypy_cache/
+.venv/
+venv/
+env/
+.env
+.env.local
+*.env.*
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Coverage reports
 .coverage
 htmlcov/
+coverage/
 
 # Distribution / packaging
+*.tar.gz
+*.whl
+*.zip
+
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+*$pycache$*
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv/
+env.bak/
+venv.bak/
+
+# Environment variables
+.env
+.env.local
+.env.dev
+.env.production
+.env.*
+!.env.example
 
 # IDE
 .vscode/
@@ -40,23 +71,15 @@ wheels/
 *.swp
 *.swo
 
-# OS
-.DS_Store
-Thumbs.db
+# Testing
+.pytest_cache/
+.hypothesis/
+.coverage*
 
-# Logs
-*.log
-
-# Environment variables
-.env
-.env.local
-*.env.*
-
-# Coverage
-coverage/
-htmlcov/
-
-# Temporary files
-*.tmp
-*.temp
+# Distribution artifacts
+*.egg
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
 ```
