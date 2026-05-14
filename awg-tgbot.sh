@@ -2020,6 +2020,7 @@ install_or_reinstall_flow() {
     # Настройка Platega даже в автоматическом режиме
     echo ""
     echo "--- Настройка Platega (опционально, нажмите Enter для пропуска) ---"
+    value=""
     default="$(pick_existing_or_default "$(get_env_value PLATEGA_MERCHANT_ID)" "")"
     prompt_with_default 'Platega Merchant ID' "$default" value
     set_env_value PLATEGA_MERCHANT_ID "$value"
@@ -2054,27 +2055,30 @@ install_or_reinstall_flow() {
     
     echo ""
     echo "--- Настройка цен Platega (руб) ---"
+    value=""
     default="$(pick_existing_or_default "$(get_env_value PLATEGA_MERCHANT_ID)" "")"
     prompt_with_default 'Platega Merchant ID' "$default" value
     set_env_value PLATEGA_MERCHANT_ID "$value"
-    default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET_KEY)" "")"
-    prompt_with_default 'Platega Secret Key' "$default" value
-    set_env_value PLATEGA_SECRET_KEY "$value"
-    default="$(pick_existing_or_default "$(get_env_value PLATEGA_TEST_MODE)" "0")"
-    prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" value
-    set_env_value PLATEGA_TEST_MODE "$value"
-    default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
-    prompt_with_default 'Порт webhook Platega' "$default" value
-    set_env_value PLATEGA_WEBHOOK_PORT "$value"
-    default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_7_DAYS)" "100")"
-    prompt_with_default 'Цена 7 дней через Platega (руб)' "$default" value
-    set_env_value PLATEGA_PRICE_7_DAYS "$value"
-    default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_30_DAYS)" "250")"
-    prompt_with_default 'Цена 30 дней через Platega (руб)' "$default" value
-    set_env_value PLATEGA_PRICE_30_DAYS "$value"
-    default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_90_DAYS)" "700")"
-    prompt_with_default 'Цена 90 дней через Platega (руб)' "$default" value
-    set_env_value PLATEGA_PRICE_90_DAYS "$value"
+    if [[ -n "$value" ]]; then
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET_KEY)" "")"
+      prompt_with_default 'Platega Secret Key' "$default" value
+      set_env_value PLATEGA_SECRET_KEY "$value"
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_TEST_MODE)" "0")"
+      prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" value
+      set_env_value PLATEGA_TEST_MODE "$value"
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
+      prompt_with_default 'Порт webhook Platega' "$default" value
+      set_env_value PLATEGA_WEBHOOK_PORT "$value"
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_7_DAYS)" "100")"
+      prompt_with_default 'Цена 7 дней через Platega (руб)' "$default" value
+      set_env_value PLATEGA_PRICE_7_DAYS "$value"
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_30_DAYS)" "250")"
+      prompt_with_default 'Цена 30 дней через Platega (руб)' "$default" value
+      set_env_value PLATEGA_PRICE_30_DAYS "$value"
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_90_DAYS)" "700")"
+      prompt_with_default 'Цена 90 дней через Platega (руб)' "$default" value
+      set_env_value PLATEGA_PRICE_90_DAYS "$value"
+    fi
     
     default="$(pick_existing_or_default "$(get_env_value DOWNLOAD_URL)" "https://github.com/amnezia-vpn/amnezia-client/releases/latest")"
     prompt_with_default 'Ссылка на Amnezia / инструкцию скачивания' "$default" value
