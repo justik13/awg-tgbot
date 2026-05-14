@@ -1420,6 +1420,11 @@ ensure_venv_and_requirements() {
   ensure_python_compatible || die "Требуется Python >= 3.10."
   [[ -d "$VENV_DIR" ]] || "$PYTHON_BIN" -m venv "$VENV_DIR" || return 1
   "$VENV_DIR/bin/pip" install --upgrade pip wheel || return 1
+  # Install Platega SDK from local source first
+  if [[ -d "$BOT_DIR/platega-sdk-python" ]]; then
+    "$VENV_DIR/bin/pip" install "$BOT_DIR/platega-sdk-python" || return 1
+  fi
+  # Install other requirements
   "$VENV_DIR/bin/pip" install -r "$BOT_DIR/requirements.txt" || return 1
   return 0
 }
