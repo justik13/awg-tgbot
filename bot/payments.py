@@ -1,3 +1,4 @@
+import base64
 import json
 import uuid
 from datetime import timedelta
@@ -454,7 +455,6 @@ async def platega_pay_handler(cb: types.CallbackQuery):
     
     # Если есть QR-код в base64, отправляем картинку
     if qr_data and qr_data.get("qr_base64"):
-        import base64
         qr_image = base64.b64decode(qr_data["qr_base64"])
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
