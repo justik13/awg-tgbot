@@ -22,6 +22,7 @@ from config import (
     PURCHASE_RATE_LIMIT_TTL_SECONDS,
     WG_INTERFACE,
     PLATEGA_MERCHANT_ID,
+    PLATEGA_API_KEY,
     PLATEGA_SECRET,
     logger,
 )
