@@ -3,7 +3,14 @@
 Обертка над официальным SDK.
 """
 import logging
+import os
+import sys
 from typing import Optional, Dict, Any
+
+# Добавляем путь к локальному SDK если он еще не в path
+_sdk_path = os.path.join(os.path.dirname(__file__), 'platega-sdk-python')
+if _sdk_path not in sys.path:
+    sys.path.insert(0, _sdk_path)
 
 try:
     # Импорт из загруженного SDK

@@ -138,8 +138,12 @@ def create_app() -> web.Application:
     return app
 
 
-def run_webhook_server(host: str = '0.0.0.0', port: int = 8081):
+def run_webhook_server(host: str = '0.0.0.0', port: int | None = None):
     """Запускает webhook сервер."""
+    from config import PLATEGA_WEBHOOK_PORT
+    if port is None:
+        port = PLATEGA_WEBHOOK_PORT
+    
     app = create_app()
     
     logger.info(f"Starting Platega webhook server on {host}:{port}")
