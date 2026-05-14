@@ -6,7 +6,7 @@ from typing import Awaitable, Callable
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardMarkup, LabeledPrice, PreCheckoutQuery
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, PreCheckoutQuery
 
 from awg_backend import check_awg_container, issue_subscription
 import config
@@ -452,8 +452,6 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         f"Отсканируйте QR-код для оплаты через приложение банка:"
     )
     
-    from keyboards import InlineKeyboardButton, InlineKeyboardMarkup
-    
     # Если есть QR-код в base64, отправляем картинку
     if qr_data and qr_data.get("qr_base64"):
         import base64
@@ -462,7 +460,7 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить по ссылке", url=payment_url)],
             [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cb_show_buy_menu")]
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
         
         await cb.message.answer_photo(
@@ -476,7 +474,7 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить по ссылке", url=payment_url)],
             [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cb_show_buy_menu")]
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
         
         await cb.message.answer_photo(
@@ -490,7 +488,7 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
             [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cb_show_buy_menu")]
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
         
         await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
@@ -532,7 +530,7 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             "Вы можете попробовать создать новый платеж.",
             parse_mode="HTML",
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-                [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data="cb_show_buy_menu")]
+                [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data=CB_SHOW_BUY_MENU)]
             ])
         )
     else:

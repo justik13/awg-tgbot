@@ -139,7 +139,7 @@ class PlategaService:
 
     async def get_qr_code(self, transaction_id: str) -> Optional[Dict[str, Any]]:
         """
-        Получает QR-код для платежа.
+        Получает QR-код для платежа через API Platega.
         
         :param transaction_id: ID транзакции в Platega
         :return: dict с данными QR (qr_url, qr_base64) или None
@@ -149,11 +149,11 @@ class PlategaService:
             return None
 
         try:
-            # Получаем статус платежа, который может содержать QR данные
-            response = self.client.get_payment_status(transaction_id)
+            # Вызываем новый метод SDK для получения QR-кода
+            response = self.client.get_qr_code(transaction_id)
             
-            # API Platega возвращает QR данные в ответе
-            # Ожидаемая структура: {"qr": {"url": "...", "base64": "..."}}
+            # API Platega возвращает QR данные в поле qr
+            # Ожидаемая структура: {"qr": {"url": "...", "base64": "..."}, "redirect": "...", "status": "..."}
             qr_data = response.get("qr")
             
             if qr_data:
