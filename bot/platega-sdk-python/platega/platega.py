@@ -44,6 +44,17 @@ class Platega:
             secret: Your API Secret key
             timeout: Request timeout in seconds
         """
+        # Validate that merchant_id and secret are ASCII-safe for HTTP headers
+        # HTTP headers must be latin-1 encodable
+        try:
+            merchant_id.encode('latin-1')
+        except UnicodeEncodeError:
+            raise ValueError("merchant_id contains non-Latin-1 characters. Check your PLATEGA_MERCHANT_ID config.")
+        try:
+            secret.encode('latin-1')
+        except UnicodeEncodeError:
+            raise ValueError("secret contains non-Latin-1 characters. Check your PLATEGA_SECRET config.")
+        
         self.merchant_id = merchant_id
         self.secret = secret
         self.timeout = timeout
@@ -216,11 +227,16 @@ class Platega:
         """
         url = f"{self.API_URL}{endpoint}"
         
+        # Ensure merchant_id and secret are ASCII-safe for HTTP headers
+        # HTTP headers must be latin-1 encodable
+        merchant_id_safe = self.merchant_id.encode('utf-8').decode('latin-1', errors='replace')
+        secret_safe = self.secret.encode('utf-8').decode('latin-1', errors='replace')
+        
         headers = {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
-            'X-MerchantId': self.merchant_id,
-            'X-Secret': self.secret,
+            'X-MerchantId': merchant_id_safe,
+            'X-Secret': secret_safe,
             'User-Agent': f'Platega-Python-SDK/{self.VERSION}'
         }
         
