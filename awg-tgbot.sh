@@ -1442,6 +1442,9 @@ ensure_venv_and_requirements() {
   [[ -d "$VENV_DIR" ]] || "$PYTHON_BIN" -m venv "$VENV_DIR" || return 1
   "$VENV_DIR/bin/pip" install --upgrade pip wheel || return 1
   "$VENV_DIR/bin/pip" install -r "$BOT_DIR/requirements.txt" || return 1
+  if [[ -d "$BOT_DIR/platega-sdk-python" ]]; then
+    "$VENV_DIR/bin/pip" install -e "$BOT_DIR/platega-sdk-python" || return 1
+  fi
   return 0
 }
 
