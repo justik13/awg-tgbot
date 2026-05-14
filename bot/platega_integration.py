@@ -50,9 +50,9 @@ class PlategaPaymentService:
             base_url=self.base_url,
         ) as client:
             tx_request = CreateTransactionRequest(
-                payment_method=payment_method,
+                paymentMethod=payment_method,
                 id=uuid.uuid4(),
-                payment_details=PaymentDetails(amount=amount, currency=currency),
+                paymentDetails=PaymentDetails(amount=amount, currency=currency),
                 description=description,
                 return_url=return_url,
                 failed_url=failed_url,
