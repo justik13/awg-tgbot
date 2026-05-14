@@ -83,6 +83,7 @@ class PlategaPaymentService:
             "amount": response.get("paymentDetails", {}).get("amount"),
             "currency": response.get("paymentDetails", {}).get("currency"),
             "payment_method": response.get("paymentMethod"),
+            "redirect_url": response.get("redirect"),
         }
     
     @staticmethod

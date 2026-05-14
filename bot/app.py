@@ -59,6 +59,7 @@ from middlewares import DuplicateCallbackGuardMiddleware, DuplicateMessageGuardM
 from network_policy import denylist_should_refresh, denylist_sync
 from payments import payment_recovery_worker
 from payments import router as payments_router
+from platega_webhook import start_webhook_server
 from ui_constants import is_admin_callback_data
 from ui_constants import CB_SHOW_BUY_MENU
 from workers import WorkerPool, WorkerSpec
@@ -371,9 +372,12 @@ async def main() -> None:
         ),
     )
     worker_pool = WorkerPool()
+    webhook_runner = None
 
     try:
         await _startup_checks(bot)
+        # Start Platega webhook server if configured
+        webhook_runner = await start_webhook_server()
         scheduler.add_job(_notify_expiring_subscriptions, "interval", minutes=30, kwargs={"bot": bot}, id="expiring-reminders", replace_existing=True)
         scheduler.start()
         worker_pool.start(
@@ -399,6 +403,8 @@ async def main() -> None:
         except Exception as shutdown_error:
             logger.warning("Не удалось корректно остановить scheduler: %s", shutdown_error)
         await worker_pool.stop()
+        if webhook_runner:
+            await webhook_runner.cleanup()
         await close_shared_db()
         await bot.session.close()
 
