@@ -216,9 +216,9 @@ async def _send_buy_menu(target, user_id: int):
         return
     sub_until = await get_user_subscription(user_id)
     price_lines = [
-        f"• 7 дней — {config.STARS_PRICE_7_DAYS}⭐",
-        f"• 30 дней — {config.STARS_PRICE_30_DAYS}⭐",
-        f"• 90 дней — {config.STARS_PRICE_90_DAYS}⭐",
+        f"• 7 дней — {config.STARS_PRICE_7_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_7_DAYS}₽",
+        f"• 30 дней — {config.STARS_PRICE_30_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_30_DAYS}₽",
+        f"• 90 дней — {config.STARS_PRICE_90_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_90_DAYS}₽",
     ]
     if subscription_is_active(sub_until):
         remaining = format_remaining_time(sub_until)
@@ -242,9 +242,9 @@ async def _send_buy_menu(target, user_id: int):
 async def _render_buy_menu_text(user_id: int) -> str:
     sub_until = await get_user_subscription(user_id)
     price_lines = [
-        f"• 7 дней — {config.STARS_PRICE_7_DAYS}⭐",
-        f"• 30 дней — {config.STARS_PRICE_30_DAYS}⭐",
-        f"• 90 дней — {config.STARS_PRICE_90_DAYS}⭐",
+        f"• 7 дней — {config.STARS_PRICE_7_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_7_DAYS}₽",
+        f"• 30 дней — {config.STARS_PRICE_30_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_30_DAYS}₽",
+        f"• 90 дней — {config.STARS_PRICE_90_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_90_DAYS}₽",
     ]
     if subscription_is_active(sub_until):
         remaining = format_remaining_time(sub_until)
