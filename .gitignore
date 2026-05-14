@@ -6,80 +6,39 @@ __pycache__/
 *.pyd
 .pytest_cache/
 .mypy_cache/
-.venv/
-venv/
-env/
-.env
-.env.local
-*.env.*
-
-# Build artifacts
-build/
-dist/
-*.egg-info/
-
-# Logs and temporary files
-*.log
-*.tmp
-*.swp
-*.swo
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Editors
-.vscode/
-.idea/
-
-# Coverage reports
 .coverage
-htmlcov/
 coverage/
+htmlcov/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
 
 # Distribution / packaging
-*.tar.gz
-*.whl
-*.zip
+dist/
+build/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Python specific
-__pycache__/
-*.py[cod]
-*$py.class
-*$pycache$*
-.Python
-
-# Virtual Environment
-venv/
-ENV/
-env/
-.venv/
-env.bak/
-venv.bak/
+# Logs
+*.log
 
 # Environment variables
 .env
 .env.local
-.env.dev
-.env.production
-.env.*
-!.env.example
+*.env.*
 
-# IDE
+# Editor files
 .vscode/
 .idea/
 *.swp
 *.swo
+*.tmp
 
-# Testing
-.pytest_cache/
-.hypothesis/
-.coverage*
-
-# Distribution artifacts
-*.egg
-*.egg-info/
-dist/
-build/
-pip-wheel-metadata/
+# OS generated files
+.DS_Store
+Thumbs.db
 ```
