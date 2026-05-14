@@ -22,6 +22,7 @@ def save_env_value(name: str, value: str | int) -> None:
 
 
 STARS_PRICE_KEYS = ("STARS_PRICE_7_DAYS", "STARS_PRICE_30_DAYS", "STARS_PRICE_90_DAYS")
+PLATEGA_PRICE_KEYS = ("PLATEGA_PRICE_7_DAYS", "PLATEGA_PRICE_30_DAYS", "PLATEGA_PRICE_90_DAYS")
 
 
 def set_stars_price(name: str, value: int) -> tuple[int, int]:
@@ -29,6 +30,16 @@ def set_stars_price(name: str, value: int) -> tuple[int, int]:
         raise ValueError("unknown_stars_price_key")
     if value <= 0:
         raise ValueError("stars_price_must_be_positive")
+    old_value = int(globals()[name])
+    save_env_value(name, value)
+    return old_value, value
+
+
+def set_platega_price(name: str, value: int) -> tuple[int, int]:
+    if name not in PLATEGA_PRICE_KEYS:
+        raise ValueError("unknown_platega_price_key")
+    if value <= 0:
+        raise ValueError("platega_price_must_be_positive")
     old_value = int(globals()[name])
     save_env_value(name, value)
     return old_value, value
@@ -122,6 +133,10 @@ SERVER_NAME = SERVER_NAME_HINT
 STARS_PRICE_7_DAYS = env_int('STARS_PRICE_7_DAYS', int(DEFAULT_ENV['STARS_PRICE_7_DAYS']))
 STARS_PRICE_30_DAYS = env_int('STARS_PRICE_30_DAYS', int(DEFAULT_ENV['STARS_PRICE_30_DAYS']))
 STARS_PRICE_90_DAYS = env_int('STARS_PRICE_90_DAYS', int(DEFAULT_ENV['STARS_PRICE_90_DAYS']))
+
+PLATEGA_PRICE_7_DAYS = env_int('PLATEGA_PRICE_7_DAYS', 100)
+PLATEGA_PRICE_30_DAYS = env_int('PLATEGA_PRICE_30_DAYS', 250)
+PLATEGA_PRICE_90_DAYS = env_int('PLATEGA_PRICE_90_DAYS', 700)
 
 VPN_SUBNET_PREFIX = env_with_runtime_default('VPN_SUBNET_PREFIX', _detected_awg.get('VPN_SUBNET_PREFIX', '').strip() or DEFAULT_ENV['VPN_SUBNET_PREFIX'])
 FIRST_CLIENT_OCTET = env_int('FIRST_CLIENT_OCTET', int(DEFAULT_ENV['FIRST_CLIENT_OCTET']))

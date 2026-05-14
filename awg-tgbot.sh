@@ -1264,6 +1264,17 @@ migrate_legacy_tariff_defaults() {
   if [[ "$current" == "120" ]]; then
     set_env_value STARS_PRICE_90_DAYS "140"
   fi
+  
+  # Set default Platega prices if not set
+  if [[ -z "$(get_env_value PLATEGA_PRICE_7_DAYS)" ]]; then
+    set_env_value PLATEGA_PRICE_7_DAYS "100"
+  fi
+  if [[ -z "$(get_env_value PLATEGA_PRICE_30_DAYS)" ]]; then
+    set_env_value PLATEGA_PRICE_30_DAYS "250"
+  fi
+  if [[ -z "$(get_env_value PLATEGA_PRICE_90_DAYS)" ]]; then
+    set_env_value PLATEGA_PRICE_90_DAYS "700"
+  fi
   return 0
 }
 
@@ -1421,6 +1432,14 @@ ensure_venv_and_requirements() {
   [[ -d "$VENV_DIR" ]] || "$PYTHON_BIN" -m venv "$VENV_DIR" || return 1
   "$VENV_DIR/bin/pip" install --upgrade pip wheel || return 1
   "$VENV_DIR/bin/pip" install -r "$BOT_DIR/requirements.txt" || return 1
+  
+  # Install Platega SDK if Platega is configured
+  local platega_merchant_id
+  platega_merchant_id="$(get_env_value PLATEGA_MERCHANT_ID)"
+  if [[ -n "$platega_merchant_id" && -d "$BOT_DIR/platega-sdk-python" ]]; then
+    info "Устанавливаю Platega SDK..."
+    "$VENV_DIR/bin/pip" install -e "$BOT_DIR/platega-sdk-python" || return 1
+  fi
   return 0
 }
 
@@ -1969,6 +1988,28 @@ install_or_reinstall_flow() {
     default="$(pick_existing_or_default "$(get_env_value STARS_PRICE_30_DAYS)" "50")"
     prompt_with_default 'Цена 30 дней в Telegram Stars' "$default" value
     set_env_value STARS_PRICE_30_DAYS "$value"
+    
+    echo ""
+    echo "--- Настройка цен Platega (руб) ---"
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_MERCHANT_ID)" "")"
+    prompt_with_default 'Platega Merchant ID' "$default" value
+    set_env_value PLATEGA_MERCHANT_ID "$value"
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET)" "")"
+    prompt_with_default 'Platega Secret Key' "$default" value
+    set_env_value PLATEGA_SECRET "$value"
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
+    prompt_with_default 'Порт webhook Platega' "$default" value
+    set_env_value PLATEGA_WEBHOOK_PORT "$value"
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_7_DAYS)" "100")"
+    prompt_with_default 'Цена 7 дней через Platega (руб)' "$default" value
+    set_env_value PLATEGA_PRICE_7_DAYS "$value"
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_30_DAYS)" "250")"
+    prompt_with_default 'Цена 30 дней через Platega (руб)' "$default" value
+    set_env_value PLATEGA_PRICE_30_DAYS "$value"
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_90_DAYS)" "700")"
+    prompt_with_default 'Цена 90 дней через Platega (руб)' "$default" value
+    set_env_value PLATEGA_PRICE_90_DAYS "$value"
+    
     default="$(pick_existing_or_default "$(get_env_value DOWNLOAD_URL)" "https://github.com/amnezia-vpn/amnezia-client/releases/latest")"
     prompt_with_default 'Ссылка на Amnezia / инструкцию скачивания' "$default" value
     set_env_value DOWNLOAD_URL "$value"

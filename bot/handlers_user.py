@@ -241,17 +241,26 @@ async def _send_buy_menu(target, user_id: int):
 
 async def _render_buy_menu_text(user_id: int) -> str:
     sub_until = await get_user_subscription(user_id)
-    price_lines = [
+    price_lines_stars = [
         f"• 7 дней — {config.STARS_PRICE_7_DAYS}⭐",
         f"• 30 дней — {config.STARS_PRICE_30_DAYS}⭐",
         f"• 90 дней — {config.STARS_PRICE_90_DAYS}⭐",
     ]
+    price_lines_platega = [
+        f"• 7 дней — {config.PLATEGA_PRICE_7_DAYS}₽ (СБП)",
+        f"• 30 дней — {config.PLATEGA_PRICE_30_DAYS}₽ (СБП)",
+        f"• 90 дней — {config.PLATEGA_PRICE_90_DAYS}₽ (СБП)",
+    ]
     if subscription_is_active(sub_until):
         remaining = format_remaining_time(sub_until)
-        return await get_text("renew_menu", remaining=remaining, price_lines="\n".join(price_lines))
+        return await get_text(
+            "renew_menu",
+            remaining=remaining,
+            price_lines="\n".join(price_lines_stars) + "\n\n" + "<b>СБП (QR):</b>\n" + "\n".join(price_lines_platega),
+        )
     return await get_text(
         "buy_menu",
-        price_lines="\n".join(price_lines),
+        price_lines="\n".join(price_lines_stars) + "\n\n" + "<b>СБП (QR):</b>\n" + "\n".join(price_lines_platega),
         configs_per_user=int(await get_setting("CONFIGS_PER_USER", int) or config.CONFIGS_PER_USER),
     )
 

@@ -6,7 +6,7 @@ from typing import Awaitable, Callable
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import LabeledPrice, PreCheckoutQuery
+from aiogram.types import InlineKeyboardMarkup, LabeledPrice, PreCheckoutQuery
 
 from awg_backend import check_awg_container, issue_subscription
 import config
@@ -55,8 +55,9 @@ from referrals import (
     notify_inviter_about_referral_reward,
 )
 from texts import get_payment_result_text
-from ui_constants import CB_BUY_30, CB_BUY_7, CB_BUY_90, CB_BUY_PAY_30, CB_BUY_PAY_7, CB_BUY_PAY_90
+from ui_constants import CB_BUY_30, CB_BUY_7, CB_BUY_90, CB_BUY_PAY_30, CB_BUY_PAY_7, CB_BUY_PAY_90, CB_PLATEGA_BUY_30, CB_PLATEGA_BUY_7, CB_PLATEGA_BUY_90, CB_SHOW_BUY_MENU
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
+from platega_service import platega_service
 
 router = Router()
 purchase_rate_limit: dict[int, object] = {}
@@ -66,12 +67,27 @@ CHECKOUT_READINESS_TTL_SECONDS = 12
 CRITICAL_ERRORS_LOG = Path(config.DB_PATH).resolve().parent / "critical_errors.log"
 
 
-def get_tariffs() -> dict[str, dict[str, int | str]]:
+def get_tariffs_stars() -> dict[str, dict[str, int | str]]:
     return {
         "sub_7": {"days": 7, "amount": int(config.STARS_PRICE_7_DAYS), "currency": "XTR", "method": "stars"},
         "sub_30": {"days": 30, "amount": int(config.STARS_PRICE_30_DAYS), "currency": "XTR", "method": "stars"},
         "sub_90": {"days": 90, "amount": int(config.STARS_PRICE_90_DAYS), "currency": "XTR", "method": "stars"},
     }
+
+
+def get_tariffs_platega() -> dict[str, dict[str, int | str]]:
+    return {
+        "sub_7": {"days": 7, "amount": int(config.PLATEGA_PRICE_7_DAYS), "currency": "RUB", "method": "platega"},
+        "sub_30": {"days": 30, "amount": int(config.PLATEGA_PRICE_30_DAYS), "currency": "RUB", "method": "platega"},
+        "sub_90": {"days": 90, "amount": int(config.PLATEGA_PRICE_90_DAYS), "currency": "RUB", "method": "platega"},
+    }
+
+
+def get_tariffs() -> dict[str, dict[str, int | str]]:
+    """Объединяет все тарифы (Stars + Platega) для совместимости."""
+    tariffs = get_tariffs_stars()
+    tariffs.update(get_tariffs_platega())
+    return tariffs
 
 
 def _cleanup_purchase_rate_limit(now):
@@ -156,8 +172,11 @@ async def _send_or_edit_payment_screen(cb: types.CallbackQuery, text: str, *, re
         await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
 
 
-async def _show_buy_confirmation(cb: types.CallbackQuery, payload: str) -> None:
-    tariffs = get_tariffs()
+async def _show_buy_confirmation(cb: types.CallbackQuery, payload: str, method: str = "stars") -> None:
+    if method == "platega":
+        tariffs = get_tariffs_platega()
+    else:
+        tariffs = get_tariffs_stars()
     tariff = tariffs[payload]
     title_map = {
         "sub_7": "7 дней",
@@ -171,7 +190,7 @@ async def _show_buy_confirmation(cb: types.CallbackQuery, payload: str) -> None:
         amount=int(tariff["amount"]),
         currency=tariff["currency"],
     )
-    await _send_or_edit_payment_screen(cb, text, reply_markup=get_buy_confirm_kb(payload))
+    await _send_or_edit_payment_screen(cb, text, reply_markup=get_buy_confirm_kb(payload, method=method))
 
 
 async def checkout_readiness() -> tuple[bool, str]:
@@ -208,7 +227,7 @@ async def buy_7_days(cb: types.CallbackQuery):
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     await cb.answer()
-    await _show_buy_confirmation(cb, "sub_7")
+    await _show_buy_confirmation(cb, "sub_7", method="stars")
 
 
 @router.callback_query(F.data == CB_BUY_30)
@@ -217,7 +236,7 @@ async def buy_30_days(cb: types.CallbackQuery):
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     await cb.answer()
-    await _show_buy_confirmation(cb, "sub_30")
+    await _show_buy_confirmation(cb, "sub_30", method="stars")
 
 
 @router.callback_query(F.data == CB_BUY_90)
@@ -226,7 +245,80 @@ async def buy_90_days(cb: types.CallbackQuery):
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     await cb.answer()
-    await _show_buy_confirmation(cb, "sub_90")
+    await _show_buy_confirmation(cb, "sub_90", method="stars")
+
+
+@router.callback_query(F.data == CB_PLATEGA_BUY_7)
+async def platega_buy_7_days(cb: types.CallbackQuery):
+    if await is_purchase_maintenance_enabled():
+        await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
+        return
+    await cb.answer()
+    await _show_buy_confirmation(cb, "sub_7", method="platega")
+
+
+@router.callback_query(F.data == CB_PLATEGA_BUY_30)
+async def platega_buy_30_days(cb: types.CallbackQuery):
+    if await is_purchase_maintenance_enabled():
+        await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
+        return
+    await cb.answer()
+    await _show_buy_confirmation(cb, "sub_30", method="platega")
+
+
+@router.callback_query(F.data == CB_PLATEGA_BUY_90)
+async def platega_buy_90_days(cb: types.CallbackQuery):
+    if await is_purchase_maintenance_enabled():
+        await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
+        return
+    await cb.answer()
+    await _show_buy_confirmation(cb, "sub_90", method="platega")
+
+
+@router.callback_query(F.data == "payment_method_stars")
+async def select_payment_method_stars(cb: types.CallbackQuery):
+    if await is_purchase_maintenance_enabled():
+        await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
+        return
+    await cb.answer()
+    text = (
+        "<b>Выбран способ оплаты: Telegram Stars</b>\n\n"
+        "Выберите тариф:\n"
+        f"• 7 дней — {config.STARS_PRICE_7_DAYS}⭐\n"
+        f"• 30 дней — {config.STARS_PRICE_30_DAYS}⭐\n"
+        f"• 90 дней — {config.STARS_PRICE_90_DAYS}⭐"
+    )
+    rows = [
+        [InlineKeyboardButton(text=f"7 дней — {config.STARS_PRICE_7_DAYS}⭐", callback_data=CB_BUY_7)],
+        [InlineKeyboardButton(text=f"30 дней — {config.STARS_PRICE_30_DAYS}⭐", callback_data=CB_BUY_30)],
+        [InlineKeyboardButton(text=f"90 дней — {config.STARS_PRICE_90_DAYS}⭐", callback_data=CB_BUY_90)],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_SHOW_BUY_MENU)],
+    ]
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@router.callback_query(F.data == "payment_method_platega")
+async def select_payment_method_platega(cb: types.CallbackQuery):
+    if await is_purchase_maintenance_enabled():
+        await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
+        return
+    await cb.answer()
+    text = (
+        "<b>Выбран способ оплаты: СБП (QR)</b>\n\n"
+        "Способ оплаты: <b>Система Быстрых Платежей</b>\n"
+        "Номер способа оплаты: <b>2</b>\n\n"
+        "Выберите тариф:\n"
+        f"• 7 дней — {config.PLATEGA_PRICE_7_DAYS}₽\n"
+        f"• 30 дней — {config.PLATEGA_PRICE_30_DAYS}₽\n"
+        f"• 90 дней — {config.PLATEGA_PRICE_90_DAYS}₽"
+    )
+    rows = [
+        [InlineKeyboardButton(text=f"7 дней — {config.PLATEGA_PRICE_7_DAYS}₽", callback_data=CB_PLATEGA_BUY_7)],
+        [InlineKeyboardButton(text=f"30 дней — {config.PLATEGA_PRICE_30_DAYS}₽", callback_data=CB_PLATEGA_BUY_30)],
+        [InlineKeyboardButton(text=f"90 дней — {config.PLATEGA_PRICE_90_DAYS}₽", callback_data=CB_PLATEGA_BUY_90)],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_SHOW_BUY_MENU)],
+    ]
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 async def _send_invoice_from_confirm(cb: types.CallbackQuery, bot: Bot, *, callback_action: str, payload: str, title: str, label: str, amount: int) -> None:
@@ -283,6 +375,86 @@ async def buy_pay_90_days(cb: types.CallbackQuery, bot: Bot):
         label="90 дней доступа",
         amount=int(config.STARS_PRICE_90_DAYS),
     )
+
+
+@router.callback_query(F.data.startswith("platega_pay_"))
+async def platega_pay_handler(cb: types.CallbackQuery):
+    """Обработчик оплаты через Platega (СБП QR)."""
+    if await is_purchase_maintenance_enabled():
+        await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
+        return
+    
+    # Извлекаем тип подписки из callback_data (platega_pay_sub_7 -> sub_7)
+    sub_type = cb.data.replace("platega_pay_", "")
+    
+    if sub_type not in get_tariffs_platega():
+        await cb.answer("Неверный тариф", show_alert=True)
+        return
+    
+    tariff = get_tariffs_platega()[sub_type]
+    user_id = cb.from_user.id
+    order_id = f"{user_id}:{sub_type}"
+    
+    await cb.answer()
+    
+    # Создаем платеж через Platega
+    payment_data = await platega_service.create_payment(
+        amount=float(tariff["amount"]),
+        currency="RUB",
+        order_id=order_id,
+        description=f"Подписка на {tariff['days']} дней"
+    )
+    
+    if not payment_data:
+        await cb.message.answer("❌ Ошибка создания платежа. Попробуйте позже.")
+        logger.error(f"Failed to create Platega payment for user {user_id}")
+        return
+    
+    transaction_id = payment_data["transaction_id"]
+    payment_url = payment_data["payment_url"]
+    
+    # Сохраняем платеж в БД
+    raw_payload = {
+        "invoice_payload": sub_type,
+        "currency": "RUB",
+        "total_amount": float(tariff["amount"]),
+        "platega_transaction_id": transaction_id,
+        "payment_url": payment_url,
+    }
+    
+    try:
+        await ensure_user_exists(user_id, cb.from_user.username, cb.from_user.first_name)
+        await save_payment(
+            telegram_payment_charge_id=transaction_id,
+            provider_payment_charge_id=transaction_id,
+            user_id=user_id,
+            payload=sub_type,
+            amount=float(tariff["amount"]),
+            currency="RUB",
+            payment_method="platega",
+            status="pending",
+            raw_payload_json=json.dumps(raw_payload, ensure_ascii=False),
+        )
+    except Exception as e:
+        logger.exception(f"Error saving Platega payment: {e}")
+        await cb.message.answer("❌ Ошибка сохранения платежа. Попробуйте позже.")
+        return
+    
+    # Отправляем пользователю ссылку на оплату
+    text = (
+        f"<b>Оплата подписки ({tariff['days']} дней)</b>\n\n"
+        f"Сумма: <b>{tariff['amount']}₽</b>\n"
+        f"Способ оплаты: <b>СБП QR</b>\n\n"
+        f"Нажмите на кнопку ниже для оплаты:"
+    )
+    
+    from keyboards import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cb_show_buy_menu")]
+    ])
+    
+    await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.pre_checkout_query()
