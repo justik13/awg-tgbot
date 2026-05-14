@@ -181,8 +181,10 @@ setup_logging() {
 
 setup_tty_fd() {
   if [[ -c "$TTY_DEVICE" ]]; then
-    { exec 3<>"$TTY_DEVICE"; } 2>/dev/null || true
+    { exec 3<>"$TTY_DEVICE"; } 2>/dev/null && return 0
   fi
+  # Fallback: если /dev/tty недоступен (например, при curl | bash), используем stdin/stdout
+  exec 3<&0 4>&1
 }
 
 has_tty() { [[ -t 3 ]]; }
@@ -241,11 +243,16 @@ prompt_raw() {
   local prompt="$1"
   local __resultvar="$2"
   local __input=""
-  if ! has_tty; then
-    die "Невозможно запросить ввод без TTY (prompt: ${prompt}). Запусти скрипт в интерактивном терминале."
-  fi
-  if ! read -r -u 3 -p "$prompt" __input; then
-    __input=""
+  # Читаем из FD3 если доступен, иначе из stdin
+  if has_tty; then
+    if ! read -r -u 3 -p "$prompt" __input; then
+      __input=""
+    fi
+  else
+    # Fallback для pipe-сценариев: читаем из stdin (FD0)
+    if ! read -r -p "$prompt" __input; then
+      __input=""
+    fi
   fi
   printf -v "$__resultvar" '%s' "$__input"
 }
