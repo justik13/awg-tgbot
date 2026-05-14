@@ -6,7 +6,12 @@ from typing import Awaitable, Callable
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardMarkup, LabeledPrice, PreCheckoutQuery
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LabeledPrice,
+    PreCheckoutQuery,
+)
 
 from awg_backend import check_awg_container, issue_subscription
 import config
@@ -448,7 +453,6 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         f"Нажмите на кнопку ниже для оплаты:"
     )
     
-    from keyboards import InlineKeyboardButton, InlineKeyboardMarkup
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cb_show_buy_menu")]

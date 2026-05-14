@@ -1,40 +1,26 @@
-```
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
-# Environment
-.env
-.env.local
-.env.*
-
-# Dependencies
-.venv/
-venv/
+```gitignore
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Build artifacts
-build/
-dist/
-*.egg-info/
+# Dependencies
+venv/
+.venv/
+.env
+.env.local
+.env.*
 
-# Editors
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Coverage
+# Tests
+.pytest_cache/
 .coverage
 coverage/
-htmlcov/
 
-# Original rules preserved
+# Logs
 *.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
 ```
