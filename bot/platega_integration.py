@@ -26,10 +26,11 @@ PLATEGA_STATUS_CHARGEBACKED = "CHARGEBACKED"
 class PlategaPaymentService:
     """Service for handling Platega payments."""
     
-    def __init__(self, merchant_id: str, secret: str, base_url: str = "https://app.platega.io"):
+    def __init__(self, merchant_id: str, secret: str, timeout: int = 30):
         self.merchant_id = merchant_id
         self.secret = secret
-        self.base_url = base_url
+        self.base_url = "https://app.platega.io"
+        self.timeout = timeout
     
     async def create_payment(
         self,
@@ -41,23 +42,28 @@ class PlategaPaymentService:
         failed_url: Optional[str] = None,
         payment_method: int = PLATEGA_METHOD_SBP_QR,
     ) -> Dict[str, Any]:
-        """Create a new Platega payment transaction."""
+        """Create a new Platega payment transaction with timeout protection."""
         from platega import Platega
         
         client = Platega(
             merchant_id=self.merchant_id,
             secret=self.secret,
+            timeout=self.timeout,
         )
         
-        response = client.create_payment(
-            amount=amount,
-            currency=currency,
-            payment_method=payment_method,
-            description=description,
-            return_url=return_url,
-            failed_url=failed_url,
-            payload=payload,
-        )
+        try:
+            response = client.create_payment(
+                amount=amount,
+                currency=currency,
+                payment_method=payment_method,
+                description=description,
+                return_url=return_url,
+                failed_url=failed_url,
+                payload=payload,
+            )
+        except Exception as e:
+            logger.error("Platega create_payment failed: %s", e)
+            raise
         
         return {
             "transaction_id": response.get("transactionId"),
@@ -67,15 +73,20 @@ class PlategaPaymentService:
         }
     
     async def check_payment_status(self, transaction_id: str) -> Dict[str, Any]:
-        """Check the status of a Platega payment."""
+        """Check the status of a Platega payment with timeout protection."""
         from platega import Platega
         
         client = Platega(
             merchant_id=self.merchant_id,
             secret=self.secret,
+            timeout=self.timeout,
         )
         
-        response = client.get_payment_status(transaction_id)
+        try:
+            response = client.get_payment_status(transaction_id)
+        except Exception as e:
+            logger.error("Platega get_payment_status failed for %s: %s", transaction_id, e)
+            raise
         
         return {
             "id": response.get("id", transaction_id),

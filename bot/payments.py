@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from datetime import timedelta
@@ -82,6 +83,7 @@ def get_platega_service() -> PlategaPaymentService | None:
         _platega_service = PlategaPaymentService(
             merchant_id=PLATEGA_MERCHANT_ID,
             secret=PLATEGA_SECRET,
+            timeout=config.PLATEGA_TIMEOUT_SECONDS,
         )
     return _platega_service
 
@@ -277,13 +279,16 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
     await cb.answer()
     
     try:
-        # Create Platega payment transaction
-        payment_result = await platega_service.create_payment(
-            amount=float(info["rub"]),
-            currency="RUB",
-            description=f"VPN подписка на {info['days']} дней",
-            payload=json.dumps({"user_id": cb.from_user.id, "tariff": payload}),
-            payment_method=PLATEGA_METHOD_SBP_QR,
+        # Create Platega payment transaction with timeout protection
+        payment_result = await asyncio.wait_for(
+            platega_service.create_payment(
+                amount=float(info["rub"]),
+                currency="RUB",
+                description=f"VPN подписка на {info['days']} дней",
+                payload=json.dumps({"user_id": cb.from_user.id, "tariff": payload}),
+                payment_method=PLATEGA_METHOD_SBP_QR,
+            ),
+            timeout=config.PLATEGA_TIMEOUT_SECONDS + 5,  # Add small buffer
         )
         
         transaction_id = payment_result["transaction_id"]
@@ -336,8 +341,11 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
     await cb.answer()
     
     try:
-        # Get payment status to retrieve redirect URL
-        status_result = await platega_service.check_payment_status(transaction_id)
+        # Get payment status to retrieve redirect URL with timeout protection
+        status_result = await asyncio.wait_for(
+            platega_service.check_payment_status(transaction_id),
+            timeout=config.PLATEGA_TIMEOUT_SECONDS + 5,  # Add small buffer
+        )
         
         # Send redirect URL to user
         tariff_info = {
@@ -390,7 +398,11 @@ async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
     await cb.answer("Проверяю статус...", show_alert=False)
     
     try:
-        status_result = await platega_service.check_payment_status(transaction_id)
+        # Check payment status with timeout protection
+        status_result = await asyncio.wait_for(
+            platega_service.check_payment_status(transaction_id),
+            timeout=config.PLATEGA_TIMEOUT_SECONDS + 5,  # Add small buffer
+        )
         status = status_result["status"]
         
         # Get payment from database
