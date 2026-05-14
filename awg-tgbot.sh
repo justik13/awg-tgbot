@@ -54,6 +54,8 @@ AUTO_BACKUP_SERVICE_NAME="awg-tgbot-backup.service"
 AUTO_BACKUP_TIMER_NAME="awg-tgbot-backup.timer"
 AUTO_BACKUP_SERVICE_FILE="/etc/systemd/system/${AUTO_BACKUP_SERVICE_NAME}"
 AUTO_BACKUP_TIMER_FILE="/etc/systemd/system/${AUTO_BACKUP_TIMER_NAME}"
+PLATEGA_WEBHOOK_SERVICE_NAME="platega-webhook.service"
+PLATEGA_WEBHOOK_SERVICE_FILE="/etc/systemd/system/${PLATEGA_WEBHOOK_SERVICE_NAME}"
 BACKUP_ROOT="${INSTALL_DIR}/backups"
 SAFETY_SNAPSHOT_PREFIX="${INSTALL_DIR}/.safety-snapshot"
 
@@ -1433,12 +1435,12 @@ ensure_venv_and_requirements() {
   "$VENV_DIR/bin/pip" install --upgrade pip wheel || return 1
   "$VENV_DIR/bin/pip" install -r "$BOT_DIR/requirements.txt" || return 1
   
-  # Install Platega SDK if Platega is configured
+  # Platega SDK используется напрямую из папки bot/platega-sdk-python
+  # Установка через pip не требуется - путь добавляется в platega_service.py
   local platega_merchant_id
   platega_merchant_id="$(get_env_value PLATEGA_MERCHANT_ID)"
   if [[ -n "$platega_merchant_id" && -d "$BOT_DIR/platega-sdk-python" ]]; then
-    info "Устанавливаю Platega SDK..."
-    "$VENV_DIR/bin/pip" install -e "$BOT_DIR/platega-sdk-python" || return 1
+    info "Platega SDK доступен локально: $BOT_DIR/platega-sdk-python"
   fi
   return 0
 }
@@ -1683,6 +1685,40 @@ configure_autobackup_timer() {
     systemctl disable --now "$AUTO_BACKUP_TIMER_NAME" >/dev/null 2>&1 || true
     ok "Автобэкап выключен (AUTO_BACKUP_ENABLED=0)."
   fi
+  return 0
+}
+
+install_platega_webhook_service() {
+  local service_src
+  service_src="${INSTALL_DIR}/packaging/systemd/${PLATEGA_WEBHOOK_SERVICE_NAME}"
+  if [[ ! -f "$service_src" ]]; then
+    warn "Файл platega-webhook systemd unit не найден: ${service_src}"
+    return 1
+  fi
+  cp "$service_src" "$PLATEGA_WEBHOOK_SERVICE_FILE"
+  chmod 644 "$PLATEGA_WEBHOOK_SERVICE_FILE" || true
+  systemctl daemon-reload
+  return 0
+}
+
+configure_platega_webhook() {
+  if ! require_command systemctl; then
+    warn "systemctl не найден. Platega webhook сервис не настроен."
+    return 0
+  fi
+  
+  # Настраиваем сервис только если Platega включен
+  local merchant_id
+  merchant_id="$(get_env_value PLATEGA_MERCHANT_ID)"
+  if [[ -z "$merchant_id" ]]; then
+    info "Platega не настроен (нет Merchant ID). Webhook сервис не активируется."
+    systemctl disable --now "$PLATEGA_WEBHOOK_SERVICE_NAME" >/dev/null 2>&1 || true
+    return 0
+  fi
+  
+  install_platega_webhook_service || return 1
+  systemctl enable --now "$PLATEGA_WEBHOOK_SERVICE_NAME" >/dev/null 2>&1 || return 1
+  ok "Platega webhook сервис запущен: ${PLATEGA_WEBHOOK_SERVICE_NAME}"
   return 0
 }
 
@@ -1994,9 +2030,12 @@ install_or_reinstall_flow() {
     default="$(pick_existing_or_default "$(get_env_value PLATEGA_MERCHANT_ID)" "")"
     prompt_with_default 'Platega Merchant ID' "$default" value
     set_env_value PLATEGA_MERCHANT_ID "$value"
-    default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET)" "")"
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET_KEY)" "")"
     prompt_with_default 'Platega Secret Key' "$default" value
-    set_env_value PLATEGA_SECRET "$value"
+    set_env_value PLATEGA_SECRET_KEY "$value"
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_TEST_MODE)" "0")"
+    prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" value
+    set_env_value PLATEGA_TEST_MODE "$value"
     default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
     prompt_with_default 'Порт webhook Platega' "$default" value
     set_env_value PLATEGA_WEBHOOK_PORT "$value"
@@ -2039,6 +2078,7 @@ install_or_reinstall_flow() {
   setup_logrotate || die "Не удалось настроить logrotate."
   write_service || die "Не удалось создать systemd сервис."
   configure_autobackup_timer || die "Не удалось настроить systemd timer autobackup."
+  configure_platega_webhook || warn "Не удалось настроить Platega webhook сервис."
   persist_repo_branch
   persist_release_sha "$deploy_sha"
   if [[ "$mode" == "reinstall" ]]; then

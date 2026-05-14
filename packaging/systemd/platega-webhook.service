@@ -1,0 +1,25 @@
+[Unit]
+Description=Platega Webhook Server for AWG Telegram Bot
+After=network-online.target docker.service vpn-bot.service
+Wants=network-online.target docker.service
+Requires=vpn-bot.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/amnezia/bot/bot
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/amnezia/bot/.env
+ExecStart=/opt/amnezia/bot/venv/bin/python -u /opt/amnezia/bot/bot/platega_webhook.py
+Restart=always
+RestartSec=3
+User=awg-bot
+Group=awg-bot
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+StandardOutput=append:/var/log/awg-tgbot/platega-webhook.log
+StandardError=append:/var/log/awg-tgbot/platega-webhook.log
+
+[Install]
+WantedBy=multi-user.target
