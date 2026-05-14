@@ -1309,13 +1309,34 @@ prompt_admin_id() {
   done
 }
 
+prompt_platega_merchant_id() {
+  local __resultvar="$1" __value="" __default=""
+  __default="$(get_env_value PLATEGA_MERCHANT_ID)"
+  prompt_with_default 'Введите Platega Merchant ID (или нажмите Enter, чтобы пропустить)' "$__default" __value
+  printf -v "$__resultvar" '%s' "$__value"
+}
+
+prompt_platega_secret() {
+  local __resultvar="$1" __value="" __default=""
+  __default="$(get_env_value PLATEGA_SECRET)"
+  prompt_with_default 'Введите Platega Secret Key (или нажмите Enter, чтобы пропустить)' "$__default" __value
+  printf -v "$__resultvar" '%s' "$__value"
+}
+
 write_common_env() {
   local api_token="$1" admin_id="$2" server_name="$3" secret="$4"
+  local platega_merchant_id="${5:-}" platega_secret="${6:-}"
   local db_path=""
   set_env_value API_TOKEN "$api_token"
   set_env_value ADMIN_ID "$admin_id"
   set_env_value SERVER_NAME "$server_name"
   set_env_value ENCRYPTION_SECRET "$secret"
+  if [[ -n "$platega_merchant_id" ]]; then
+    set_env_value PLATEGA_MERCHANT_ID "$platega_merchant_id"
+  fi
+  if [[ -n "$platega_secret" ]]; then
+    set_env_value PLATEGA_SECRET "$platega_secret"
+  fi
   db_path="$(get_env_value DB_PATH)"
   if [[ -n "$db_path" ]]; then
     set_env_value DB_PATH "$db_path"
@@ -1907,6 +1928,8 @@ install_or_reinstall_flow() {
   default="$(pick_existing_or_default "$(get_env_value SERVER_NAME)" "My VPN")"
   prompt_with_default 'Введите название сервера' "$default" server_name
   secret="$(ensure_secret)"
+  prompt_platega_merchant_id platega_merchant_id
+  prompt_platega_secret platega_secret
 
   ensure_packages || die "Не удалось установить системные зависимости."
   ensure_docker_ready || die "Docker недоступен."
@@ -1938,7 +1961,7 @@ install_or_reinstall_flow() {
   migrate_legacy_tariff_defaults
   migrate_legacy_default_db_path || die "Не удалось подготовить путь БД для runtime."
 
-  write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
+  write_common_env "$api_token" "$admin_id" "$server_name" "$secret" "$platega_merchant_id" "$platega_secret"
   ensure_selfhost_network_defaults
   ensure_fernet_key
 
