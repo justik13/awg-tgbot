@@ -1,6 +1,6 @@
 """
 Platega payment integration for VPN bot.
-Uses plategaio (async SDK) for non-blocking operations.
+Uses platega SDK for payment operations.
 """
 import uuid
 from typing import Optional, Dict, Any
@@ -42,49 +42,48 @@ class PlategaPaymentService:
         payment_method: int = PLATEGA_METHOD_SBP_QR,
     ) -> Dict[str, Any]:
         """Create a new Platega payment transaction."""
-        from plategaio import PlategaAsyncClient, CreateTransactionRequest, PaymentDetails
+        from platega import Platega
         
-        async with PlategaAsyncClient(
+        client = Platega(
             merchant_id=self.merchant_id,
             secret=self.secret,
-            base_url=self.base_url,
-        ) as client:
-            tx_request = CreateTransactionRequest(
-                payment_method=payment_method,
-                id=uuid.uuid4(),
-                payment_details=PaymentDetails(amount=amount, currency=currency),
-                description=description,
-                return_url=return_url,
-                failed_url=failed_url,
-                payload=payload,
-            )
-            response = await client.create_transaction(tx_request)
-            
-            return {
-                "transaction_id": response.transaction_id,
-                "redirect_url": response.redirect,
-                "status": response.status,
-                "expires_in": response.expires_in,
-            }
+        )
+        
+        response = client.create_payment(
+            amount=amount,
+            currency=currency,
+            payment_method=payment_method,
+            description=description,
+            return_url=return_url,
+            failed_url=failed_url,
+            payload=payload,
+        )
+        
+        return {
+            "transaction_id": response.get("transactionId"),
+            "redirect_url": response.get("redirect"),
+            "status": response.get("status"),
+            "expires_in": response.get("expiresIn"),
+        }
     
     async def check_payment_status(self, transaction_id: str) -> Dict[str, Any]:
         """Check the status of a Platega payment."""
-        from plategaio import PlategaAsyncClient
+        from platega import Platega
         
-        async with PlategaAsyncClient(
+        client = Platega(
             merchant_id=self.merchant_id,
             secret=self.secret,
-            base_url=self.base_url,
-        ) as client:
-            status_response = await client.get_transaction_status(transaction_id)
-            
-            return {
-                "id": status_response.id,
-                "status": status_response.status,
-                "amount": status_response.payment_details.get("amount"),
-                "currency": status_response.payment_details.get("currency"),
-                "payment_method": status_response.payment_method,
-            }
+        )
+        
+        response = client.get_payment_status(transaction_id)
+        
+        return {
+            "id": response.get("id", transaction_id),
+            "status": response.get("status"),
+            "amount": response.get("paymentDetails", {}).get("amount"),
+            "currency": response.get("paymentDetails", {}).get("currency"),
+            "payment_method": response.get("paymentMethod"),
+        }
     
     @staticmethod
     def is_success_status(status: str) -> bool:
