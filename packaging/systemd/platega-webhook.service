@@ -9,7 +9,7 @@ Type=simple
 WorkingDirectory=/opt/amnezia/bot/bot
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/opt/amnezia/bot/.env
-ExecStart=/opt/amnezia/bot/venv/bin/python -u /opt/amnezia/bot/bot/platega_webhook.py
+ExecStart=/opt/amnezia/bot/.venv/bin/python -u /opt/amnezia/bot/bot/platega_webhook.py
 Restart=always
 RestartSec=3
 User=awg-bot
