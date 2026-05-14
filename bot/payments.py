@@ -347,17 +347,27 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
         }
         info = tariff_info.get(payload, {"days": 30, "rub": 0})
         
+        redirect_url = status_result.get("redirect") or status_result.get("redirect_url", "")
+        
+        if not redirect_url:
+            await cb.message.answer(
+                f"💳 <b>Оплата {info['days']} дней — {info['rub']}₽</b>\n\n"
+                f"⚠️ Не удалось получить ссылку на оплату. Попробуйте позже.",
+                parse_mode="HTML",
+            )
+            return
+        
         await cb.message.answer(
             f"💳 <b>Оплата {info['days']} дней — {info['rub']}₽</b>\n\n"
             f"Перейдите по ссылке для оплаты:\n"
-            f"<code>{status_result.get('redirect_url', 'URL недоступен')}</code>\n\n"
+            f"<code>{redirect_url}</code>\n\n"
             f"Или нажмите кнопку ниже:",
             parse_mode="HTML",
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[[
                     types.InlineKeyboardButton(
                         text="💳 Открыть страницу оплаты",
-                        url=status_result.get("redirect", ""),
+                        url=redirect_url,
                     )
                 ]]
             ),
