@@ -3,3 +3,6 @@ aiosqlite==0.22.1
 cryptography==46.0.7
 python-dotenv==1.2.2
 APScheduler==3.11.2
+httpx>=0.27.0
+pydantic>=2.7.0
+plategaio @ file:///workspace/plategaio-main

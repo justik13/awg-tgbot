@@ -92,6 +92,19 @@ TEXT_DEFAULTS: dict[str, str] = {
         "Цена: <b>{amount} {currency}</b>\n\n"
         "Нажмите «⭐ Подтвердить и оплатить», чтобы открыть оплату."
     ),
+    "payment_method_selection": (
+        "💳 <b>Выберите способ оплаты</b>\n\n"
+        "Тариф: <b>{tariff_days} дней</b>\n"
+        "Доступ для <b>{configs_per_user} устройств</b>\n\n"
+        "• Telegram Stars — <b>{stars_price}⭐</b>\n"
+        "• СБП (Platega) — <b>{rub_price}₽</b>\n\n"
+        "Выберите удобный способ оплаты:"
+    ),
+    "platega_payment_pending": (
+        "💳 <b>Оплата {days} дней — {amount}₽</b>\n\n"
+        "Нажмите «💳 Оплатить через СБП», чтобы перейти к оплате.\n"
+        "После оплаты нажмите «🔄 Проверить статус оплаты»."
+    ),
     "configs_empty": (
         "🔑 <b>Подключение</b>\n\n"
         "У вас пока нет активного подключения.\n"
@@ -192,6 +205,8 @@ TEXT_REQUIRED_PLACEHOLDERS: dict[str, set[str]] = {
     },
     "payment_confirm_screen": {"tariff_title", "configs_per_user", "amount", "currency"},
     "payment_next_step": {"configs_per_user"},
+    "payment_method_selection": {"tariff_days", "configs_per_user", "stars_price", "rub_price"},
+    "platega_payment_pending": {"days", "amount"},
     "referral_screen": {
         "ref_link",
         "invited_count",
