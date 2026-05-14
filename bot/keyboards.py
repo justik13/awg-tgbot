@@ -24,6 +24,7 @@ from ui_constants import (
     CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX, CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX,
     CB_BROADCAST_CANCEL, CB_BROADCAST_CONFIRM, CB_BUY_30, CB_BUY_7, CB_BUY_90,
     CB_BUY_PAY_7, CB_BUY_PAY_30, CB_BUY_PAY_90,
+    CB_PLATEGA_BUY_7, CB_PLATEGA_BUY_30, CB_PLATEGA_BUY_90,
     CB_CHECK_ACTIVATION_STATUS,
     CB_CONFIG_CONF_PREFIX, CB_CONFIG_DEVICE_PREFIX, CB_OPEN_CONFIGS, CB_OPEN_PROFILE, CB_OPEN_REFERRALS,
     CB_OPEN_SUPPORT, CB_OPEN_TRAFFIC_DEVICES,
@@ -32,6 +33,7 @@ from ui_constants import (
     CB_SUPPORT_CONNECTION, CB_SUPPORT_PAYMENT, CB_SUPPORT_TERMS, CB_SUPPORT_USEFUL, CB_USER_REISSUE_DEVICE_PREFIX,
     CB_CONFIRM_ADD_DAYS, CB_CANCEL_ADD_DAYS,
     CB_BROADCAST_SEGMENT_PREFIX, CB_ADMIN_TEXT_VIEW_PREFIX,
+    CB_ADMIN_PLATEGA_PRICE_EDIT_7, CB_ADMIN_PLATEGA_PRICE_EDIT_30, CB_ADMIN_PLATEGA_PRICE_EDIT_90,
 )
 
 
@@ -51,9 +53,8 @@ def get_main_menu(user_id: int, admin_id: int) -> ReplyKeyboardMarkup:
 
 def get_buy_inline_kb() -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"7 дней — {config.STARS_PRICE_7_DAYS}⭐", callback_data=CB_BUY_7)],
-        [InlineKeyboardButton(text=f"30 дней — {config.STARS_PRICE_30_DAYS}⭐", callback_data=CB_BUY_30)],
-        [InlineKeyboardButton(text=f"90 дней — {config.STARS_PRICE_90_DAYS}⭐", callback_data=CB_BUY_90)],
+        [InlineKeyboardButton(text="💳 Telegram Stars", callback_data="payment_method_stars")],
+        [InlineKeyboardButton(text="🏦 СБП (QR)", callback_data="payment_method_platega")],
         [InlineKeyboardButton(text="📖 Как подключиться", callback_data=CB_SHOW_INSTRUCTION)],
         [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
     ]
@@ -77,16 +78,25 @@ def get_profile_inline_kb(subscription_active: bool, *, referrals_enabled: bool 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def get_buy_confirm_kb(payload: str) -> InlineKeyboardMarkup:
-    action_by_payload = {
-        "sub_7": CB_BUY_PAY_7,
-        "sub_30": CB_BUY_PAY_30,
-        "sub_90": CB_BUY_PAY_90,
-    }
+def get_buy_confirm_kb(payload: str, method: str = "stars") -> InlineKeyboardMarkup:
+    if method == "platega":
+        action_by_payload = {
+            "sub_7": "platega_pay_sub_7",
+            "sub_30": "platega_pay_sub_30",
+            "sub_90": "platega_pay_sub_90",
+        }
+        button_text = "🏦 Оплатить через СБП"
+    else:
+        action_by_payload = {
+            "sub_7": CB_BUY_PAY_7,
+            "sub_30": CB_BUY_PAY_30,
+            "sub_90": CB_BUY_PAY_90,
+        }
+        button_text = "⭐ Подтвердить и оплатить"
     pay_action = action_by_payload[payload]
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⭐ Подтвердить и оплатить", callback_data=pay_action)],
+            [InlineKeyboardButton(text=button_text, callback_data=pay_action)],
             [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
         ]
     )
@@ -225,9 +235,12 @@ def get_admin_inline_kb() -> InlineKeyboardMarkup:
 def get_admin_prices_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Изменить 7 дней", callback_data=CB_ADMIN_PRICE_EDIT_7)],
-            [InlineKeyboardButton(text="Изменить 30 дней", callback_data=CB_ADMIN_PRICE_EDIT_30)],
-            [InlineKeyboardButton(text="Изменить 90 дней", callback_data=CB_ADMIN_PRICE_EDIT_90)],
+            [InlineKeyboardButton(text="Stars: 7 дней", callback_data=CB_ADMIN_PRICE_EDIT_7)],
+            [InlineKeyboardButton(text="Stars: 30 дней", callback_data=CB_ADMIN_PRICE_EDIT_30)],
+            [InlineKeyboardButton(text="Stars: 90 дней", callback_data=CB_ADMIN_PRICE_EDIT_90)],
+            [InlineKeyboardButton(text="Platega: 7 дней", callback_data=CB_ADMIN_PLATEGA_PRICE_EDIT_7)],
+            [InlineKeyboardButton(text="Platega: 30 дней", callback_data=CB_ADMIN_PLATEGA_PRICE_EDIT_30)],
+            [InlineKeyboardButton(text="Platega: 90 дней", callback_data=CB_ADMIN_PLATEGA_PRICE_EDIT_90)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
         ]
     )

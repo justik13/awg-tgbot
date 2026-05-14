@@ -25,6 +25,7 @@ from config import (
     logger,
     save_env_value,
     set_stars_price,
+    set_platega_price,
 )
 from database import (
     clear_pending_admin_action, clear_pending_broadcast, count_problematic_activations, create_broadcast_job, create_promo_code, db_health_info, disable_promo_code, fetchall, fetchone, fetchval,
@@ -81,6 +82,7 @@ from ui_constants import (
     CB_CANCEL_DELETE_USER, CB_CONFIRM_DEVICE_DELETE,
     CB_CANCEL_DEVICE_DELETE, CB_CONFIRM_DEVICE_REISSUE, CB_CANCEL_DEVICE_REISSUE,
     CB_CONFIRM_ADD_DAYS, CB_CANCEL_ADD_DAYS,
+    CB_ADMIN_PLATEGA_PRICE_EDIT_7, CB_ADMIN_PLATEGA_PRICE_EDIT_30, CB_ADMIN_PLATEGA_PRICE_EDIT_90,
 )
 from config_validate import read_helper_policy
 from network_policy import denylist_sync, parse_cidrs, policy_metrics
@@ -170,9 +172,15 @@ BROADCAST_SEGMENT_LABELS = {key: label for key, label in BROADCAST_SEGMENTS}
 BROADCAST_SEGMENT_SELECTION_ACTION_KEY = "broadcast_segment_selection"
 ADMIN_PROBLEM_ACTIVATIONS_PAGE_SIZE = 8
 PRICE_TARGETS = {
-    CB_ADMIN_PRICE_EDIT_7: ("STARS_PRICE_7_DAYS", "7 дней"),
-    CB_ADMIN_PRICE_EDIT_30: ("STARS_PRICE_30_DAYS", "30 дней"),
-    CB_ADMIN_PRICE_EDIT_90: ("STARS_PRICE_90_DAYS", "90 дней"),
+    CB_ADMIN_PRICE_EDIT_7: ("STARS_PRICE_7_DAYS", "7 дней (Stars)"),
+    CB_ADMIN_PRICE_EDIT_30: ("STARS_PRICE_30_DAYS", "30 дней (Stars)"),
+    CB_ADMIN_PRICE_EDIT_90: ("STARS_PRICE_90_DAYS", "90 дней (Stars)"),
+}
+
+PLATEGA_PRICE_TARGETS = {
+    CB_ADMIN_PLATEGA_PRICE_EDIT_7: ("PLATEGA_PRICE_7_DAYS", "7 дней (Platega)"),
+    CB_ADMIN_PLATEGA_PRICE_EDIT_30: ("PLATEGA_PRICE_30_DAYS", "30 дней (Platega)"),
+    CB_ADMIN_PLATEGA_PRICE_EDIT_90: ("PLATEGA_PRICE_90_DAYS", "90 дней (Platega)"),
 }
 
 
@@ -212,9 +220,14 @@ def _is_pending_action_expired(action: dict[str, object] | None) -> bool:
 def _render_admin_prices_text() -> str:
     return (
         "💸 <b>Цены</b>\n\n"
+        f"<b>Telegram Stars:</b>\n"
         f"7 дней — {config.STARS_PRICE_7_DAYS}⭐\n"
         f"30 дней — {config.STARS_PRICE_30_DAYS}⭐\n"
-        f"90 дней — {config.STARS_PRICE_90_DAYS}⭐"
+        f"90 дней — {config.STARS_PRICE_90_DAYS}⭐\n\n"
+        f"<b>Platega (RUB):</b>\n"
+        f"7 дней — {config.PLATEGA_PRICE_7_DAYS}₽\n"
+        f"30 дней — {config.PLATEGA_PRICE_30_DAYS}₽\n"
+        f"90 дней — {config.PLATEGA_PRICE_90_DAYS}₽"
     )
 
 
@@ -1438,9 +1451,31 @@ async def admin_prices_start_edit(cb: types.CallbackQuery):
         return
     env_key, label = target
     current_value = int(getattr(config, env_key))
+    is_stars = "Stars" in label
+    currency_symbol = "⭐" if is_stars else "₽"
     await clear_pending_admin_action(ADMIN_ID, PRICE_CONFIRM_ACTION_KEY)
-    await set_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY, {"env_key": env_key, "label": label})
-    await cb.message.answer(f"Введите новую цену для «{label}» в ⭐. Текущая: {current_value}⭐")
+    await set_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY, {"env_key": env_key, "label": label, "is_stars": is_stars})
+    await cb.message.answer(f"Введите новую цену для «{label}» в {currency_symbol}. Текущая: {current_value}{currency_symbol}")
+    await cb.answer()
+
+
+@router.callback_query(F.data.in_(set(PLATEGA_PRICE_TARGETS.keys())))
+async def admin_platega_prices_start_edit(cb: types.CallbackQuery):
+    if not await _guard_admin_callback(cb):
+        return
+    target = PLATEGA_PRICE_TARGETS.get(cb.data)
+    if not target:
+        await cb.answer("Некорректный тариф", show_alert=True)
+        return
+    maintenance_enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
+    if not maintenance_enabled:
+        await cb.answer("Сначала включите /maintenance_on, затем изменяйте цену.", show_alert=True)
+        return
+    env_key, label = target
+    current_value = int(getattr(config, env_key))
+    await clear_pending_admin_action(ADMIN_ID, PRICE_CONFIRM_ACTION_KEY)
+    await set_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY, {"env_key": env_key, "label": label, "is_stars": False})
+    await cb.message.answer(f"Введите новую цену для «{label}» в ₽. Текущая: {current_value}₽")
     await cb.answer()
 
 
@@ -1455,18 +1490,19 @@ async def admin_prices_capture_input(message: types.Message):
         return
     env_key = str(action.get("env_key", ""))
     label = str(action.get("label", ""))
+    is_stars = bool(action.get("is_stars", True))
     old_value = int(getattr(config, env_key, 0))
     await clear_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY)
     await set_pending_admin_action(
         ADMIN_ID,
         PRICE_CONFIRM_ACTION_KEY,
-        {"env_key": env_key, "label": label, "old": old_value, "new": new_value},
+        {"env_key": env_key, "label": label, "old": old_value, "new": new_value, "is_stars": is_stars},
     )
     await message.answer(
         (
             f"{label}\n"
-            f"Было: {old_value}⭐\n"
-            f"Станет: {new_value}⭐"
+            f"Было: {old_value}{'⭐' if is_stars else '₽'}\n"
+            f"Станет: {new_value}{'⭐' if is_stars else '₽'}"
         ),
         reply_markup=get_admin_price_confirm_kb(),
     )
@@ -1484,12 +1520,20 @@ async def admin_prices_save(cb: types.CallbackQuery):
     env_key = str(action.get("env_key", ""))
     label = str(action.get("label", ""))
     new_value = int(action.get("new", 0))
-    old_value, saved_value = set_stars_price(env_key, new_value)
+    is_stars = bool(action.get("is_stars", True))
+    
+    if is_stars:
+        old_value, saved_value = set_stars_price(env_key, new_value)
+        currency_symbol = "⭐"
+    else:
+        old_value, saved_value = set_platega_price(env_key, new_value)
+        currency_symbol = "₽"
+    
     await write_audit_log(ADMIN_ID, "admin_price_updated", f"key={env_key}; old={old_value}; new={saved_value}")
     await cb.message.answer(
         (
             f"✅ Сохранено: {label}\n"
-            f"{old_value}⭐ → {saved_value}⭐"
+            f"{old_value}{currency_symbol} → {saved_value}{currency_symbol}"
         ),
     )
     await cb.message.answer(
