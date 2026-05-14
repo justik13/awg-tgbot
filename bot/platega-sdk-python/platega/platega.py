@@ -115,6 +115,24 @@ class Platega:
         """
         return self._request('GET', f'/transaction/{transaction_id}')
     
+    def get_qr_code(self, transaction_id: str) -> Dict[str, Any]:
+        """
+        Get QR code for payment
+        
+        Args:
+            transaction_id: Transaction UUID
+        
+        Returns:
+            dict: QR code data with keys:
+                - qr (dict): QR code data containing url and/or base64
+                - redirect (str): Payment URL
+                - status (str): Payment status
+        
+        Raises:
+            PlategaAPIError: If API request fails
+        """
+        return self._request('GET', f'/payment/qr/{transaction_id}')
+    
     def get_rate(
         self,
         payment_method: int,

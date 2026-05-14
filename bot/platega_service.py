@@ -137,6 +137,49 @@ class PlategaService:
             logger.error(f"Error checking status for {transaction_id}: {e}")
             return None
 
+    async def get_qr_code(self, transaction_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Получает QR-код для платежа через API Platega.
+        
+        :param transaction_id: ID транзакции в Platega
+        :return: dict с данными QR (qr_url, qr_base64) или None
+        """
+        if not self.client:
+            logger.error("Platega client is not initialized.")
+            return None
+
+        try:
+            # Вызываем новый метод SDK для получения QR-кода
+            response = self.client.get_qr_code(transaction_id)
+            
+            # API Platega возвращает QR данные в поле qr
+            # Ожидаемая структура: {"qr": {"url": "...", "base64": "..."}, "redirect": "...", "status": "..."}
+            qr_data = response.get("qr")
+            
+            if qr_data:
+                return {
+                    "qr_url": qr_data.get("url"),
+                    "qr_base64": qr_data.get("base64"),
+                    "payment_url": response.get("redirect"),
+                    "status": response.get("status")
+                }
+            
+            # Если QR нет в ответе, используем payment_url как fallback
+            payment_url = response.get("redirect")
+            if payment_url:
+                return {
+                    "qr_url": None,
+                    "qr_base64": None,
+                    "payment_url": payment_url,
+                    "status": response.get("status")
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting QR code for {transaction_id}: {e}")
+            return None
+
     @staticmethod
     def validate_callback(headers: Dict[str, str], body: str) -> tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
         """
