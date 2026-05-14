@@ -52,9 +52,9 @@ def get_main_menu(user_id: int, admin_id: int) -> ReplyKeyboardMarkup:
 
 def get_buy_inline_kb() -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"7 дней — {config.STARS_PRICE_7_DAYS}⭐", callback_data=CB_BUY_7)],
-        [InlineKeyboardButton(text=f"30 дней — {config.STARS_PRICE_30_DAYS}⭐", callback_data=CB_BUY_30)],
-        [InlineKeyboardButton(text=f"90 дней — {config.STARS_PRICE_90_DAYS}⭐", callback_data=CB_BUY_90)],
+        [InlineKeyboardButton(text=f"7 дней — {config.STARS_PRICE_7_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_7_DAYS}₽", callback_data=CB_BUY_7)],
+        [InlineKeyboardButton(text=f"30 дней — {config.STARS_PRICE_30_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_30_DAYS}₽", callback_data=CB_BUY_30)],
+        [InlineKeyboardButton(text=f"90 дней — {config.STARS_PRICE_90_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_90_DAYS}₽", callback_data=CB_BUY_90)],
         [InlineKeyboardButton(text="📖 Как подключиться", callback_data=CB_SHOW_INSTRUCTION)],
         [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
     ]

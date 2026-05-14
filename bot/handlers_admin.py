@@ -212,9 +212,9 @@ def _is_pending_action_expired(action: dict[str, object] | None) -> bool:
 def _render_admin_prices_text() -> str:
     return (
         "💸 <b>Цены</b>\n\n"
-        f"7 дней — {config.STARS_PRICE_7_DAYS}⭐\n"
-        f"30 дней — {config.STARS_PRICE_30_DAYS}⭐\n"
-        f"90 дней — {config.STARS_PRICE_90_DAYS}⭐"
+        f"7 дней — {config.STARS_PRICE_7_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_7_DAYS}₽\n"
+        f"30 дней — {config.STARS_PRICE_30_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_30_DAYS}₽\n"
+        f"90 дней — {config.STARS_PRICE_90_DAYS}⭐ / {config.PLATEGA_RUB_PRICE_90_DAYS}₽"
     )
 
 
@@ -295,6 +295,8 @@ class HasPendingBroadcastInput(BaseFilter):
 
 class HasPendingPriceInput(BaseFilter):
     async def __call__(self, message: types.Message) -> bool:
+        if not message.from_user or message.from_user.id != ADMIN_ID:
+            return False
         pending_action = await get_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY)
         return bool(pending_action)
 
