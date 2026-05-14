@@ -112,7 +112,7 @@ class PlategaAsyncClient:
     async def create_transaction(self, payload: CreateTransactionRequest) -> CreateTransactionResponse:
         body = payload.model_dump(by_alias=True, exclude_none=True)
         body["id"] = str(body["id"])
-        body["return"] = body["returnUrl"]
+        body["return"] = body.get("returnUrl")
         body["returnUrl"] = None
         
         data = await self._request("POST", "/transaction/process", json=body)
