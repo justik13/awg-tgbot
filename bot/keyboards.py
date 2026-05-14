@@ -27,6 +27,7 @@ from ui_constants import (
     CB_CHECK_ACTIVATION_STATUS,
     CB_CONFIG_CONF_PREFIX, CB_CONFIG_DEVICE_PREFIX, CB_OPEN_CONFIGS, CB_OPEN_PROFILE, CB_OPEN_REFERRALS,
     CB_OPEN_SUPPORT, CB_OPEN_TRAFFIC_DEVICES,
+    CB_PLATEGA_PAY_PREFIX, CB_PLATEGA_CHECK_PREFIX, CB_PAY_STARS_PREFIX, CB_PAY_PLATEGA_PREFIX,
     CB_PROMO_INPUT_CANCEL, CB_PROMO_INPUT_START,
     CB_SHOW_BUY_MENU, CB_SHOW_INSTRUCTION, CB_USER_REISSUE_CANCEL, CB_USER_REISSUE_CONFIRM,
     CB_SUPPORT_CONNECTION, CB_SUPPORT_PAYMENT, CB_SUPPORT_TERMS, CB_SUPPORT_USEFUL, CB_USER_REISSUE_DEVICE_PREFIX,
@@ -90,6 +91,36 @@ def get_buy_confirm_kb(payload: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
         ]
     )
+
+
+def get_payment_method_selection_kb(payload: str) -> InlineKeyboardMarkup:
+    """Generate keyboard for selecting payment method (Stars vs Platega)."""
+    tariff_info = {
+        "sub_7": {"days": 7, "stars": config.STARS_PRICE_7_DAYS, "rub": config.PLATEGA_RUB_PRICE_7_DAYS},
+        "sub_30": {"days": 30, "stars": config.STARS_PRICE_30_DAYS, "rub": config.PLATEGA_RUB_PRICE_30_DAYS},
+        "sub_90": {"days": 90, "stars": config.STARS_PRICE_90_DAYS, "rub": config.PLATEGA_RUB_PRICE_90_DAYS},
+    }
+    info = tariff_info.get(payload, tariff_info["sub_30"])
+    
+    rows = [
+        [InlineKeyboardButton(text=f"⭐ Telegram Stars ({info['stars']}⭐)", callback_data=f"{CB_PAY_STARS_PREFIX}{payload}")],
+        [InlineKeyboardButton(text=f"💳 СБП ({info['rub']}₽)", callback_data=f"{CB_PAY_PLATEGA_PREFIX}{payload}")],
+        [InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data=CB_OPEN_PROFILE)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_platega_payment_kb(transaction_id: str, payload: str) -> InlineKeyboardMarkup:
+    """Generate keyboard with Platega payment button."""
+    tariff_labels = {"sub_7": "7 дней", "sub_30": "30 дней", "sub_90": "90 дней"}
+    label = tariff_labels.get(payload, "подписку")
+    
+    rows = [
+        [InlineKeyboardButton(text=f"💳 Оплатить {label} через СБП", callback_data=f"{CB_PLATEGA_PAY_PREFIX}{transaction_id}:{payload}")],
+        [InlineKeyboardButton(text="🔄 Проверить статус оплаты", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
+        [InlineKeyboardButton(text="⬅️ Назад к тарифам", callback_data=CB_SHOW_BUY_MENU)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_instruction_inline_kb() -> InlineKeyboardMarkup:

@@ -119,5 +119,11 @@ CB_CANCEL_DEVICE_REISSUE = "cancel_device_reissue"
 CB_CONFIRM_ADD_DAYS = "a:ud:c"
 CB_CANCEL_ADD_DAYS = "a:ud:x"
 CB_ADMIN_TEXT_VIEW_PREFIX = "a:to:view:"
+
+# Platega payment callbacks
+CB_PLATEGA_PAY_PREFIX = "platega_pay:"
+CB_PLATEGA_CHECK_PREFIX = "platega_check:"
+CB_PAY_STARS_PREFIX = "pay_stars:"
+CB_PAY_PLATEGA_PREFIX = "pay_platega:"
 def is_admin_callback_data(data: str | None) -> bool:
     return bool(data and data.startswith(ADMIN_CALLBACK_PREFIX))
