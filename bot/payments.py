@@ -413,6 +413,9 @@ async def platega_pay_handler(cb: types.CallbackQuery):
     transaction_id = payment_data["transaction_id"]
     payment_url = payment_data["payment_url"]
     
+    # Получаем QR-код для платежа
+    qr_data = await platega_service.get_qr_code(transaction_id)
+    
     # Сохраняем платеж в БД
     raw_payload = {
         "invoice_payload": sub_type,
@@ -440,21 +443,107 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         await cb.message.answer("❌ Ошибка сохранения платежа. Попробуйте позже.")
         return
     
-    # Отправляем пользователю ссылку на оплату
+    # Формируем сообщение с QR-кодом или ссылкой
     text = (
         f"<b>Оплата подписки ({tariff['days']} дней)</b>\n\n"
         f"Сумма: <b>{tariff['amount']}₽</b>\n"
-        f"Способ оплаты: <b>СБП QR</b>\n\n"
-        f"Нажмите на кнопку ниже для оплаты:"
+        f"Способ оплаты: <b>СБП QR</b>\n"
+        f"Номер способа оплаты: <b>2</b>\n\n"
+        f"Отсканируйте QR-код для оплаты через приложение банка:"
     )
     
     from keyboards import InlineKeyboardButton, InlineKeyboardMarkup
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cb_show_buy_menu")]
-    ])
     
-    await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    # Если есть QR-код в base64, отправляем картинку
+    if qr_data and qr_data.get("qr_base64"):
+        import base64
+        qr_image = base64.b64decode(qr_data["qr_base64"])
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить по ссылке", url=payment_url)],
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cb_show_buy_menu")]
+        ])
+        
+        await cb.message.answer_photo(
+            photo=types.BufferedInputFile(qr_image, filename="qr.png"),
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+    # Если есть URL на QR-картинку
+    elif qr_data and qr_data.get("qr_url"):
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить по ссылке", url=payment_url)],
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cb_show_buy_menu")]
+        ])
+        
+        await cb.message.answer_photo(
+            photo=qr_data["qr_url"],
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+    # Если QR недоступен, показываем только ссылку
+    else:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cb_show_buy_menu")]
+        ])
+        
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("platega_check_"))
+async def platega_check_payment_handler(cb: types.CallbackQuery):
+    """Обработчик проверки статуса платежа пользователем."""
+    transaction_id = cb.data.replace("platega_check_", "")
+    
+    if not transaction_id:
+        await cb.answer("Неверный ID транзакции", show_alert=True)
+        return
+    
+    await cb.answer()
+    
+    # Проверяем статус платежа
+    status = await platega_service.check_status(transaction_id)
+    
+    if status == "CONFIRMED":
+        await cb.message.edit_text(
+            "<b>✅ Оплата подтверждена!</b>\n\n"
+            "Ключ будет отправлен вам в ближайшее время.",
+            parse_mode="HTML"
+        )
+        # Обработка успешной оплаты будет выполнена через webhook
+    elif status == "PENDING":
+        await cb.message.edit_text(
+            "<b>⏳ Платеж еще не подтвержден</b>\n\n"
+            "Пожалуйста, дождитесь подтверждения или попробуйте снова позже.",
+            parse_mode="HTML",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"platega_check_{transaction_id}")]
+            ])
+        )
+    elif status == "CANCELED":
+        await cb.message.edit_text(
+            "<b>❌ Платеж отменен</b>\n\n"
+            "Вы можете попробовать создать новый платеж.",
+            parse_mode="HTML",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data="cb_show_buy_menu")]
+            ])
+        )
+    else:
+        await cb.message.edit_text(
+            f"<b>⚠️ Статус платежа: {status or 'Неизвестен'}</b>\n\n"
+            "Попробуйте проверить позже.",
+            parse_mode="HTML",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"platega_check_{transaction_id}")]
+            ])
+        )
 
 
 @router.pre_checkout_query()
@@ -737,6 +826,97 @@ async def process_payment_provisioning(payment_id: str, user_id: int, payload: s
             await write_audit_log(user_id, "payment_provisioning_stuck_manual", f"payment_id={payment_id}; {reason}")
         await write_audit_log(user_id, "payment_provisioning_failed", f"payment_id={payment_id}; retry_at={retry_at}; error={str(e)[:300]}")
         raise
+
+
+async def activate_subscription(user_id: int, sub_type: str, payment_method: str, transaction_id: str, bot: Bot | None = None) -> bool:
+    """
+    Активирует подписку для пользователя после успешной оплаты через Platega.
+    
+    :param user_id: ID пользователя
+    :param sub_type: Тип подписки (sub_7, sub_30, sub_90)
+    :param payment_method: Метод оплаты ("platega")
+    :param transaction_id: ID транзакции в платежной системе
+    :param bot: Экземпляр бота для уведомлений
+    :return: True если успешно
+    """
+    tariff = get_tariffs().get(sub_type)
+    if not tariff:
+        logger.error(f"Invalid sub_type: {sub_type}")
+        return False
+    
+    days = int(tariff["days"])
+    
+    try:
+        await ensure_user_exists(user_id, None, None)
+        
+        # Проверяем, не обработан ли уже этот платеж
+        existing = await db.get_payment_by_order(f"{user_id}:{sub_type}")
+        if existing and existing.get("status") in ("paid", "applied"):
+            logger.info(f"Payment already processed for user {user_id}, sub {sub_type}")
+            return True
+        
+        # Сохраняем платеж в БД
+        raw_payload = {
+            "invoice_payload": sub_type,
+            "currency": "RUB",
+            "total_amount": float(tariff["amount"]),
+            "platega_transaction_id": transaction_id,
+        }
+        
+        await save_payment(
+            telegram_payment_charge_id=transaction_id,
+            provider_payment_charge_id=transaction_id,
+            user_id=user_id,
+            payload=sub_type,
+            amount=float(tariff["amount"]),
+            currency="RUB",
+            payment_method=payment_method,
+            status="received",
+            raw_payload_json=json.dumps(raw_payload, ensure_ascii=False),
+        )
+        
+        # Запускаем процесс активации подписки
+        applied = await process_payment_provisioning(
+            payment_id=transaction_id,
+            user_id=user_id,
+            payload=sub_type,
+            days=days,
+            bot=bot,
+        )
+        
+        if applied:
+            logger.info(f"Subscription activated for user {user_id}, sub {sub_type}")
+            
+            # Отправляем пользователю ключ
+            try:
+                from database import get_user_keys
+                keys = await get_user_keys(user_id)
+                if keys and len(keys) > 0:
+                    key_data = keys[0]
+                    from config import DOWNLOAD_URL
+                    from texts import get_payment_result_text
+                    result_text = await get_payment_result_text("success")
+                    
+                    message = (
+                        f"{result_text}\n\n"
+                        f"<b>Ваш ключ:</b>\n"
+                        f"<code>{key_data['config']}</code>\n\n"
+                        f"Скачайте клиент AmneziaWG: {DOWNLOAD_URL}"
+                    )
+                    
+                    if bot:
+                        await bot.send_message(user_id, message, parse_mode="HTML")
+            except Exception as e:
+                logger.warning(f"Failed to send key to user {user_id}: {e}")
+            
+            return True
+        else:
+            logger.warning(f"Payment provisioning returned False for user {user_id}")
+            return False
+            
+    except Exception as e:
+        logger.exception(f"Error activating subscription for user {user_id}: {e}")
+        return False
 
 
 async def _notify_admin_stuck(bot: Bot | None, payment_id: str, user_id: int, reason: str) -> None:
