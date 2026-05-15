@@ -1642,9 +1642,9 @@ migrate_legacy_default_db_path() {
 }
 
 install_awg_helper() {
-  [[ -f "$BOT_DIR/bot/awg_helper.py" ]] || return 1
+  [[ -f "$BOT_DIR/awg_helper.py" ]] || return 1
   install -d -m 755 /usr/local/libexec
-  install -o root -g root -m 750 "$BOT_DIR/bot/awg_helper.py" "$AWG_HELPER_TARGET"
+  install -o root -g root -m 750 "$BOT_DIR/awg_helper.py" "$AWG_HELPER_TARGET"
   sync_awg_helper_policy_from_env
   if id -u "$BOT_USER" >/dev/null 2>&1; then
     chown root:"$BOT_USER" "$AWG_HELPER_POLICY"
