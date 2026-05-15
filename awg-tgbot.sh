@@ -248,29 +248,34 @@ prompt_raw() {
   local prompt="$1"
   local __resultvar="$2"
   local __input=""
-  # Всегда пытаемся читать из /dev/tty для интерактивного ввода
-  # Это необходимо при запуске через curl | bash, когда stdin перенаправлен
-  if [[ -t 3 ]]; then
-    # fd 3 открыт и является терминалом
-    if ! read -r -p "$prompt" __input <&3; then
-      __input=""
-    fi
-  elif [[ -t 0 ]]; then
-    # stdin является терминалом
-    if ! read -r -p "$prompt" __input; then
-      __input=""
-    fi
-  elif [[ -e "/dev/tty" ]]; then
-    # Пробуем открыть /dev/tty явно
+  
+  # При запуске через curl | bash stdin перенаправлен, поэтому всегда читаем из /dev/tty
+  # Это единственный способ получить интерактивный ввод пользователя
+  if [[ -e "/dev/tty" ]]; then
     if ! read -r -p "$prompt" __input < /dev/tty; then
       __input=""
     fi
+  elif [[ -t 0 ]]; then
+    # Fallback: stdin является терминалом (редкий случай)
+    if ! read -r -p "$prompt" __input; then
+      __input=""
+    fi
+  elif [[ -t 3 ]]; then
+    # Fallback: fd 3 является терминалом
+    if ! read -r -p "$prompt" __input <&3; then
+      __input=""
+    fi
   else
-    # Fallback: читаем из stdin (не интерактивно)
+    # Последний шанс: читаем из stdin (не интерактивно)
     if ! read -r -p "$prompt" __input; then
       __input=""
     fi
   fi
+  
+  # Trim whitespace
+  __input="${__input#"${__input%%[![:space:]]*}"}"
+  __input="${__input%"${__input##*[![:space:]]}"}"
+  
   printf -v "$__resultvar" '%s' "$__input"
 }
 
