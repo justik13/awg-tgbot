@@ -1,5 +1,17 @@
 import logging
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+# Path is relative to this config.py file location
+_config_dir = Path(__file__).parent.resolve()
+_env_path = _config_dir / '.env'
+if _env_path.exists():
+    load_dotenv(_env_path)
+else:
+    # Fallback to default .env loading if file not found in bot directory
+    load_dotenv()
 
 from config_defaults import DEFAULT_ENV
 from config_detect import (
