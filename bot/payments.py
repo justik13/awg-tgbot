@@ -536,16 +536,74 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
     
     await cb.answer()
     
-    # Проверяем статус платежа
+    # Проверяем статус платежа в Platega
     status = await platega_service.check_status(transaction_id)
     
-    # Формируем текст и клавиатуру в зависимости от статуса
+    # Если статус CONFIRMED - активируем подписку
     if status == "CONFIRMED":
-        text = (
-            "<b>✅ Оплата подтверждена!</b>\n\n"
-            "Ключ будет отправлен вам в ближайшее время."
-        )
-        kb = None
+        # Получаем информацию о платеже из БД, чтобы узнать user_id и sub_type
+        from database import get_payment_by_transaction_id
+        payment_info = await get_payment_by_transaction_id(transaction_id)
+        
+        if payment_info:
+            user_id = payment_info.get("user_id")
+            # Определяем тип подписки из invoice_payload или order_id
+            order_id = payment_info.get("order_id", "")
+            sub_type = payment_info.get("invoice_payload", "")
+            
+            # Если sub_type не найден напрямую, пробуем извлечь из order_id (формат "user_id:sub_type")
+            if not sub_type and ":" in order_id:
+                sub_type = order_id.split(":")[1] if len(order_id.split(":")) > 1 else ""
+            
+            if user_id and sub_type:
+                logger.info(f"Manual payment confirmation via button for user {user_id}, transaction {transaction_id}")
+                
+                # Проверяем, не обработан ли уже этот платеж
+                existing = await get_payment_by_order(f"{user_id}:{sub_type}")
+                if existing and existing.get("status") in ("paid", "applied"):
+                    text = (
+                        "<b>✅ Оплата уже подтверждена!</b>\n\n"
+                        "Подписка активирована, ключ был отправлен ранее."
+                    )
+                    kb = None
+                else:
+                    # Активируем подписку
+                    from payments import activate_subscription
+                    success = await activate_subscription(user_id, sub_type, "platega", transaction_id, bot=cb.bot)
+                    
+                    if success:
+                        text = (
+                            "<b>✅ Оплата подтверждена!</b>\n\n"
+                            "Ключ будет отправлен вам в ближайшее время."
+                        )
+                        kb = None
+                    else:
+                        text = (
+                            "<b>⚠️ Произошла ошибка при активации</b>\n\n"
+                            "Пожалуйста, обратитесь к поддержке."
+                        )
+                        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+                            [types.InlineKeyboardButton(text="📞 Поддержка", url=f"https://t.me/{config.get_support_username()}")]
+                        ])
+            else:
+                text = (
+                    "<b>⚠️ Не найдена информация о заказе</b>\n\n"
+                    f"Статус в Platega: {status}\n"
+                    "Обратитесь к поддержке."
+                )
+                kb = types.InlineKeyboardMarkup(inline_keyboard=[
+                    [types.InlineKeyboardButton(text="📞 Поддержка", url=f"https://t.me/{config.get_support_username()}")]
+                ])
+        else:
+            text = (
+                "<b>⚠️ Платеж не найден в базе</b>\n\n"
+                f"Статус в Platega: {status}\n"
+                "Возможно, вы создали платеж в другом боте."
+            )
+            kb = types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="📞 Поддержка", url=f"https://t.me/{config.get_support_username()}")]
+            ])
+    
     elif status == "PENDING":
         text = (
             "<b>⏳ Платеж еще не подтвержден</b>\n\n"
