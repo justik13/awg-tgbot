@@ -243,16 +243,9 @@ prompt_raw() {
   local prompt="$1"
   local __resultvar="$2"
   local __input=""
-  # Читаем из FD3 если доступен, иначе из stdin
-  if has_tty; then
-    if ! read -r -u 3 -p "$prompt" __input; then
-      __input=""
-    fi
-  else
-    # Fallback для pipe-сценариев: читаем из stdin (FD0)
-    if ! read -r -p "$prompt" __input; then
-      __input=""
-    fi
+  # Читаем из stdin (FD0) - универсальный способ для pipe и интерактива
+  if ! read -r -p "$prompt" __input; then
+    __input=""
   fi
   printf -v "$__resultvar" '%s' "$__input"
 }
@@ -275,16 +268,16 @@ prompt_with_default() {
   local prompt="$1"
   local default="${2:-}"
   local __resultvar="$3"
-  local value=""
+  local input_value=""
   while true; do
     if [[ -n "$default" ]]; then
-      prompt_raw "$prompt [$default]: " value
-      value="${value:-$default}"
+      prompt_raw "$prompt [$default]: " input_value
+      input_value="${input_value:-$default}"
     else
-      prompt_raw "$prompt: " value
+      prompt_raw "$prompt: " input_value
     fi
-    if [[ -n "$value" ]]; then
-      printf -v "$__resultvar" '%s' "$value"
+    if [[ -n "$input_value" ]]; then
+      printf -v "$__resultvar" '%s' "$input_value"
       return 0
     fi
     warn "Значение не может быть пустым."
@@ -2033,29 +2026,49 @@ install_or_reinstall_flow() {
     # Настройка Platega даже в автоматическом режиме
     echo ""
     echo "--- Настройка Platega (опционально, нажмите Enter для пропуска) ---"
-    value=""
+    
+    platega_merchant_id=""
     default="$(pick_existing_or_default "$(get_env_value PLATEGA_MERCHANT_ID)" "")"
-    prompt_with_default 'Platega Merchant ID' "$default" value
-    set_env_value PLATEGA_MERCHANT_ID "$value"
-    if [[ -n "$value" ]]; then
+    prompt_with_default 'Platega Merchant ID' "$default" platega_merchant_id
+    
+    if [[ -n "$platega_merchant_id" ]]; then
+      set_env_value PLATEGA_MERCHANT_ID "$platega_merchant_id"
+      
+      platega_secret_key=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET_KEY)" "")"
-      prompt_with_default 'Platega Secret Key' "$default" value
-      set_env_value PLATEGA_SECRET_KEY "$value"
+      prompt_with_default 'Platega Secret Key' "$default" platega_secret_key
+      set_env_value PLATEGA_SECRET_KEY "$platega_secret_key"
+      
+      platega_test_mode=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_TEST_MODE)" "0")"
-      prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" value
-      set_env_value PLATEGA_TEST_MODE "$value"
+      prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" platega_test_mode
+      set_env_value PLATEGA_TEST_MODE "$platega_test_mode"
+      
+      platega_webhook_port=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
-      prompt_with_default 'Порт webhook Platega' "$default" value
-      set_env_value PLATEGA_WEBHOOK_PORT "$value"
+      prompt_with_default 'Порт webhook Platega' "$default" platega_webhook_port
+      set_env_value PLATEGA_WEBHOOK_PORT "$platega_webhook_port"
+      
+      platega_price_7_days=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_7_DAYS)" "100")"
-      prompt_with_default 'Цена 7 дней через Platega (руб)' "$default" value
-      set_env_value PLATEGA_PRICE_7_DAYS "$value"
+      prompt_with_default 'Цена 7 дней через Platega (руб)' "$default" platega_price_7_days
+      set_env_value PLATEGA_PRICE_7_DAYS "$platega_price_7_days"
+      
+      platega_price_30_days=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_30_DAYS)" "250")"
-      prompt_with_default 'Цена 30 дней через Platega (руб)' "$default" value
-      set_env_value PLATEGA_PRICE_30_DAYS "$value"
+      prompt_with_default 'Цена 30 дней через Platega (руб)' "$default" platega_price_30_days
+      set_env_value PLATEGA_PRICE_30_DAYS "$platega_price_30_days"
+      
+      platega_price_90_days=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_90_DAYS)" "700")"
-      prompt_with_default 'Цена 90 дней через Platega (руб)' "$default" value
-      set_env_value PLATEGA_PRICE_90_DAYS "$value"
+      prompt_with_default 'Цена 90 дней через Platega (руб)' "$default" platega_price_90_days
+      set_env_value PLATEGA_PRICE_90_DAYS "$platega_price_90_days"
+      
+      echo "[+] Platega настроен."
+    else
+      echo "[*] Platega пропущен."
+      set_env_value PLATEGA_MERCHANT_ID ""
+      set_env_value PLATEGA_SECRET_KEY ""
     fi
   else
     configure_manual_awg_only
@@ -2068,29 +2081,49 @@ install_or_reinstall_flow() {
     
     echo ""
     echo "--- Настройка цен Platega (руб) ---"
-    value=""
+    
+    platega_merchant_id=""
     default="$(pick_existing_or_default "$(get_env_value PLATEGA_MERCHANT_ID)" "")"
-    prompt_with_default 'Platega Merchant ID' "$default" value
-    set_env_value PLATEGA_MERCHANT_ID "$value"
-    if [[ -n "$value" ]]; then
+    prompt_with_default 'Platega Merchant ID' "$default" platega_merchant_id
+    
+    if [[ -n "$platega_merchant_id" ]]; then
+      set_env_value PLATEGA_MERCHANT_ID "$platega_merchant_id"
+      
+      platega_secret_key=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET_KEY)" "")"
-      prompt_with_default 'Platega Secret Key' "$default" value
-      set_env_value PLATEGA_SECRET_KEY "$value"
+      prompt_with_default 'Platega Secret Key' "$default" platega_secret_key
+      set_env_value PLATEGA_SECRET_KEY "$platega_secret_key"
+      
+      platega_test_mode=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_TEST_MODE)" "0")"
-      prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" value
-      set_env_value PLATEGA_TEST_MODE "$value"
+      prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" platega_test_mode
+      set_env_value PLATEGA_TEST_MODE "$platega_test_mode"
+      
+      platega_webhook_port=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
-      prompt_with_default 'Порт webhook Platega' "$default" value
-      set_env_value PLATEGA_WEBHOOK_PORT "$value"
+      prompt_with_default 'Порт webhook Platega' "$default" platega_webhook_port
+      set_env_value PLATEGA_WEBHOOK_PORT "$platega_webhook_port"
+      
+      platega_price_7_days=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_7_DAYS)" "100")"
-      prompt_with_default 'Цена 7 дней через Platega (руб)' "$default" value
-      set_env_value PLATEGA_PRICE_7_DAYS "$value"
+      prompt_with_default 'Цена 7 дней через Platega (руб)' "$default" platega_price_7_days
+      set_env_value PLATEGA_PRICE_7_DAYS "$platega_price_7_days"
+      
+      platega_price_30_days=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_30_DAYS)" "250")"
-      prompt_with_default 'Цена 30 дней через Platega (руб)' "$default" value
-      set_env_value PLATEGA_PRICE_30_DAYS "$value"
+      prompt_with_default 'Цена 30 дней через Platega (руб)' "$default" platega_price_30_days
+      set_env_value PLATEGA_PRICE_30_DAYS "$platega_price_30_days"
+      
+      platega_price_90_days=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_90_DAYS)" "700")"
-      prompt_with_default 'Цена 90 дней через Platega (руб)' "$default" value
-      set_env_value PLATEGA_PRICE_90_DAYS "$value"
+      prompt_with_default 'Цена 90 дней через Platega (руб)' "$default" platega_price_90_days
+      set_env_value PLATEGA_PRICE_90_DAYS "$platega_price_90_days"
+      
+      echo "[+] Platega настроен."
+    else
+      echo "[*] Platega пропущен."
+      set_env_value PLATEGA_MERCHANT_ID ""
+      set_env_value PLATEGA_SECRET_KEY ""
     fi
     
     default="$(pick_existing_or_default "$(get_env_value DOWNLOAD_URL)" "https://github.com/amnezia-vpn/amnezia-client/releases/latest")"
@@ -3606,8 +3639,8 @@ if [[ "${AWG_TGBOT_SOURCE_ONLY:-0}" == "1" ]]; then
 fi
 
 require_root
-setup_logging
 setup_tty_fd
+setup_logging
 
 if [[ $# -gt 0 ]]; then
   run_action "$1"
