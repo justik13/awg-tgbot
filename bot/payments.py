@@ -451,8 +451,11 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         f"QR-код будет показан на странице оплаты."
     )
     
+    # Формируем правильные ссылки согласно документации Platega.io
+    sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
+        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
         [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
     ])
@@ -547,8 +550,9 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             "Не закрывайте это сообщение — кнопки оплаты остаются активными."
         )
         # Сохраняем все оригинальные кнопки для защиты от дурака
+        sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=f"https://pay.platega.io/{transaction_id}")],
+            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
             [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
             [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
@@ -566,8 +570,9 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             "Попробуйте проверить позже."
         )
         # Сохраняем все оригинальные кнопки для защиты от дурака
+        sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=f"https://pay.platega.io/{transaction_id}")],
+            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
             [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
             [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
