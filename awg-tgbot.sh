@@ -2360,7 +2360,12 @@ run_post_restart_smokecheck() {
 
   runtime_python="$PYTHON_BIN"
   [[ -x "${VENV_DIR}/bin/python" ]] && runtime_python="${VENV_DIR}/bin/python"
-  db_result="$("$runtime_python" - "$BOT_DIR" "$ENV_FILE" <<'PY' 2>/dev/null || true
+
+  # Retry loop для проверки БД: даём боту время на инициализацию схемы
+  local max_attempts=5 attempt_delay=2 db_result="" attempt=0
+  while (( attempt < max_attempts )); do
+    attempt=$((attempt + 1))
+    db_result="$( "$runtime_python" - "$BOT_DIR" "$ENV_FILE" <<'PY' 2>/dev/null || true
 import asyncio
 import os
 import sys
@@ -2387,6 +2392,16 @@ if not info.get("runtime_ready"):
 print("runtime_ready")
 PY
 )"
+    # Проверяем результат
+    if [[ "$db_result" == "runtime_ready" ]]; then
+      break
+    fi
+    # Если не готова и это не последняя попытка — ждём и пробуем снова
+    if (( attempt < max_attempts )); then
+      sleep "$attempt_delay"
+    fi
+  done
+
   if [[ "$db_result" == schema_not_ready:path=* ]]; then
     local schema_db_path="${db_result#schema_not_ready:path=}"
     warn "Проверка после перезапуска: проверка БД не пройдена (schema_ready=false, path=${schema_db_path})."
