@@ -543,10 +543,14 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
     elif status == "PENDING":
         text = (
             "<b>⏳ Платеж еще не подтвержден</b>\n\n"
-            "Пожалуйста, дождитесь подтверждения или попробуйте снова позже."
+            "Пожалуйста, дождитесь подтверждения или попробуйте снова позже.\n"
+            "Не закрывайте это сообщение — кнопки оплаты остаются активными."
         )
+        # Сохраняем все оригинальные кнопки для защиты от дурака
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"platega_check_{transaction_id}")]
+            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=f"https://pay.platega.com/{transaction_id}")],
+            [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
+            [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
     elif status == "CANCELED":
         text = (
@@ -561,8 +565,11 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             f"<b>⚠️ Статус платежа: {status or 'Неизвестен'}</b>\n\n"
             "Попробуйте проверить позже."
         )
+        # Сохраняем все оригинальные кнопки для защиты от дурака
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"platega_check_{transaction_id}")]
+            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=f"https://pay.platega.com/{transaction_id}")],
+            [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
+            [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
     
     # Пытаемся отредактировать сообщение, игнорируя ошибку "не изменено"
