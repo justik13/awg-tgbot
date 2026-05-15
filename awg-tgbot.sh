@@ -1924,10 +1924,9 @@ PY
   
   cat > "$nginx_conf" <<NGINX
 server {
-    listen 80;
+    listen 80 default_server;
     server_name ${domain};
     
-
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
     }
@@ -1945,6 +1944,13 @@ NGINX
   # Создаем симлинк
   ln -sf "$nginx_conf" "$nginx_link"
   
+  # Создаем директорию для ACME challenge (обязательно для webroot проверки)
+  info "Создаю директорию для ACME challenge..."
+  mkdir -p /var/www/certbot/.well-known/acme-challenge
+  chown -R www-data:www-data /var/www/certbot
+  chmod -R 755 /var/www/certbot
+  ok "Директория /var/www/certbot/.well-known/acme-challenge создана."
+  
   # Проверяем конфигурацию Nginx
   if ! nginx -t >/dev/null 2>&1; then
     warn "Ошибка в конфигурации Nginx."
@@ -1952,20 +1958,35 @@ NGINX
     return 1
   fi
   
-  # Перезапускаем Nginx
+  # Перезапускаем Nginx с выводом статуса
+  info "Перезапускаю Nginx..."
   if require_command systemctl; then
-    systemctl restart nginx >/dev/null 2>&1 || {
-      warn "Не удалось перезапустить Nginx."
+    if ! systemctl restart nginx 2>&1; then
+      warn "Не удалось перезапустить Nginx через systemctl."
+      systemctl status nginx --no-pager || true
       return 1
-    }
-    ok "Nginx перезапущен."
+    fi
+    ok "Nginx перезапущен через systemctl."
   else
-    service nginx restart >/dev/null 2>&1 || {
+    if ! service nginx restart 2>&1; then
       warn "Не удалось перезапустить Nginx через service."
+      service nginx status || true
       return 1
-    }
+    fi
     ok "Nginx перезапущен через service."
   fi
+  
+  # Даём время на старт Nginx
+  sleep 2
+  
+  # Проверяем, что Nginx действительно слушает порт 80
+  info "Проверяю, что Nginx слушает порт 80..."
+  if ! ss -tlnp | grep -q ":80 "; then
+    warn "Nginx не слушает порт 80!"
+    ss -tlnp | grep -E ":80|nginx" || true
+    return 1
+  fi
+  ok "Nginx слушает порт 80."
   
   # Проверяем, что порт 80 доступен извне перед получением сертификата
   info "Проверяю доступность порта 80 из интернета..."
@@ -1998,25 +2019,52 @@ PY
     fi
   fi
   
-  # Получаем SSL сертификат через Certbot
+  # Тестовая проверка доступности ACME challenge directory
+  info "Тестирую доступность /.well-known/acme-challenge/ локально..."
+  local test_file="/var/www/certbot/.well-known/acme-challenge/test-connectivity"
+  echo "test-ok" > "$test_file"
+  sleep 1
+  local curl_result
+  curl_result=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1/.well-known/acme-challenge/test-connectivity" 2>/dev/null || echo "000")
+  rm -f "$test_file"
+  if [[ "$curl_result" == "200" ]]; then
+    ok "ACME challenge директория доступна локально."
+  else
+    warn "ACME challenge директория НЕ доступна локально (HTTP ${curl_result})."
+    echo "Проверьте конфигурацию Nginx и права доступа к /var/www/certbot"
+    ls -la /var/www/certbot/.well-known/ 2>/dev/null || true
+    cat /etc/nginx/sites-available/"$domain" 2>/dev/null || true
+  fi
+  
+  # Получаем SSL сертификат через Certbot с подробным логом ошибок
   info "Получаю SSL сертификат через Let's Encrypt..."
-  if certbot --nginx --non-interactive --agree-tos --email root@localhost -d "$domain" >/dev/null 2>&1; then
+  local certbot_log
+  certbot_log="$(mktemp)"
+  if certbot --nginx --non-interactive --agree-tos --email root@localhost -d "$domain" >"$certbot_log" 2>&1; then
+    rm -f "$certbot_log"
     ok "SSL сертификат успешно получен для ${domain}."
   else
     echo ""
     echo "[ОШИБКА] Не удалось получить SSL сертификат автоматически."
     echo ""
+    echo "=== Подробный лог ошибки ==="
+    cat "$certbot_log"
+    echo "============================="
+    echo ""
     echo "Возможные причины:"
     echo "  1. Порт 80 закрыт фаерволом провайдера (откройте в панели управления хостингом)"
     echo "  2. DNS запись еще не обновилась (подождите и попробуйте позже)"
     echo "  3. Домен уже имеет сертификат (попробуйте certbot renew)"
+    echo "  4. Директория /.well-known/acme-challenge/ недоступна из интернета"
     echo ""
-    echo "Для ручной проверки выполните:"
+    echo "Для диагностики выполните:"
+    echo "  curl -v http://${domain}/.well-known/acme-challenge/test"
     echo "  curl -v http://${domain}/webhook"
     echo ""
-    echo "Затем получите сертификат вручную:"
-    echo "  certbot --nginx -d ${domain}"
+    echo "Попробуйте получить сертификат вручную с подробным логом:"
+    echo "  certbot --nginx -d ${domain} --verbose"
     echo ""
+    rm -f "$certbot_log"
     return 1
   fi
   
