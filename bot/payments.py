@@ -825,7 +825,7 @@ async def activate_subscription(user_id: int, sub_type: str, payment_method: str
         await ensure_user_exists(user_id, None, None)
         
         # Проверяем, не обработан ли уже этот платеж
-        existing = await db.get_payment_by_order(f"{user_id}:{sub_type}")
+        existing = await get_payment_by_order(f"{user_id}:{sub_type}")
         if existing and existing.get("status") in ("paid", "applied"):
             logger.info(f"Payment already processed for user {user_id}, sub {sub_type}")
             return True
