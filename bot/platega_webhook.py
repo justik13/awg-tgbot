@@ -131,8 +131,9 @@ def create_app() -> web.Application:
     """Создает и настраивает веб-приложение."""
     app = web.Application()
     
-    # Роуты
+    # Роуты - поддерживаем оба пути для совместимости
     app.router.add_post('/callback/platega', handle_platega_callback)
+    app.router.add_post('/platega/webhook', handle_platega_callback)
     app.router.add_get('/health', handle_health)
     
     return app
