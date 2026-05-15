@@ -548,7 +548,7 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
         )
         # Сохраняем все оригинальные кнопки для защиты от дурака
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=f"https://pay.platega.com/{transaction_id}")],
+            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=f"https://pay.platega.io/{transaction_id}")],
             [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
             [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
@@ -567,7 +567,7 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
         )
         # Сохраняем все оригинальные кнопки для защиты от дурака
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=f"https://pay.platega.com/{transaction_id}")],
+            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=f"https://pay.platega.io/{transaction_id}")],
             [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
             [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
