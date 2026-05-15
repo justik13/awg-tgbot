@@ -1903,6 +1903,16 @@ PY
   # Открываем порты 80 и 443 в firewall ДО настройки Nginx и получения сертификата
   info "Открываю порты 80 и 443 в firewall..."
   open_firewall_ports 80 443
+
+  # Очищаем старые конфигурации для этого домена
+  local old_nginx_link="/etc/nginx/sites-enabled/${domain}"
+  local old_nginx_conf="/etc/nginx/sites-available/${domain}"
+  if [[ -L "$old_nginx_link" ]] || [[ -f "$old_nginx_link" ]]; then
+    rm -f "$old_nginx_link"
+  fi
+  if [[ -f "$old_nginx_conf" ]]; then
+    rm -f "$old_nginx_conf"
+  fi
   
   # Создаем конфигурацию Nginx
   local webhook_port
@@ -1917,6 +1927,11 @@ server {
     listen 80;
     server_name ${domain};
     
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
     location /webhook {
         proxy_pass http://127.0.0.1:${webhook_port};
         proxy_set_header Host \$host;
