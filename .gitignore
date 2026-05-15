@@ -1,9 +1,10 @@
-# Environment
+```bash
+# Environment files
 .env
 .env.local
-*.env.*
+.env.*
 
-# Logs and temp files
+# Logs and temporary files
 *.log
 *.tmp
 *.swp
@@ -12,62 +13,7 @@
 .vscode/
 .idea/
 
-# Dependencies
-.venv/
-venv/
-node_modules/
-
-# Build artifacts
-dist/
-build/
-target/
-*.o
-*.obj
-*.exe
-*.dll
-*.so
-*.a
-*.out
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.py~
-.Python
-*.sconsign
-*.sconsign.*
-.sconsign
-.mypy_cache/
-.pytest_cache/
-.coverage
-coverage/
-
-# Compressed files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
-
-# System files
+# OS specific
 .DS_Store
 Thumbs.db
+```

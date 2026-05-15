@@ -243,9 +243,15 @@ prompt_raw() {
   local prompt="$1"
   local __resultvar="$2"
   local __input=""
-  # Читаем из stdin (FD0) - универсальный способ для pipe и интерактива
-  if ! read -r -p "$prompt" __input; then
-    __input=""
+  # Читаем из /dev/tty если доступен (для интерактива), иначе из stdin
+  if [[ -t 0 ]] || [[ -c "/dev/tty" ]]; then
+    if ! read -r -p "$prompt" __input < /dev/tty; then
+      __input=""
+    fi
+  else
+    if ! read -r -p "$prompt" __input; then
+      __input=""
+    fi
   fi
   printf -v "$__resultvar" '%s' "$__input"
 }
