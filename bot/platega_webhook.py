@@ -8,7 +8,7 @@ import logging
 from aiohttp import web
 from typing import Dict, Any
 
-from database import get_payment_by_order, update_payment_status_by_order, update_payment_status
+from database import get_payment_by_order, update_payment_status_by_order
 from platega_service import platega_service
 
 logger = logging.getLogger(__name__)
@@ -100,18 +100,18 @@ async def handle_platega_callback(request: web.Request) -> web.Response:
             if success:
                 logger.info(f"Subscription activated for user {user_id}")
                 # Обновляем запись о платеже
-                await update_payment_status(order_id, "paid", transaction_id)
+                await update_payment_status_by_order(order_id, "paid", transaction_id)
             else:
                 logger.error(f"Failed to activate subscription for user {user_id}")
                 
         elif status == "CANCELED":
             logger.info(f"Payment canceled for order {order_id}")
-            await update_payment_status(order_id, "canceled", transaction_id)
+            await update_payment_status_by_order(order_id, "canceled", transaction_id)
             
         elif status == "CHARGEBACKED":
             logger.warning(f"Chargeback for order {order_id}")
             # TODO: Обработка chargeback (возможно блокировка пользователя)
-            await update_payment_status(order_id, "chargeback", transaction_id)
+            await update_payment_status_by_order(order_id, "chargeback", transaction_id)
         else:
             logger.info(f"Payment status {status} for order {order_id}")
         

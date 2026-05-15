@@ -492,8 +492,8 @@ async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_
                 if success:
                     # Обновляем статус платежа в БД
                     order_id = f"{user_id}:{sub_type}"
-                    from database import update_payment_status
-                    await update_payment_status(order_id, "paid", transaction_id)
+                    from database import update_payment_status_by_order
+                    await update_payment_status_by_order(order_id, "paid", transaction_id)
                     
                     # Уведомляем пользователя
                     try:
@@ -512,8 +512,8 @@ async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_
             elif status in ("CANCELED", "CHARGEBACKED"):
                 logger.info(f"Payment {status} via polling for transaction {transaction_id}")
                 order_id = f"{user_id}:{sub_type}"
-                from database import update_payment_status
-                await update_payment_status(order_id, status.lower(), transaction_id)
+                from database import update_payment_status_by_order
+                await update_payment_status_by_order(order_id, status.lower(), transaction_id)
                 return  # Выход из цикла проверки
             
             # Продолжаем опрос если PENDING или None
@@ -997,7 +997,8 @@ async def activate_subscription(user_id: int, sub_type: str, payment_method: str
             logger.info(f"Subscription activated for user {user_id}, sub {sub_type}")
             
             # Обновляем статус платежа на "paid" после успешной активации
-            await update_payment_status(transaction_id, "paid", transaction_id)
+            order_id = f"{user_id}:{sub_type}"
+            await update_payment_status_by_order(order_id, "paid", transaction_id)
             
             # Отправляем пользователю ключ
             try:
