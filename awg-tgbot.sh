@@ -1880,6 +1880,30 @@ setup_nginx_and_ssl() {
   
   info "Настраиваю Nginx и SSL для домена ${domain}..."
   
+  # Предварительная проверка: нет ли уже процессов на порту 80
+  info "Предварительная проверка порта 80..."
+  local existing_port80
+  existing_port80=$(ss -tlnp | grep ":80 " || true)
+  if [[ -n "$existing_port80" ]]; then
+    info "Порт 80 уже занят:"
+    echo "$existing_port80"
+    
+    # Проверяем, не Docker ли это
+    if command -v docker &>/dev/null; then
+      local docker_containers
+      docker_containers=$(docker ps --format "table {{.Names}}\t{{.Ports}}" 2>/dev/null | grep -E ":80|:443" || true)
+      if [[ -n "$docker_containers" ]]; then
+        warn "Обнаружены Docker-контейнеры на портах 80/443:"
+        echo "$docker_containers"
+        echo ""
+        echo "Это может конфликтовать с получением SSL сертификата."
+        echo "Если нужно, остановите контейнеры командой:"
+        echo "  docker stop <container_name>"
+        echo ""
+      fi
+    fi
+  fi
+  
   # Проверка DNS
   info "Проверяю DNS записи для ${domain}..."
   if ! "$PYTHON_BIN" - "$domain" <<'PY'
@@ -1924,10 +1948,9 @@ PY
   
   cat > "$nginx_conf" <<NGINX
 server {
-    listen 80;
+    listen 80 default_server;
     server_name ${domain};
     
-
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
     }
@@ -1945,6 +1968,13 @@ NGINX
   # Создаем симлинк
   ln -sf "$nginx_conf" "$nginx_link"
   
+  # Создаем директорию для ACME challenge (обязательно для webroot проверки)
+  info "Создаю директорию для ACME challenge..."
+  mkdir -p /var/www/certbot/.well-known/acme-challenge
+  chown -R www-data:www-data /var/www/certbot
+  chmod -R 755 /var/www/certbot
+  ok "Директория /var/www/certbot/.well-known/acme-challenge создана."
+  
   # Проверяем конфигурацию Nginx
   if ! nginx -t >/dev/null 2>&1; then
     warn "Ошибка в конфигурации Nginx."
@@ -1952,19 +1982,74 @@ NGINX
     return 1
   fi
   
-  # Перезапускаем Nginx
+  # Перезапускаем Nginx с выводом статуса
+  info "Перезапускаю Nginx..."
   if require_command systemctl; then
-    systemctl restart nginx >/dev/null 2>&1 || {
-      warn "Не удалось перезапустить Nginx."
+    if ! systemctl restart nginx 2>&1; then
+      warn "Не удалось перезапустить Nginx через systemctl."
+      systemctl status nginx --no-pager || true
       return 1
-    }
-    ok "Nginx перезапущен."
+    fi
+    ok "Nginx перезапущен через systemctl."
   else
-    service nginx restart >/dev/null 2>&1 || {
+    if ! service nginx restart 2>&1; then
       warn "Не удалось перезапустить Nginx через service."
+      service nginx status || true
       return 1
-    }
+    fi
     ok "Nginx перезапущен через service."
+  fi
+  
+  # Даём время на старт Nginx
+  sleep 2
+  
+  # Проверяем, что Nginx действительно слушает порт 80 НА ВСЕХ ИНТЕРФЕЙСАХ
+  info "Проверяю, что Nginx слушает порт 80..."
+  if ! ss -tlnp | grep -q ":80 "; then
+    warn "Nginx не слушает порт 80!"
+    ss -tlnp | grep -E ":80|nginx" || true
+    return 1
+  fi
+  ok "Nginx слушает порт 80."
+  
+  # Критическая проверка: кто именно слушает порт 80 и на каких интерфейсах
+  info "Детальная проверка процессов на порту 80..."
+  echo "=== Процессы на порту 80 ==="
+  ss -tlnp | grep ":80" || echo "[Пусто]"
+  echo ""
+  echo "=== Проверка на конфликтующие процессы (Docker, Apache, другой Nginx) ==="
+  local conflicting_procs
+  conflicting_procs=$(ps aux | grep -E "[n]ginx|[a]pache|[d]ocker" | grep -v "grep" || true)
+  if [[ -n "$conflicting_procs" ]]; then
+    echo "$conflicting_procs"
+    echo ""
+    warn "Обнаружены потенциально конфликтующие процессы!"
+    echo "Если видите несколько nginx или docker, возможно один из них перехватывает порт 80."
+  fi
+  echo ""
+  
+  # Проверяем, слушает ли Nginx на 0.0.0.0 (все интерфейсы), а не только на 127.0.0.1
+  local nginx_listen_info
+  nginx_listen_info=$(ss -tlnp | grep ":80" || true)
+  if echo "$nginx_listen_info" | grep -q "127.0.0.1:80"; then
+    if ! echo "$nginx_listen_info" | grep -qE "0\\.0\\.0\\.0:80|\\*:80|\\[::\\]:80"; then
+      warn "ВНИМАНИЕ: Nginx слушает ТОЛЬКО на localhost (127.0.0.1:80), но НЕ на внешних интерфейсах!"
+      echo "Это означает, что Let's Encrypt не сможет подключиться к вашему серверу."
+      echo ""
+      echo "Возможные причины:"
+      echo "  1. Другой процесс (например, Docker-контейнер) уже занял порт 80"
+      echo "  2. Nginx сконфигурирован слушать только на 127.0.0.1"
+      echo ""
+      echo "Проверьте конфигурацию Nginx:"
+      grep -r "listen" /etc/nginx/sites-enabled/ 2>/dev/null || true
+      echo ""
+      echo "Попробуйте найти и остановить конфликтующий процесс:"
+      echo "  docker ps 2>/dev/null | grep -E ':80|nginx' || true"
+      echo "  lsof -i :80 2>/dev/null || true"
+      if ! confirm_explicit "Попробовать получить сертификат несмотря на это?"; then
+        return 1
+      fi
+    fi
   fi
   
   # Проверяем, что порт 80 доступен извне перед получением сертификата
@@ -1998,25 +2083,78 @@ PY
     fi
   fi
   
-  # Получаем SSL сертификат через Certbot
+  # Тестовая проверка доступности ACME challenge directory
+  info "Тестирую доступность /.well-known/acme-challenge/ локально..."
+  local test_file="/var/www/certbot/.well-known/acme-challenge/test-connectivity"
+  echo "test-ok" > "$test_file"
+  sleep 1
+  local curl_result
+  curl_result=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1/.well-known/acme-challenge/test-connectivity" 2>/dev/null || echo "000")
+  rm -f "$test_file"
+  if [[ "$curl_result" == "200" ]]; then
+    ok "ACME challenge директория доступна локально."
+  else
+    warn "ACME challenge директория НЕ доступна локально (HTTP ${curl_result})."
+    echo "Проверьте конфигурацию Nginx и права доступа к /var/www/certbot"
+    ls -la /var/www/certbot/.well-known/ 2>/dev/null || true
+    cat /etc/nginx/sites-available/"$domain" 2>/dev/null || true
+  fi
+  
+  # Получаем SSL сертификат через Certbot с ПОЛНЫМ логом ошибок
   info "Получаю SSL сертификат через Let's Encrypt..."
-  if certbot --nginx --non-interactive --agree-tos --email root@localhost -d "$domain" >/dev/null 2>&1; then
+  local certbot_log certbot_err_log
+  certbot_log="$(mktemp)"
+  certbot_err_log="$(mktemp)"
+  
+  # Запускаем certbot с максимальным уровнем детализации
+  if certbot --nginx --non-interactive --agree-tos --email root@localhost -d "$domain" --verbose >"$certbot_log" 2>"$certbot_err_log"; then
+    rm -f "$certbot_log" "$certbot_err_log"
     ok "SSL сертификат успешно получен для ${domain}."
   else
     echo ""
     echo "[ОШИБКА] Не удалось получить SSL сертификат автоматически."
     echo ""
+    echo "=== Лог stdout ==="
+    cat "$certbot_log"
+    echo ""
+    echo "=== Лог stderr (ОШИБКИ) ==="
+    cat "$certbot_err_log"
+    echo "==========================="
+    echo ""
+    
+    # Дополнительные проверки для диагностики
+    echo "=== Дополнительная диагностика ==="
+    echo ""
+    echo "1. Проверка доступности домена извне:"
+    curl -v --connect-timeout 5 "http://${domain}/.well-known/acme-challenge/" 2>&1 | head -20 || echo "  [Не удалось подключиться]"
+    echo ""
+    echo "2. Текущие сертификаты (если есть):"
+    ls -la /etc/letsencrypt/live/${domain}/ 2>/dev/null || echo "  [Сертификатов нет]"
+    echo ""
+    echo "3. Статус портов:"
+    ss -tlnp | grep -E ":80|:443" || echo "  [Порты 80/443 не слушаются]"
+    echo ""
+    echo "4. Конфигурация Nginx для домена:"
+    cat /etc/nginx/sites-available/"$domain" 2>/dev/null || echo "  [Конфиг не найден]"
+    echo ""
+    
     echo "Возможные причины:"
     echo "  1. Порт 80 закрыт фаерволом провайдера (откройте в панели управления хостингом)"
     echo "  2. DNS запись еще не обновилась (подождите и попробуйте позже)"
     echo "  3. Домен уже имеет сертификат (попробуйте certbot renew)"
+    echo "  4. Директория /.well-known/acme-challenge/ недоступна из интернета"
+    echo "  5. Другой процесс (Docker/Apache) перехватывает порт 80"
     echo ""
-    echo "Для ручной проверки выполните:"
+    echo "Для ручной диагностики выполните:"
+    echo "  curl -v http://${domain}/.well-known/acme-challenge/test"
     echo "  curl -v http://${domain}/webhook"
+    echo "  lsof -i :80"
+    echo "  docker ps 2>/dev/null | grep ':80'"
     echo ""
-    echo "Затем получите сертификат вручную:"
-    echo "  certbot --nginx -d ${domain}"
+    echo "Попробуйте получить сертификат вручную с полным логом:"
+    echo "  certbot --nginx -d ${domain} --verbose --debug"
     echo ""
+    rm -f "$certbot_log" "$certbot_err_log"
     return 1
   fi
   
