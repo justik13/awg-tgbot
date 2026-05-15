@@ -1764,7 +1764,7 @@ configure_platega_webhook() {
     # Извлекаем только IP из SERVER_IP (формат может быть IP:port)
     local webhook_host
     webhook_host="${server_ip%%:*}"
-    local callback_url="https://${webhook_host}:${webhook_port}/platega/webhook"
+    local callback_url="https://${webhook_host}:${webhook_port}/webhook"
     ok "Platega webhook сервис запущен: ${PLATEGA_WEBHOOK_SERVICE_NAME}"
     info ""
     info "╔═══════════════════════════════════════════════════════════╗"
