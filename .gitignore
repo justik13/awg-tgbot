@@ -24,23 +24,18 @@ build/
 target/
 *.o
 *.obj
-*.exe
-*.dll
-*.so
-*.a
 *.out
-*.pyc
+
+# Python
 __pycache__/
-*.class
-.mypy_cache/
-.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
 .coverage
 coverage/
 htmlcov/
-
-# System files
-.DS_Store
-Thumbs.db
 
 # Compressed files
 *.zip
