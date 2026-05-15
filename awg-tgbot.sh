@@ -1900,6 +1900,10 @@ PY
     fi
   fi
   
+  # Открываем порты 80 и 443 в firewall ДО настройки Nginx и получения сертификата
+  info "Открываю порты 80 и 443 в firewall..."
+  open_firewall_ports 80 443
+  
   # Создаем конфигурацию Nginx
   local webhook_port
   webhook_port="$(get_env_value PLATEGA_WEBHOOK_PORT)"
@@ -1948,17 +1952,57 @@ NGINX
     ok "Nginx перезапущен через service."
   fi
   
+  # Проверяем, что порт 80 доступен извне перед получением сертификата
+  info "Проверяю доступность порта 80 из интернета..."
+  sleep 2
+  if ! "$PYTHON_BIN" - "$domain" <<'PY'
+import socket, sys, time
+domain = sys.argv[1]
+for attempt in range(3):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        result = sock.connect_ex((socket.gethostbyname(domain), 80))
+        sock.close()
+        if result == 0:
+            print(f"Порт 80 открыт и доступен")
+            sys.exit(0)
+    except Exception as e:
+        pass
+    time.sleep(2)
+print("Порт 80 недоступен из интернета. Let's Encrypt не сможет проверить домен.")
+sys.exit(1)
+PY
+  then
+    warn "Порт 80 не доступен из интернета. Это может быть из-за:"
+    echo "  1. Фаервола вашего хостинг-провайдера (нужно открыть в панели управления)"
+    echo "  2. DNS еще не обновился (подождите 5-10 минут)"
+    echo "  3. Nginx не слушает порт 80 (проверьте systemctl status nginx)"
+    if ! confirm_explicit "Попробовать получить сертификат несмотря на это?"; then
+      return 1
+    fi
+  fi
+  
   # Получаем SSL сертификат через Certbot
   info "Получаю SSL сертификат через Let's Encrypt..."
   if certbot --nginx --non-interactive --agree-tos --email root@localhost -d "$domain" >/dev/null 2>&1; then
     ok "SSL сертификат успешно получен для ${domain}."
   else
-    warn "Не удалось получить SSL сертификат автоматически."
-    info "Попробуйте вручную: certbot --nginx -d ${domain}"
+    error "Не удалось получить SSL сертификат автоматически."
+    echo ""
+    echo "Возможные причины:"
+    echo "  1. Порт 80 закрыт фаерволом провайдера (откройте в панели управления хостингом)"
+    echo "  2. DNS запись еще не обновилась (подождите и попробуйте позже)"
+    echo "  3. Домен уже имеет сертификат (попробуйте certbot renew)"
+    echo ""
+    echo "Для ручной проверки выполните:"
+    echo "  curl -v http://${domain}/webhook"
+    echo ""
+    echo "Затем получите сертификат вручную:"
+    echo "  certbot --nginx -d ${domain}"
+    echo ""
+    return 1
   fi
-  
-  # Открываем порты 80 и 443 в firewall (если активен)
-  open_firewall_ports 80 443
   
   ok "Nginx и SSL настроены для ${domain}."
   info "Callback URL: https://${domain}/webhook"
