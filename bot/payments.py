@@ -485,13 +485,40 @@ async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_
             
             if status == "CONFIRMED":
                 logger.info(f"Payment confirmed via polling for user {user_id}, transaction {transaction_id}")
+                
+                # Сначала сохраняем платеж в БД до активации
+                order_id = f"{user_id}:{sub_type}"
+                tariff = get_tariffs().get(sub_type)
+                if tariff:
+                    from database import save_payment, get_payment_by_order
+                    # Проверяем, не сохранен ли уже платеж
+                    existing_payment = await get_payment_by_order(order_id)
+                    if not existing_payment or existing_payment.get("status") not in ("paid", "applied"):
+                        raw_payload = {
+                            "invoice_payload": sub_type,
+                            "currency": "RUB",
+                            "total_amount": float(tariff["amount"]),
+                            "platega_transaction_id": transaction_id,
+                        }
+                        await save_payment(
+                            telegram_payment_charge_id=transaction_id,
+                            provider_payment_charge_id=transaction_id,
+                            user_id=user_id,
+                            payload=sub_type,
+                            amount=float(tariff["amount"]),
+                            currency="RUB",
+                            payment_method="platega",
+                            status="received",
+                            raw_payload_json=json.dumps(raw_payload, ensure_ascii=False),
+                        )
+                        logger.info(f"Payment saved to DB before activation for user {user_id}, transaction {transaction_id}")
+                
                 # Активируем подписку
                 from payments import activate_subscription
                 success = await activate_subscription(user_id, sub_type, "platega", transaction_id, bot=bot)
                 
                 if success:
                     # Обновляем статус платежа в БД
-                    order_id = f"{user_id}:{sub_type}"
                     from database import update_payment_status_by_order
                     await update_payment_status_by_order(order_id, "paid", transaction_id)
                     
