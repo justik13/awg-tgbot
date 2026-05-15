@@ -1,20 +1,53 @@
-```
+```gitignore
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Logs and temp files
-*.log
-*.tmp
-
-# Environment
-.env
-.env.local
-*.env.*
-
 # Dependencies
 .venv/
 venv/
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+.MF
+tags
+TAGS
+.idlerc/
+.python-version
+ipynb_checkpoints
+.spyderproject
+.spyproject
+.ropeproject
+/site-packages/
+.pytest_cache/
+.hypothesis/
+.eggs/
+*.egg-info/
+.installed.cfg
+.pip-delete-this-directory.txt
+.pydevproject
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.env
+.env.local
+*.env.*
 ```
