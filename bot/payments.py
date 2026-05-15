@@ -451,8 +451,11 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         f"QR-код будет показан на странице оплаты."
     )
     
+    # Формируем правильные ссылки согласно документации Platega.io
+    sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
+        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
         [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
     ])
@@ -466,10 +469,11 @@ async def platega_pay_handler(cb: types.CallbackQuery):
 async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_type: str, chat_id: int):
     """
     Фоновая задача для опроса статуса платежа Platega.
-    Проверяет статус каждые 5 секунд до подтверждения или отмены.
+    Проверяет статус каждые 10 секунд в течение 3 минут.
+    Основной механизм подтверждения — вебхук, этот цикл — вспомогательный.
     """
-    max_attempts = 60  # Максимум 5 минут (60 * 5 сек)
-    delay_seconds = 5
+    max_attempts = 18  # 3 минуты (18 * 10 сек)
+    delay_seconds = 10
     
     for attempt in range(max_attempts):
         await asyncio.sleep(delay_seconds)
@@ -516,6 +520,8 @@ async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_
             logger.exception(f"Error polling payment status for {transaction_id}: {e}")
             continue
     
+    logger.info(f"Payment polling stopped for {transaction_id} after {max_attempts} attempts. Waiting for webhook.")
+    
     logger.warning(f"Payment polling timed out for transaction {transaction_id} after {max_attempts} attempts")
 
 
@@ -547,8 +553,9 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             "Не закрывайте это сообщение — кнопки оплаты остаются активными."
         )
         # Сохраняем все оригинальные кнопки для защиты от дурака
+        sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=f"https://pay.platega.io/{transaction_id}")],
+            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
             [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
             [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
@@ -566,8 +573,9 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             "Попробуйте проверить позже."
         )
         # Сохраняем все оригинальные кнопки для защиты от дурака
+        sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=f"https://pay.platega.io/{transaction_id}")],
+            [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
             [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
             [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
