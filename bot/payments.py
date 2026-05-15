@@ -937,6 +937,9 @@ async def activate_subscription(user_id: int, sub_type: str, payment_method: str
         if applied:
             logger.info(f"Subscription activated for user {user_id}, sub {sub_type}")
             
+            # Обновляем статус платежа на "paid" после успешной активации
+            await update_payment_status(transaction_id, "paid", transaction_id)
+            
             # Отправляем пользователю ключ
             try:
                 from database import get_user_keys
