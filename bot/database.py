@@ -844,11 +844,44 @@ async def get_payment_by_order(order_id: str) -> dict[str, Any] | None:
     return {
         "payment_id": row[0],
         "user_id": row[1],
-        "payload": row[2],
+        "invoice_payload": row[2],
+        "order_id": f"{row[1]}:{row[2]}" if row[1] else row[2],
         "status": row[3],
         "amount": row[4],
         "currency": row[5],
         "raw_payload": json.loads(row[6]) if row[6] else {},
+    }
+
+
+async def get_payment_by_transaction_id(transaction_id: str) -> dict[str, Any] | None:
+    """Получить платеж по transaction_id (platega_transaction_id или telegram_payment_charge_id)."""
+    row = await fetchone(
+        """
+        SELECT telegram_payment_charge_id, user_id, payload, status, amount, currency, raw_payload_json, created_at
+        FROM payments
+        WHERE telegram_payment_charge_id = ?
+        LIMIT 1
+        """,
+        (transaction_id,),
+    )
+    
+    if not row:
+        return None
+    
+    user_id = row[1]
+    payload = row[2]
+    order_id = f"{user_id}:{payload}" if user_id and payload else payload
+    
+    return {
+        "payment_id": row[0],
+        "user_id": user_id,
+        "invoice_payload": payload,
+        "order_id": order_id,
+        "status": row[3],
+        "amount": row[4],
+        "currency": row[5],
+        "raw_payload_json": row[6],
+        "created_at": row[7],
     }
 
 
