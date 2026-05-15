@@ -1948,19 +1948,24 @@ PY
   
   cat > "$nginx_conf" <<NGINX
 server {
-    listen 80 default_server;
+    listen 80;
     server_name ${domain};
     
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
+        try_files $uri =404;
     }
 
     location /webhook {
         proxy_pass http://127.0.0.1:${webhook_port};
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Health check для webhook
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
     }
 }
 NGINX
@@ -2098,6 +2103,10 @@ PY
     echo "Проверьте конфигурацию Nginx и права доступа к /var/www/certbot"
     ls -la /var/www/certbot/.well-known/ 2>/dev/null || true
     cat /etc/nginx/sites-available/"$domain" 2>/dev/null || true
+    echo ""
+    echo "Проверка nginx.conf:"
+    grep -A5 "acme-challenge" /etc/nginx/sites-available/"$domain" 2>/dev/null || echo "[Не найдено]"
+    return 1
   fi
   
   # Получаем SSL сертификат через Certbot с ПОЛНЫМ логом ошибок
@@ -2107,7 +2116,8 @@ PY
   certbot_err_log="$(mktemp)"
   
   # Запускаем certbot с максимальным уровнем детализации
-  if certbot --nginx --non-interactive --agree-tos --email root@localhost -d "$domain" --verbose >"$certbot_log" 2>"$certbot_err_log"; then
+  # Используем --register-unsafely-without-email чтобы избежать проблем с невалидным email
+  if certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d "$domain" --verbose >"$certbot_log" 2>"$certbot_err_log"; then
     rm -f "$certbot_log" "$certbot_err_log"
     ok "SSL сертификат успешно получен для ${domain}."
   else
