@@ -1753,7 +1753,31 @@ configure_platega_webhook() {
   
   install_platega_webhook_service || return 1
   systemctl enable --now "$PLATEGA_WEBHOOK_SERVICE_NAME" >/dev/null 2>&1 || return 1
-  ok "Platega webhook сервис запущен: ${PLATEGA_WEBHOOK_SERVICE_NAME}"
+  
+  # Показываем URL для настройки Callback в Platega
+  local server_ip
+  server_ip="$(get_env_value SERVER_IP)"
+  local webhook_port
+  webhook_port="$(get_env_value PLATEGA_WEBHOOK_PORT)"
+  
+  if [[ -n "$server_ip" && -n "$webhook_port" ]]; then
+    local callback_url="https://${server_ip}:${webhook_port}/platega/webhook"
+    ok "Platega webhook сервис запущен: ${PLATEGA_WEBHOOK_SERVICE_NAME}"
+    info ""
+    info "╔═══════════════════════════════════════════════════════════╗"
+    info "║  ВАЖНО: Настройте Callback URL в личном кабинете Platega  ║"
+    info "╠═══════════════════════════════════════════════════════════╣"
+    info "║  URL для ввода в настройках Platega:                      ║"
+    info "║  ${callback_url}"
+    info "║                                                           ║"
+    info "║  Убедитесь, что порт ${webhook_port} открыт в firewall!              ║"
+    info "╚═══════════════════════════════════════════════════════════╝"
+    info ""
+  else
+    ok "Platega webhook сервис запущен: ${PLATEGA_WEBHOOK_SERVICE_NAME}"
+    warn "Не удалось определить SERVER_IP или PLATEGA_WEBHOOK_PORT для отображения Callback URL"
+  fi
+  
   return 0
 }
 

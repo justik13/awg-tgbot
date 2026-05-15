@@ -414,9 +414,6 @@ async def platega_pay_handler(cb: types.CallbackQuery):
     transaction_id = payment_data["transaction_id"]
     payment_url = payment_data["payment_url"]
     
-    # Получаем QR-код для платежа
-    qr_data = await platega_service.get_qr_code(transaction_id)
-    
     # Сохраняем платеж в БД
     raw_payload = {
         "invoice_payload": sub_type,
@@ -444,54 +441,22 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         await cb.message.answer("❌ Ошибка сохранения платежа. Попробуйте позже.")
         return
     
-    # Формируем сообщение с QR-кодом или ссылкой
+    # Формируем сообщение со ссылкой на оплату
     text = (
         f"<b>Оплата подписки ({tariff['days']} дней)</b>\n\n"
         f"Сумма: <b>{tariff['amount']}₽</b>\n"
-        f"Способ оплаты: <b>СБП QR</b>\n"
-        f"Номер способа оплаты: <b>2</b>\n\n"
-        f"Отсканируйте QR-код для оплаты через приложение банка:"
+        f"Способ оплаты: <b>СБП</b>\n\n"
+        f"Нажмите кнопку ниже для оплаты через СБП:\n"
+        f"QR-код будет показан на странице оплаты."
     )
     
-    # Если есть QR-код в base64, отправляем картинку
-    if qr_data and qr_data.get("qr_base64"):
-        qr_image = base64.b64decode(qr_data["qr_base64"])
-        
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить по ссылке", url=payment_url)],
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
-        ])
-        
-        await cb.message.answer_photo(
-            photo=types.BufferedInputFile(qr_image, filename="qr.png"),
-            caption=text,
-            parse_mode="HTML",
-            reply_markup=kb
-        )
-    # Если есть URL на QR-картинку
-    elif qr_data and qr_data.get("qr_url"):
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить по ссылке", url=payment_url)],
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
-        ])
-        
-        await cb.message.answer_photo(
-            photo=qr_data["qr_url"],
-            caption=text,
-            parse_mode="HTML",
-            reply_markup=kb
-        )
-    # Если QR недоступен, показываем только ссылку
-    else:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
-        ])
-        
-        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
+    ])
+    
+    await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("platega_check_"))
@@ -508,40 +473,52 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
     # Проверяем статус платежа
     status = await platega_service.check_status(transaction_id)
     
+    # Формируем текст и клавиатуру в зависимости от статуса
     if status == "CONFIRMED":
-        await cb.message.edit_text(
+        text = (
             "<b>✅ Оплата подтверждена!</b>\n\n"
-            "Ключ будет отправлен вам в ближайшее время.",
-            parse_mode="HTML"
+            "Ключ будет отправлен вам в ближайшее время."
         )
-        # Обработка успешной оплаты будет выполнена через webhook
+        kb = None
     elif status == "PENDING":
-        await cb.message.edit_text(
+        text = (
             "<b>⏳ Платеж еще не подтвержден</b>\n\n"
-            "Пожалуйста, дождитесь подтверждения или попробуйте снова позже.",
-            parse_mode="HTML",
-            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-                [types.InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"platega_check_{transaction_id}")]
-            ])
+            "Пожалуйста, дождитесь подтверждения или попробуйте снова позже."
         )
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"platega_check_{transaction_id}")]
+        ])
     elif status == "CANCELED":
-        await cb.message.edit_text(
+        text = (
             "<b>❌ Платеж отменен</b>\n\n"
-            "Вы можете попробовать создать новый платеж.",
-            parse_mode="HTML",
-            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-                [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data=CB_SHOW_BUY_MENU)]
-            ])
+            "Вы можете попробовать создать новый платеж."
         )
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data=CB_SHOW_BUY_MENU)]
+        ])
     else:
-        await cb.message.edit_text(
+        text = (
             f"<b>⚠️ Статус платежа: {status or 'Неизвестен'}</b>\n\n"
-            "Попробуйте проверить позже.",
-            parse_mode="HTML",
-            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-                [types.InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"platega_check_{transaction_id}")]
-            ])
+            "Попробуйте проверить позже."
         )
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"platega_check_{transaction_id}")]
+        ])
+    
+    # Пытаемся отредактировать сообщение, игнорируя ошибку "не изменено"
+    try:
+        await cb.message.edit_text(
+            text=text,
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            # Игнорируем, если контент не изменился (пользователь нажал кнопку дважды)
+            await cb.answer("Статус не изменился, ожидаем оплату...", show_alert=False)
+        else:
+            # Пробрасываем другие ошибки
+            raise
 
 
 @router.pre_checkout_query()
