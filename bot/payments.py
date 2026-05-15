@@ -400,12 +400,23 @@ async def platega_pay_handler(cb: types.CallbackQuery):
     
     await cb.answer()
     
+    # Формируем URL для webhook callback
+    webhook_domain = config.PLATEGA_WEBHOOK_DOMAIN or config.PUBLIC_HOST
+    if webhook_domain:
+        return_url = f"https://{webhook_domain}/webhook?status=success"
+        failed_url = f"https://{webhook_domain}/webhook?status=failed"
+    else:
+        return_url = None
+        failed_url = None
+    
     # Создаем платеж через Platega
     payment_data = await platega_service.create_payment(
         amount=float(tariff["amount"]),
         currency="RUB",
         order_id=order_id,
-        description=f"Подписка на {tariff['days']} дней"
+        description=f"Подписка на {tariff['days']} дней",
+        return_url=return_url,
+        failed_url=failed_url
     )
     
     if not payment_data:
