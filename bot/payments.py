@@ -469,10 +469,11 @@ async def platega_pay_handler(cb: types.CallbackQuery):
 async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_type: str, chat_id: int):
     """
     Фоновая задача для опроса статуса платежа Platega.
-    Проверяет статус каждые 5 секунд до подтверждения или отмены.
+    Проверяет статус каждые 10 секунд в течение 3 минут.
+    Основной механизм подтверждения — вебхук, этот цикл — вспомогательный.
     """
-    max_attempts = 60  # Максимум 5 минут (60 * 5 сек)
-    delay_seconds = 5
+    max_attempts = 18  # 3 минуты (18 * 10 сек)
+    delay_seconds = 10
     
     for attempt in range(max_attempts):
         await asyncio.sleep(delay_seconds)
@@ -518,6 +519,8 @@ async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_
         except Exception as e:
             logger.exception(f"Error polling payment status for {transaction_id}: {e}")
             continue
+    
+    logger.info(f"Payment polling stopped for {transaction_id} after {max_attempts} attempts. Waiting for webhook.")
     
     logger.warning(f"Payment polling timed out for transaction {transaction_id} after {max_attempts} attempts")
 
