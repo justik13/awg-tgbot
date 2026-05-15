@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import uuid
@@ -457,6 +458,65 @@ async def platega_pay_handler(cb: types.CallbackQuery):
     ])
     
     await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    
+    # Запускаем фоновую проверку статуса платежа
+    asyncio.create_task(_poll_payment_status(cb.bot, transaction_id, user_id, sub_type, cb.message.chat.id))
+
+
+async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_type: str, chat_id: int):
+    """
+    Фоновая задача для опроса статуса платежа Platega.
+    Проверяет статус каждые 5 секунд до подтверждения или отмены.
+    """
+    max_attempts = 60  # Максимум 5 минут (60 * 5 сек)
+    delay_seconds = 5
+    
+    for attempt in range(max_attempts):
+        await asyncio.sleep(delay_seconds)
+        
+        try:
+            status = await platega_service.check_status(transaction_id)
+            logger.info(f"Payment poll attempt {attempt + 1}/{max_attempts}: transaction={transaction_id}, status={status}")
+            
+            if status == "CONFIRMED":
+                logger.info(f"Payment confirmed via polling for user {user_id}, transaction {transaction_id}")
+                # Активируем подписку
+                from payments import activate_subscription
+                success = await activate_subscription(user_id, sub_type, "platega", transaction_id, bot=bot)
+                
+                if success:
+                    # Обновляем статус платежа в БД
+                    order_id = f"{user_id}:{sub_type}"
+                    from database import update_payment_status
+                    await update_payment_status(order_id, "paid", transaction_id)
+                    
+                    # Уведомляем пользователя
+                    try:
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text="<b>✅ Оплата подтверждена!</b>\n\nКлюч будет отправлен вам в ближайшее время.",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send payment confirmation to user {user_id}: {e}")
+                else:
+                    logger.error(f"Failed to activate subscription after payment confirmation for user {user_id}")
+                
+                return  # Выход из цикла проверки
+                
+            elif status in ("CANCELED", "CHARGEBACKED"):
+                logger.info(f"Payment {status} via polling for transaction {transaction_id}")
+                order_id = f"{user_id}:{sub_type}"
+                from database import update_payment_status
+                await update_payment_status(order_id, status.lower(), transaction_id)
+                return  # Выход из цикла проверки
+            
+            # Продолжаем опрос если PENDING или None
+        except Exception as e:
+            logger.exception(f"Error polling payment status for {transaction_id}: {e}")
+            continue
+    
+    logger.warning(f"Payment polling timed out for transaction {transaction_id} after {max_attempts} attempts")
 
 
 @router.callback_query(F.data.startswith("platega_check_"))
