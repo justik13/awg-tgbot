@@ -586,7 +586,7 @@ ensure_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt_get_safe update -y
   apt_get_safe install -y --no-install-recommends \
-    ca-certificates curl tar gzip openssl sudo python3 python3-venv python3-pip iproute2 psmisc nftables
+    ca-certificates curl tar gzip openssl sudo python3 python3-venv python3-pip iproute2 psmisc nftables nginx certbot python3-certbot-nginx
   if ! require_command docker; then
     warn "Docker не найден. Устанавливаю docker.io..."
     apt_get_safe install -y --no-install-recommends docker.io
@@ -1759,12 +1759,20 @@ configure_platega_webhook() {
   server_ip="$(get_env_value SERVER_IP)"
   local webhook_port
   webhook_port="$(get_env_value PLATEGA_WEBHOOK_PORT)"
+  local webhook_domain
+  webhook_domain="$(get_env_value PLATEGA_WEBHOOK_DOMAIN)"
   
-  if [[ -n "$server_ip" && -n "$webhook_port" ]]; then
+  local callback_url=""
+  if [[ -n "$webhook_domain" ]]; then
+    callback_url="https://${webhook_domain}/webhook"
+  elif [[ -n "$server_ip" && -n "$webhook_port" ]]; then
     # Извлекаем только IP из SERVER_IP (формат может быть IP:port)
     local webhook_host
     webhook_host="${server_ip%%:*}"
-    local callback_url="https://${webhook_host}:${webhook_port}/webhook"
+    callback_url="https://${webhook_host}:${webhook_port}/webhook"
+  fi
+  
+  if [[ -n "$callback_url" ]]; then
     ok "Platega webhook сервис запущен: ${PLATEGA_WEBHOOK_SERVICE_NAME}"
     info ""
     info "╔═══════════════════════════════════════════════════════════╗"
@@ -1773,12 +1781,16 @@ configure_platega_webhook() {
     info "║  URL для ввода в настройках Platega:                      ║"
     info "║  ${callback_url}"
     info "║                                                           ║"
-    info "║  Убедитесь, что порт ${webhook_port} открыт в firewall!              ║"
+    if [[ -n "$webhook_domain" ]]; then
+      info "║  SSL-сертификат настроен автоматически.                    ║"
+    else
+      info "║  Убедитесь, что порт ${webhook_port} открыт в firewall!              ║"
+    fi
     info "╚═══════════════════════════════════════════════════════════╝"
     info ""
   else
     ok "Platega webhook сервис запущен: ${PLATEGA_WEBHOOK_SERVICE_NAME}"
-    warn "Не удалось определить SERVER_IP или PLATEGA_WEBHOOK_PORT для отображения Callback URL"
+    warn "Не удалось определить SERVER_IP, PLATEGA_WEBHOOK_PORT или PLATEGA_WEBHOOK_DOMAIN для отображения Callback URL"
   fi
   
   return 0
@@ -1793,6 +1805,164 @@ persist_release_sha() {
   fi
   rm -f "$VERSION_FILE" || true
   warn "release_sha не записан: точный commit развернутого кода не удалось подтвердить."
+  return 0
+}
+
+# Проверка состояния firewall (только если systemctl доступен)
+is_firewall_active() {
+  if ! require_command systemctl; then
+    return 1
+  fi
+  
+  # Проверяем UFW
+  if command -v ufw >/dev/null 2>&1; then
+    if ufw status 2>/dev/null | grep -q "Status: active"; then
+      return 0
+    fi
+  fi
+  
+  # Проверяем firewalld
+  if systemctl is-active firewalld >/dev/null 2>&1; then
+    return 0
+  fi
+  
+  return 1
+}
+
+# Открытие портов в firewall (только если он активен)
+open_firewall_ports() {
+  local ports=("$@")
+  
+  if ! is_firewall_active; then
+    info "Firewall не активен, пропускаем настройку правил."
+    return 0
+  fi
+  
+  info "Открываю порты в firewall..."
+  
+  # UFW
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    for port in "${ports[@]}"; do
+      if ufw status | grep -q "${port}/tcp.*ALLOW"; then
+        info "Порт ${port}/tcp уже открыт в UFW."
+      else
+        ufw allow "${port}/tcp" >/dev/null 2>&1 && ok "Порт ${port}/tcp открыт в UFW." || warn "Не удалось открыть порт ${port}/tcp в UFW."
+      fi
+    done
+    return 0
+  fi
+  
+  # firewalld
+  if systemctl is-active firewalld >/dev/null 2>&1; then
+    for port in "${ports[@]}"; do
+      if firewall-cmd --list-ports 2>/dev/null | grep -q "${port}/tcp"; then
+        info "Порт ${port}/tcp уже открыт в firewalld."
+      else
+        firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 && \
+        firewall-cmd --reload >/dev/null 2>&1 && \
+        ok "Порт ${port}/tcp открыт в firewalld." || warn "Не удалось открыть порт ${port}/tcp в firewalld."
+      fi
+    done
+    return 0
+  fi
+  
+  return 0
+}
+
+# Настройка Nginx и SSL сертификата
+setup_nginx_and_ssl() {
+  local domain="$1"
+  
+  if [[ -z "$domain" ]]; then
+    warn "Домен не указан, пропускаю настройку Nginx и SSL."
+    return 1
+  fi
+  
+  info "Настраиваю Nginx и SSL для домена ${domain}..."
+  
+  # Проверка DNS
+  info "Проверяю DNS записи для ${domain}..."
+  if ! "$PYTHON_BIN" - "$domain" <<'PY'
+import socket, sys
+domain = sys.argv[1]
+try:
+    result = socket.gethostbyname(domain)
+    print(f"DNS OK: {domain} -> {result}")
+    sys.exit(0)
+except socket.gaierror:
+    print(f"DNS ERROR: не удалось разрешить {domain}")
+    sys.exit(1)
+PY
+  then
+    warn "DNS проверка не пройдена. Убедитесь, что домен ${domain} указывает на этот сервер."
+    if ! confirm_explicit "Продолжить несмотря на ошибку DNS?"; then
+      return 1
+    fi
+  fi
+  
+  # Создаем конфигурацию Nginx
+  local webhook_port
+  webhook_port="$(get_env_value PLATEGA_WEBHOOK_PORT)"
+  [[ -n "$webhook_port" ]] || webhook_port="8081"
+  
+  local nginx_conf="/etc/nginx/sites-available/${domain}"
+  local nginx_link="/etc/nginx/sites-enabled/${domain}"
+  
+  cat > "$nginx_conf" <<NGINX
+server {
+    listen 80;
+    server_name ${domain};
+    
+    location /webhook {
+        proxy_pass http://127.0.0.1:${webhook_port};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINX
+  
+  # Создаем симлинк
+  ln -sf "$nginx_conf" "$nginx_link"
+  
+  # Проверяем конфигурацию Nginx
+  if ! nginx -t >/dev/null 2>&1; then
+    warn "Ошибка в конфигурации Nginx."
+    nginx -t
+    return 1
+  fi
+  
+  # Перезапускаем Nginx
+  if require_command systemctl; then
+    systemctl restart nginx >/dev/null 2>&1 || {
+      warn "Не удалось перезапустить Nginx."
+      return 1
+    }
+    ok "Nginx перезапущен."
+  else
+    service nginx restart >/dev/null 2>&1 || {
+      warn "Не удалось перезапустить Nginx через service."
+      return 1
+    }
+    ok "Nginx перезапущен через service."
+  fi
+  
+  # Получаем SSL сертификат через Certbot
+  info "Получаю SSL сертификат через Let's Encrypt..."
+  if certbot --nginx --non-interactive --agree-tos --email root@localhost -d "$domain" >/dev/null 2>&1; then
+    ok "SSL сертификат успешно получен для ${domain}."
+  else
+    warn "Не удалось получить SSL сертификат автоматически."
+    info "Попробуйте вручную: certbot --nginx -d ${domain}"
+  fi
+  
+  # Открываем порты 80 и 443 в firewall (если активен)
+  open_firewall_ports 80 443
+  
+  ok "Nginx и SSL настроены для ${domain}."
+  info "Callback URL: https://${domain}/webhook"
+  
   return 0
 }
 
@@ -2100,10 +2270,24 @@ install_or_reinstall_flow() {
       prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" platega_test_mode
       set_env_value PLATEGA_TEST_MODE "$platega_test_mode"
       
-      platega_webhook_port=""
-      default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
-      prompt_with_default 'Порт webhook Platega' "$default" platega_webhook_port
-      set_env_value PLATEGA_WEBHOOK_PORT "$platega_webhook_port"
+      # Запрос домена для webhook
+      platega_domain=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_DOMAIN)" "")"
+      prompt_with_default 'Домен для webhook Platega (например: example.com)' "$default" platega_domain
+      
+      if [[ -n "$platega_domain" ]]; then
+        set_env_value PLATEGA_WEBHOOK_DOMAIN "$platega_domain"
+        set_env_value PLATEGA_WEBHOOK_PORT "443"
+        
+        # Автоматическая настройка Nginx и SSL
+        setup_nginx_and_ssl "$platega_domain"
+      else
+        # Если домен не указан, используем старый режим с IP:порт
+        platega_webhook_port=""
+        default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
+        prompt_with_default 'Порт webhook Platega' "$default" platega_webhook_port
+        set_env_value PLATEGA_WEBHOOK_PORT "$platega_webhook_port"
+      fi
       
       platega_price_7_days=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_7_DAYS)" "100")"
@@ -2155,10 +2339,24 @@ install_or_reinstall_flow() {
       prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" platega_test_mode
       set_env_value PLATEGA_TEST_MODE "$platega_test_mode"
       
-      platega_webhook_port=""
-      default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
-      prompt_with_default 'Порт webhook Platega' "$default" platega_webhook_port
-      set_env_value PLATEGA_WEBHOOK_PORT "$platega_webhook_port"
+      # Запрос домена для webhook (во второй ветке тоже)
+      platega_domain=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_DOMAIN)" "")"
+      prompt_with_default 'Домен для webhook Platega (например: example.com)' "$default" platega_domain
+      
+      if [[ -n "$platega_domain" ]]; then
+        set_env_value PLATEGA_WEBHOOK_DOMAIN "$platega_domain"
+        set_env_value PLATEGA_WEBHOOK_PORT "443"
+        
+        # Автоматическая настройка Nginx и SSL
+        setup_nginx_and_ssl "$platega_domain"
+      else
+        # Если домен не указан, используем старый режим с IP:порт
+        platega_webhook_port=""
+        default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
+        prompt_with_default 'Порт webhook Platega' "$default" platega_webhook_port
+        set_env_value PLATEGA_WEBHOOK_PORT "$platega_webhook_port"
+      fi
       
       platega_price_7_days=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_7_DAYS)" "100")"
