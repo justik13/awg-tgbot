@@ -48,6 +48,10 @@ AWG_HELPER_TARGET="/usr/local/libexec/awg-bot-helper"
 AWG_HELPER_SUDOERS="/etc/sudoers.d/awg-bot-helper"
 AWG_HELPER_POLICY="/etc/awg-bot-helper.json"
 TTY_DEVICE="/dev/tty"
+# Открываем /dev/tty на fd 3 для надёжного чтения ввода при запуске через curl | bash
+if [[ -e "$TTY_DEVICE" ]]; then
+  exec 3<>"$TTY_DEVICE"
+fi
 SELF_SYMLINK="/usr/local/bin/awg-tgbot"
 SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT="1"
 SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT="soft"
@@ -181,9 +185,10 @@ setup_logging() {
 
 setup_tty_fd() {
   if [[ -c "$TTY_DEVICE" ]]; then
-    { exec 3<>"$TTY_DEVICE"; } 2>/dev/null && return 0
+    exec 3<>"$TTY_DEVICE"
+    return 0
   fi
-  # Fallback: если /dev/tty недоступен (например, при curl | bash), используем stdin/stdout
+  # Fallback: используем stdin/stdout
   exec 3<&0 4>&1
 }
 
@@ -243,12 +248,25 @@ prompt_raw() {
   local prompt="$1"
   local __resultvar="$2"
   local __input=""
-  # Читаем из /dev/tty если доступен (для интерактива), иначе из stdin
-  if [[ -t 0 ]] || [[ -c "/dev/tty" ]]; then
+  # Всегда пытаемся читать из /dev/tty для интерактивного ввода
+  # Это необходимо при запуске через curl | bash, когда stdin перенаправлен
+  if [[ -t 3 ]]; then
+    # fd 3 открыт и является терминалом
+    if ! read -r -p "$prompt" __input <&3; then
+      __input=""
+    fi
+  elif [[ -t 0 ]]; then
+    # stdin является терминалом
+    if ! read -r -p "$prompt" __input; then
+      __input=""
+    fi
+  elif [[ -e "/dev/tty" ]]; then
+    # Пробуем открыть /dev/tty явно
     if ! read -r -p "$prompt" __input < /dev/tty; then
       __input=""
     fi
   else
+    # Fallback: читаем из stdin (не интерактивно)
     if ! read -r -p "$prompt" __input; then
       __input=""
     fi
