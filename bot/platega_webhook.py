@@ -8,7 +8,7 @@ import logging
 from aiohttp import web
 from typing import Dict, Any
 
-from database import db, get_payment_by_order, update_payment_status_by_order
+from database import get_payment_by_order, update_payment_status_by_order
 from platega_service import platega_service
 
 logger = logging.getLogger(__name__)
