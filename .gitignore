@@ -4,39 +4,38 @@
 .env.local
 *.env.*
 
-# Logs and temp files
+# Logs and temporary files
 *.log
 *.tmp
 *.swp
+
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+
+# Build artifacts
+dist/
+build/
+target/
 
 # Editors
 .vscode/
 .idea/
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-*.so
-
-# Build artifacts
-dist/
-build/
-*.egg-info/
-
-# Dependencies
-.venv/
-venv/
-.env/
-node_modules/
-
-# OS generated files
+# System files
 .DS_Store
 Thumbs.db
 
-# Compression files
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Compressed files
 *.zip
 *.gz
 *.tar

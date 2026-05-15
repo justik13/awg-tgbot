@@ -1988,7 +1988,8 @@ PY
   if certbot --nginx --non-interactive --agree-tos --email root@localhost -d "$domain" >/dev/null 2>&1; then
     ok "SSL сертификат успешно получен для ${domain}."
   else
-    error "Не удалось получить SSL сертификат автоматически."
+    echo ""
+    echo "[ОШИБКА] Не удалось получить SSL сертификат автоматически."
     echo ""
     echo "Возможные причины:"
     echo "  1. Порт 80 закрыт фаерволом провайдера (откройте в панели управления хостингом)"
