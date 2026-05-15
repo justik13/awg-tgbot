@@ -1642,9 +1642,9 @@ migrate_legacy_default_db_path() {
 }
 
 install_awg_helper() {
-  [[ -f "$BOT_DIR/awg_helper.py" ]] || return 1
+  [[ -f "$BOT_DIR/bot/awg_helper.py" ]] || return 1
   install -d -m 755 /usr/local/libexec
-  install -o root -g root -m 750 "$BOT_DIR/awg_helper.py" "$AWG_HELPER_TARGET"
+  install -o root -g root -m 750 "$BOT_DIR/bot/awg_helper.py" "$AWG_HELPER_TARGET"
   sync_awg_helper_policy_from_env
   if id -u "$BOT_USER" >/dev/null 2>&1; then
     chown root:"$BOT_USER" "$AWG_HELPER_POLICY"
@@ -1761,7 +1761,10 @@ configure_platega_webhook() {
   webhook_port="$(get_env_value PLATEGA_WEBHOOK_PORT)"
   
   if [[ -n "$server_ip" && -n "$webhook_port" ]]; then
-    local callback_url="https://${server_ip}:${webhook_port}/platega/webhook"
+    # Извлекаем только IP из SERVER_IP (формат может быть IP:port)
+    local webhook_host
+    webhook_host="${server_ip%%:*}"
+    local callback_url="https://${webhook_host}:${webhook_port}/platega/webhook"
     ok "Platega webhook сервис запущен: ${PLATEGA_WEBHOOK_SERVICE_NAME}"
     info ""
     info "╔═══════════════════════════════════════════════════════════╗"
