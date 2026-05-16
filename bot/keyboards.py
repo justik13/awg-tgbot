@@ -82,9 +82,9 @@ def get_profile_inline_kb(subscription_active: bool, *, referrals_enabled: bool 
 def get_buy_confirm_kb(payload: str, method: str = "stars") -> InlineKeyboardMarkup:
     if method == "platega":
         action_by_payload = {
-            "sub_7": "platega_pay_sub_7",
-            "sub_30": "platega_pay_sub_30",
-            "sub_90": "platega_pay_sub_90",
+            "sub_7": f"{CB_PLATEGA_PAY_PREFIX}sub_7",
+            "sub_30": f"{CB_PLATEGA_PAY_PREFIX}sub_30",
+            "sub_90": f"{CB_PLATEGA_PAY_PREFIX}sub_90",
         }
         button_text = "🏦 Оплатить через СБП"
     else:
@@ -120,14 +120,14 @@ def get_payment_method_selection_kb(payload: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def get_platega_payment_kb(transaction_id: str, payload: str) -> InlineKeyboardMarkup:
+def get_platega_payment_kb(transaction_id: str, payload: str, payment_url: str) -> InlineKeyboardMarkup:
     """Generate keyboard with Platega payment button."""
     tariff_labels = {"sub_7": "7 дней", "sub_30": "30 дней", "sub_90": "90 дней"}
     label = tariff_labels.get(payload, "подписку")
     
     rows = [
-        [InlineKeyboardButton(text=f"💳 Оплатить {label} через СБП", callback_data=f"{CB_PLATEGA_PAY_PREFIX}{transaction_id}:{payload}")],
-        [InlineKeyboardButton(text="🔄 Проверить статус оплаты", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
+        [InlineKeyboardButton(text=f"💳 Оплатить {label} через СБП", url=payment_url)],
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
         [InlineKeyboardButton(text="⬅️ Назад к тарифам", callback_data=CB_SHOW_BUY_MENU)],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -321,6 +321,7 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
             raise RuntimeError("Failed to create Platega payment - empty response")
         
         transaction_id = payment_result["transaction_id"]
+        payment_url = payment_result.get("payment_url", "")
         
         # Save payment to database with order_id for later lookup in webhook
         await save_payment(
@@ -346,7 +347,7 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
         await cb.message.edit_text(
             text,
             parse_mode="HTML",
-            reply_markup=get_platega_payment_kb(transaction_id, payload),
+            reply_markup=get_platega_payment_kb(transaction_id, payload, payment_url),
         )
         
     except Exception as e:
@@ -634,7 +635,14 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     
-    # Извлекаем тип подписки из callback_data (platega_pay_sub_7 -> sub_7)
+    # Используем правильный сервис из platega_integration
+    platega_service = get_platega_service()
+    if not platega_service:
+        await cb.answer("Оплата через СБП временно недоступна. Обратитесь к администратору.", show_alert=True)
+        logger.warning("Platega credentials not configured")
+        return
+    
+    # Извлекаем тип подписки из callback_data (platega_pay:sub_7 -> sub_7)
     sub_type = cb.data.replace(CB_PLATEGA_PAY_PREFIX, "")
     
     if sub_type not in get_tariffs_platega():
@@ -656,34 +664,35 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         return_url = None
         failed_url = None
     
-    # Создаем платеж через Platega
-    payment_data = await platega_service.create_payment(
-        amount=float(tariff["amount"]),
-        currency="RUB",
-        order_id=order_id,
-        description=f"Подписка на {tariff['days']} дней",
-        return_url=return_url,
-        failed_url=failed_url
-    )
-    
-    if not payment_data:
-        await cb.message.answer("❌ Ошибка создания платежа. Попробуйте позже.")
-        logger.error(f"Failed to create Platega payment for user {user_id}")
-        return
-    
-    transaction_id = payment_data["transaction_id"]
-    payment_url = payment_data["payment_url"]
-    
-    # Сохраняем платеж в БД
-    raw_payload = {
-        "invoice_payload": sub_type,
-        "currency": "RUB",
-        "total_amount": float(tariff["amount"]),
-        "platega_transaction_id": transaction_id,
-        "payment_url": payment_url,
-    }
-    
     try:
+        # Создаем платеж через Platega
+        payment_data = await platega_service.create_payment(
+            amount=float(tariff["amount"]),
+            currency="RUB",
+            description=f"Подписка на {tariff['days']} дней",
+            payload=order_id,
+            return_url=return_url,
+            failed_url=failed_url,
+            payment_method=PLATEGA_METHOD_SBP_QR,
+        )
+        
+        if not payment_data:
+            await cb.message.answer("❌ Ошибка создания платежа. Попробуйте позже.")
+            logger.error(f"Failed to create Platega payment for user {user_id}")
+            return
+        
+        transaction_id = payment_data["transaction_id"]
+        payment_url = payment_data.get("redirect_url", "")
+        
+        # Сохраняем платеж в БД
+        raw_payload = {
+            "invoice_payload": sub_type,
+            "currency": "RUB",
+            "total_amount": float(tariff["amount"]),
+            "platega_transaction_id": transaction_id,
+            "payment_url": payment_url,
+        }
+        
         await ensure_user_exists(user_id, cb.from_user.username, cb.from_user.first_name)
         await save_payment(
             telegram_payment_charge_id=transaction_id,
@@ -696,33 +705,30 @@ async def platega_pay_handler(cb: types.CallbackQuery):
             status="pending",
             raw_payload_json=json.dumps(raw_payload, ensure_ascii=False),
         )
+        
+        # Формируем сообщение со ссылкой на оплату
+        text = (
+            f"<b>Оплата подписки ({tariff['days']} дней)</b>\n\n"
+            f"Сумма: <b>{tariff['amount']}₽</b>\n"
+            f"Способ оплаты: <b>СБП</b>\n\n"
+            f"Нажмите кнопку ниже для оплаты через СБП:\n"
+            f"QR-код будет показан на странице оплаты."
+        )
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
+        ])
+        
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        
+        # Запускаем фоновую проверку статуса платежа
+        asyncio.create_task(_poll_payment_status(cb.bot, transaction_id, user_id, sub_type, cb.message.chat.id))
+        
     except Exception as e:
-        logger.exception(f"Error saving Platega payment: {e}")
-        await cb.message.answer("❌ Ошибка сохранения платежа. Попробуйте позже.")
-        return
-    
-    # Формируем сообщение со ссылкой на оплату
-    text = (
-        f"<b>Оплата подписки ({tariff['days']} дней)</b>\n\n"
-        f"Сумма: <b>{tariff['amount']}₽</b>\n"
-        f"Способ оплаты: <b>СБП</b>\n\n"
-        f"Нажмите кнопку ниже для оплаты через СБП:\n"
-        f"QR-код будет показан на странице оплаты."
-    )
-    
-    # Формируем правильные ссылки согласно документации Platega.io
-    sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
-        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
-    ])
-    
-    await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    
-    # Запускаем фоновую проверку статуса платежа
-    asyncio.create_task(_poll_payment_status(cb.bot, transaction_id, user_id, sub_type, cb.message.chat.id))
+        logger.exception(f"Error in platega_pay_handler: {e}")
+        await cb.message.answer("❌ Ошибка при создании платежа. Попробуйте позже или обратитесь в поддержку.")
 
 
 async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_type: str, chat_id: int):
