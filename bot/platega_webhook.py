@@ -25,6 +25,8 @@ async def handle_platega_callback(request: web.Request) -> web.Response:
     Возвращает:
     - 200 OK при успешной обработке
     - 401/400 при ошибке валидации
+    
+    Идемпотентность: Обработка защищена от дублирования через проверку статуса платежа в БД.
     """
     try:
         # Получаем заголовки
@@ -71,11 +73,16 @@ async def handle_platega_callback(request: web.Request) -> web.Response:
             # Успешная оплата
             logger.info(f"Payment confirmed for user {user_id}, sub {sub_type}")
             
-            # Проверяем существующий платеж
+            # Проверяем существующий платеж - защита от дублирования (идемпотентность)
             existing = await get_payment_by_order(order_id)
-            if existing and existing.get("status") == "paid":
-                logger.info(f"Payment already processed for order {order_id}")
+            if existing and existing.get("status") in ("paid", "applied"):
+                logger.info(f"Payment already processed for order {order_id} (status={existing.get('status')})")
                 return web.json_response({"status": "already_processed"}, status=200)
+            
+            # Дополнительная проверка: если платеж уже обрабатывается, пропускаем
+            if existing and existing.get("status") == "processing":
+                logger.info(f"Payment already being processed for order {order_id}")
+                return web.json_response({"status": "already_processing"}, status=200)
             
             # Активируем подписку
             from payments import activate_subscription

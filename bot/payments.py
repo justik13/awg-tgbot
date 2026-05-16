@@ -305,18 +305,24 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
     await cb.answer()
     
     try:
+        # Формируем order_id для передачи в Platega (будет возвращен в callback)
+        order_id = f"{cb.from_user.id}:{payload}"
+        
         # Create Platega payment transaction
         payment_result = await platega_service.create_payment(
             amount=float(info["rub"]),
             currency="RUB",
             description=f"VPN подписка на {info['days']} дней",
-            payload=json.dumps({"user_id": cb.from_user.id, "tariff": payload}),
+            payload=order_id,  # Передаем order_id как payload для callback
             payment_method=PLATEGA_METHOD_SBP_QR,
         )
         
+        if not payment_result:
+            raise RuntimeError("Failed to create Platega payment - empty response")
+        
         transaction_id = payment_result["transaction_id"]
         
-        # Save payment to database
+        # Save payment to database with order_id for later lookup in webhook
         await save_payment(
             telegram_payment_charge_id=transaction_id,
             provider_payment_charge_id="",

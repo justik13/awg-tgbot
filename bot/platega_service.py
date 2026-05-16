@@ -66,11 +66,14 @@ class PlategaService:
         
         :param amount: Сумма платежа
         :param currency: Валюта (по умолчанию RUB)
-        :param order_id: Уникальный ID заказа в нашей системе (user_id:sub_type)
+        :param order_id: Уникальный ID заказа в нашей системе (user_id:sub_type) - передается как payload
         :param description: Описание платежа
         :param return_url: URL возврата при успехе (опционально)
         :param failed_url: URL возврата при ошибке (опционально)
         :return: dict с данными платежа (url, transaction_id) или None при ошибке
+        
+        Note: Согласно документации Platega, ID транзакции генерируется системой автоматически —
+        не передавайте поле `id` в запросе. Мы передаем order_id через параметр `payload`.
         """
         if not self.client:
             logger.error("Platega client is not initialized.")
@@ -80,6 +83,7 @@ class PlategaService:
             logger.info(f"Creating Platega payment for order {order_id}, amount {amount} {currency}")
             
             # Создание платежа через SDK (метод 2 = СБП QR)
+            # Важно: НЕ передаем поле 'id' - оно генерируется автоматически сервером Platega
             response = self.client.create_payment(
                 amount=amount,
                 currency=currency,
