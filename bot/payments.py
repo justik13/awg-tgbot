@@ -63,6 +63,7 @@ from texts import get_payment_result_text
 from ui_constants import CB_BUY_30, CB_BUY_7, CB_BUY_90, CB_BUY_PAY_30, CB_BUY_PAY_7, CB_BUY_PAY_90, CB_PLATEGA_BUY_30, CB_PLATEGA_BUY_7, CB_PLATEGA_BUY_90, CB_SHOW_BUY_MENU
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 from platega_service import platega_service
+from platega_integration import PlategaPaymentService
 
 router = Router()
 purchase_rate_limit: dict[int, object] = {}
