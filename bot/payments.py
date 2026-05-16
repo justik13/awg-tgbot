@@ -60,7 +60,7 @@ from referrals import (
     notify_inviter_about_referral_reward,
 )
 from texts import get_payment_result_text
-from ui_constants import CB_BUY_30, CB_BUY_7, CB_BUY_90, CB_BUY_PAY_30, CB_BUY_PAY_7, CB_BUY_PAY_90, CB_PLATEGA_BUY_30, CB_PLATEGA_BUY_7, CB_PLATEGA_BUY_90, CB_SHOW_BUY_MENU
+from ui_constants import CB_BUY_30, CB_BUY_7, CB_BUY_90, CB_BUY_PAY_30, CB_BUY_PAY_7, CB_BUY_PAY_90, CB_PLATEGA_BUY_30, CB_PLATEGA_BUY_7, CB_PLATEGA_BUY_90, CB_SHOW_BUY_MENU, CB_PAY_STARS_PREFIX, CB_PAY_PLATEGA_PREFIX, CB_PLATEGA_PAY_PREFIX, CB_PLATEGA_CHECK_PREFIX
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 from platega_service import platega_service
 from platega_integration import PlategaPaymentService
@@ -615,7 +615,7 @@ async def buy_pay_90_days(cb: types.CallbackQuery, bot: Bot):
     await _show_buy_confirmation(cb, "sub_90")
 
 
-@router.callback_query(F.data.startswith("platega_pay_"))
+@router.callback_query(F.data.startswith(CB_PLATEGA_PAY_PREFIX))
 async def platega_pay_handler(cb: types.CallbackQuery):
     """Обработчик оплаты через Platega (СБП QR)."""
     if await is_purchase_maintenance_enabled():
@@ -623,7 +623,7 @@ async def platega_pay_handler(cb: types.CallbackQuery):
         return
     
     # Извлекаем тип подписки из callback_data (platega_pay_sub_7 -> sub_7)
-    sub_type = cb.data.replace("platega_pay_", "")
+    sub_type = cb.data.replace(CB_PLATEGA_PAY_PREFIX, "")
     
     if sub_type not in get_tariffs_platega():
         await cb.answer("Неверный тариф", show_alert=True)
@@ -703,7 +703,7 @@ async def platega_pay_handler(cb: types.CallbackQuery):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
-        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
     ])
     
@@ -799,10 +799,10 @@ async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_
     logger.warning(f"Payment polling timed out for transaction {transaction_id} after {max_attempts} attempts")
 
 
-@router.callback_query(F.data.startswith("platega_check_"))
+@router.callback_query(F.data.startswith(CB_PLATEGA_CHECK_PREFIX))
 async def platega_check_payment_handler(cb: types.CallbackQuery):
     """Обработчик проверки статуса платежа пользователем."""
-    transaction_id = cb.data.replace("platega_check_", "")
+    transaction_id = cb.data.replace(CB_PLATEGA_CHECK_PREFIX, "")
     
     if not transaction_id:
         await cb.answer("Неверный ID транзакции", show_alert=True)
@@ -888,7 +888,7 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
         sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
-            [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
+            [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
             [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
     elif status == "CANCELED":
@@ -908,7 +908,7 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
         sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
-            [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"platega_check_{transaction_id}")],
+            [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
             [types.InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
     
