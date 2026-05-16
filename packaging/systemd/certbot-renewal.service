@@ -1,0 +1,12 @@
+[Unit]
+Description=Certbot SSL Certificate Renewal
+Documentation=https://certbot.eff.org
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/certbot renew --quiet --deploy-hook "systemctl reload nginx"
+RandomizedDelaySec=43200
+Persistent=true
+
+[Install]
+WantedBy=multi-user.target

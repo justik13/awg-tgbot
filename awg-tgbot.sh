@@ -130,7 +130,8 @@ print_line() { printf '%s\n' "--------------------------------------------------
 info() { printf '[*] %s\n' "$*" >&2; }
 ok() { printf '[+] %s\n' "$*" >&2; }
 warn() { printf '[!] %s\n' "$*" >&2; }
-die() { warn "$*"; exit 1; }
+error() { printf '[ERROR] %s\n' "$*" >&2; }
+die() { error "$*"; exit 1; }
 
 clear_reinstall_guard() {
   REINSTALL_GUARD_ACTIVE=0
@@ -156,6 +157,9 @@ register_reinstall_guard_pending_log() {
 
 on_error_trap() {
   local line_no="${1:-unknown}" exit_code="${2:-1}"
+  # Close TTY file descriptors to prevent leaks
+  exec 3>&- 2>/dev/null || true
+  exec 4>&- 2>/dev/null || true
   if [[ "$REINSTALL_GUARD_ACTIVE" == "1" && "$REINSTALL_GUARD_ROLLING_BACK" != "1" ]]; then
     REINSTALL_GUARD_ROLLING_BACK=1
     warn "Сработал аварийный rollback-guard для reinstall (line=${line_no}, rc=${exit_code})."
@@ -167,6 +171,7 @@ on_error_trap() {
   printf "[!] Ошибка на строке %s (rc=%s). Подробности: %s\n" "$line_no" "$exit_code" "$INSTALL_LOG" >&2
 }
 trap 'on_error_trap "$LINENO" "$?"' ERR
+trap 'exec 3>&- 2>/dev/null || true; exec 4>&- 2>/dev/null || true' EXIT
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -180,7 +185,8 @@ setup_logging() {
   mkdir -p "$(dirname "$INSTALL_LOG")" "$APP_LOG_DIR"
   touch "$INSTALL_LOG" "$APP_LOG_FILE"
   chmod 640 "$INSTALL_LOG" "$APP_LOG_FILE" || true
-  exec > >(tee -a "$INSTALL_LOG") 2>&1
+  # Sanitize logs to prevent leaking sensitive data
+  exec > >(tee -a "$INSTALL_LOG" | sed -e 's/BOT_TOKEN=[^ ]*/BOT_TOKEN=***REDACTED***/g' -e 's/PLATEGA_MERCHANT_ID=[^ ]*/PLATEGA_MERCHANT_ID=***REDACTED***/g' -e 's/PLATEGA_SECRET_KEY=[^ ]*/PLATEGA_SECRET_KEY=***REDACTED***/g') 2>&1
 }
 
 setup_tty_fd() {
@@ -387,7 +393,12 @@ persist_repo_branch() {
 
 is_safe_name() {
   local value="$1"
-  [[ "$value" =~ ^[a-zA-Z0-9_.-]+$ ]]
+  # Reject empty, leading/trailing dots, double dots, and dangerous patterns
+  [[ -n "$value" ]] || return 1
+  [[ "$value" != .* ]] || return 1
+  [[ "$value" != *. ]] || return 1
+  [[ ! "$value" =~ \.\. ]] || return 1
+  [[ "$value" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9]$ ]] || [[ "$value" =~ ^[a-zA-Z0-9]$ ]]
 }
 
 validate_awg_target_values() {
@@ -514,7 +525,8 @@ cleanup_transient_install_state() {
 }
 fetch_remote_commit_info() {
   local payload="" parsed=""
-  payload="$(curl -fsSL "$COMMIT_API_URL" 2>/dev/null || true)"
+  # Add timeout and retry logic for GitHub API calls
+  payload="$(curl -fsSL --connect-timeout 10 --max-time 30 --retry 2 --retry-delay 5 "$COMMIT_API_URL" 2>/dev/null || true)"
   [[ -n "$payload" ]] || return 0
   parsed="$("$PYTHON_BIN" - "$payload" <<'PY' 2>/dev/null || true
 import json
@@ -566,6 +578,9 @@ wait_for_apt_locks() {
   while ! dpkg_lock_free; do
     if (( waited == 0 )); then
       warn "apt/dpkg сейчас занят другим процессом. Жду освобождения блокировки..."
+      info "Процессы, удерживающие блокировку:"
+      fuser -v /var/lib/dpkg/lock-frontend 2>&1 || true
+      fuser -v /var/lib/dpkg/lock 2>&1 || true
     fi
     sleep 5
     waited=$((waited + 5))
@@ -1222,7 +1237,13 @@ download_repo() {
   tmp_dir="$(mktemp -d)"
   download_url="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/${ref}"
   info "Скачиваю код из ${REPO_URL} (ref=${ref})..."
-  curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 1 "$download_url" -o "$tmp_dir/repo.tar.gz"
+  # Add max-time timeout to prevent hanging on slow downloads
+  if ! curl -fsSL --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 "$download_url" -o "$tmp_dir/repo.tar.gz"; then
+    warn "Не удалось скачать репозиторий. Проверяю сеть..."
+    curl -v --connect-timeout 10 https://github.com 2>&1 | head -5 || true
+    rm -rf "$tmp_dir"
+    return 1
+  fi
   tar -xzf "$tmp_dir/repo.tar.gz" -C "$tmp_dir"
   src_dir="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n1 || true)"
   if [[ -z "$src_dir" || ! -d "$src_dir/bot" || ! -f "$src_dir/awg-tgbot.sh" ]]; then
@@ -1741,6 +1762,32 @@ install_platega_webhook_service() {
   return 0
 }
 
+install_certbot_renewal_timer() {
+  local timer_src service_src
+  timer_src="${INSTALL_DIR}/packaging/systemd/certbot-renewal.timer"
+  service_src="${INSTALL_DIR}/packaging/systemd/certbot-renewal.service"
+  
+  if [[ ! -f "$timer_src" ]]; then
+    warn "Файл certbot-renewal.timer не найден: ${timer_src}"
+    return 1
+  fi
+  if [[ ! -f "$service_src" ]]; then
+    warn "Файл certbot-renewal.service не найден: ${service_src}"
+    return 1
+  fi
+  
+  cp "$timer_src" /etc/systemd/system/certbot-renewal.timer
+  cp "$service_src" /etc/systemd/system/certbot-renewal.service
+  chmod 644 /etc/systemd/system/certbot-renewal.timer /etc/systemd/system/certbot-renewal.service || true
+  systemctl daemon-reload
+  systemctl enable --now certbot-renewal.timer >/dev/null 2>&1 || {
+    warn "Не удалось активировать certbot-renewal.timer"
+    return 1
+  }
+  ok "certbot-renewal.timer установлен и активирован (ежедневное обновление SSL)."
+  return 0
+}
+
 configure_platega_webhook() {
   if ! require_command systemctl; then
     warn "systemctl не найден. Platega webhook сервис не настроен."
@@ -2092,22 +2139,42 @@ PY
     rm -f "$default_nginx_link"
   fi
   
-  # Создаем конфигурацию Nginx
+  # Создаем конфигурацию Nginx с HTTPS redirect и правильной структурой
   local webhook_port="${PLATEGA_WEBHOOK_PORT:-8081}"
   
   local nginx_conf="/etc/nginx/sites-available/${domain}"
   local nginx_link="/etc/nginx/sites-enabled/${domain}"
   
   cat > "$nginx_conf" <<NGINX
+# HTTP server - redirect to HTTPS + ACME challenge
 server {
     listen 80;
     server_name ${domain};
     
+    # ACME challenge для Let's Encrypt
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
         try_files \$uri =404;
     }
 
+    # Redirect all other HTTP requests to HTTPS
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+# HTTPS server (будет активирован после получения сертификата)
+server {
+    listen 443 ssl http2;
+    server_name ${domain};
+    
+    ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+    
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    
     location /webhook {
         proxy_pass http://127.0.0.1:${webhook_port};
         proxy_set_header Host \$host;
@@ -2115,47 +2182,70 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         
-        # Health check для webhook
         proxy_connect_timeout 5s;
         proxy_read_timeout 30s;
     }
+    
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 }
 NGINX
   
   # Создаем симлинк и проверяем что он создан
-  ln -sf "$nginx_conf" "$nginx_link"
-  if [[ ! -L "$nginx_link" ]] && [[ ! -f "$nginx_link" ]]; then
+  if ! ln -sf "$nginx_conf" "$nginx_link"; then
     error "Не удалось создать символическую ссылку на конфигурацию Nginx."
+    return 1
+  fi
+  if [[ ! -L "$nginx_link" ]] && [[ ! -f "$nginx_link" ]]; then
+    error "Символическая ссылка не была создана."
     return 1
   fi
   ok "Конфигурация Nginx создана и активирована."
   
   # Создаем директорию для ACME challenge (обязательно для webroot проверки)
   info "Создаю директорию для ACME challenge..."
-  mkdir -p /var/www/certbot/.well-known/acme-challenge
-  chown -R www-data:www-data /var/www/certbot
-  chmod -R 755 /var/www/certbot
+  if ! mkdir -p /var/www/certbot/.well-known/acme-challenge; then
+    error "Не удалось создать директорию /var/www/certbot/.well-known/acme-challenge"
+    return 1
+  fi
+  if ! chown -R www-data:www-data /var/www/certbot; then
+    warn "Не удалось изменить владельца /var/www/certbot"
+  fi
+  if ! chmod -R 755 /var/www/certbot; then
+    warn "Не удалось установить права на /var/www/certbot"
+  fi
   ok "Директория /var/www/certbot/.well-known/acme-challenge создана."
   
-  # Проверяем конфигурацию Nginx
+  # Проверяем конфигурацию Nginx ПЕРЕД созданием symlink
   if ! nginx -t >/dev/null 2>&1; then
-    warn "Ошибка в конфигурации Nginx."
-    nginx -t
+    error "Ошибка в конфигурации Nginx после создания конфига для ${domain}"
+    nginx -t 2>&1 || true
+    rm -f "$nginx_link"  # Удаляем битый symlink если он был создан
     return 1
   fi
   
   # Перезапускаем Nginx с выводом статуса
   info "Перезапускаю Nginx..."
   if require_command systemctl; then
+    if ! systemctl daemon-reload 2>&1; then
+      warn "daemon-reload failed, но продолжаем..."
+    fi
     if ! systemctl restart nginx 2>&1; then
-      warn "Не удалось перезапустить Nginx через systemctl."
+      error "Не удалось перезапустить Nginx через systemctl."
       systemctl status nginx --no-pager || true
       return 1
     fi
-    ok "Nginx перезапущен через systemctl."
+    # Проверка что сервис активен
+    sleep 2
+    if ! systemctl is-active --quiet nginx; then
+      error "Nginx сервис не активен после restart"
+      systemctl status nginx --no-pager || true
+      journalctl -u nginx -n 30 --no-pager || true
+      return 1
+    fi
+    ok "Nginx перезапущен и активен."
   else
     if ! service nginx restart 2>&1; then
-      warn "Не удалось перезапустить Nginx через service."
+      error "Не удалось перезапустить Nginx через service."
       service nginx status || true
       return 1
     fi
@@ -2266,20 +2356,54 @@ PY
     return 1
   fi
   
-  # Получаем SSL сертификат через Certbot с ПОЛНЫМ логом ошибок
+  # Проверка на Cloudflare proxy перед запуском certbot
+  info "Проверяю, не находится ли домен за Cloudflare proxy..."
+  local cf_check
+  cf_check=$(curl -s --connect-timeout 5 -A "Mozilla/5.0" "https://api.cloudflare.com/client/v4/dns/records?name=${domain}&type=A" 2>/dev/null | grep -i "cloudflare" || true)
+  if [[ -n "$cf_check" ]]; then
+    warn "Домен ${domain} может быть за Cloudflare proxy."
+    echo "Если включен orange cloud (proxy), Let's Encrypt не сможет пройти HTTP validation."
+    echo "Варианты решения:"
+    echo "  1. Временно отключить Cloudflare proxy (gray cloud) для получения сертификата"
+    echo "  2. Использовать DNS challenge вместо HTTP (требует API ключ Cloudflare)"
+    echo ""
+    if ! confirm_explicit "Продолжить несмотря на возможный Cloudflare proxy?"; then
+      return 1
+    fi
+  fi
+  
+  # Получаем SSL сертификат через Certbot с ПОЛНЫМ логом ошибок и RETRY logic
   info "Получаю SSL сертификат через Let's Encrypt..."
   local certbot_log certbot_err_log
   certbot_log="$(mktemp)"
   certbot_err_log="$(mktemp)"
   
-  # Запускаем certbot с максимальным уровнем детализации
-  # Используем --register-unsafely-without-email чтобы избежать проблем с невалидным email
-  if certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d "$domain" --verbose >"$certbot_log" 2>"$certbot_err_log"; then
+  # Retry logic для certbot (3 попытки с паузой)
+  local max_attempts=3 attempt=1 certbot_success=false
+  while (( attempt <= max_attempts )); do
+    info "Попытка ${attempt}/${max_attempts} получения сертификата..."
+    
+    # Запускаем certbot с максимальным уровнем детализации
+    # Используем --register-unsafely-without-email чтобы избежать проблем с невалидным email
+    if certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d "$domain" --verbose >"$certbot_log" 2>"$certbot_err_log"; then
+      certbot_success=true
+      break
+    else
+      warn "Попытка ${attempt} не удалась."
+      if (( attempt < max_attempts )); then
+        info "Жду 10 секунд перед следующей попыткой..."
+        sleep 10
+      fi
+    fi
+    ((attempt++))
+  done
+  
+  if [[ "$certbot_success" == "true" ]]; then
     rm -f "$certbot_log" "$certbot_err_log"
     ok "SSL сертификат успешно получен для ${domain}."
   else
     echo ""
-    echo "[ОШИБКА] Не удалось получить SSL сертификат автоматически."
+    echo "[ОШИБКА] Не удалось получить SSL сертификат после ${max_attempts} попыток."
     echo ""
     echo "=== Лог stdout ==="
     cat "$certbot_log"
@@ -2304,6 +2428,14 @@ PY
     echo "4. Конфигурация Nginx для домена:"
     cat /etc/nginx/sites-available/"$domain" 2>/dev/null || echo "  [Конфиг не найден]"
     echo ""
+    echo "5. Проверка firewall (возможно порт 80 закрыт провайдером):"
+    if command -v ufw >/dev/null 2>&1; then
+      ufw status 2>/dev/null | head -10 || true
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+      iptables -L -n 2>/dev/null | grep -E "80|443" || true
+    fi
+    echo ""
     
     echo "Возможные причины:"
     echo "  1. Порт 80 закрыт фаерволом провайдера (откройте в панели управления хостингом)"
@@ -2311,6 +2443,7 @@ PY
     echo "  3. Домен уже имеет сертификат (попробуйте certbot renew)"
     echo "  4. Директория /.well-known/acme-challenge/ недоступна из интернета"
     echo "  5. Другой процесс (Docker/Apache) перехватывает порт 80"
+    echo "  6. Домен за Cloudflare proxy (orange cloud)"
     echo ""
     echo "Для ручной диагностики выполните:"
     echo "  curl -v http://${domain}/.well-known/acme-challenge/test"
@@ -2320,6 +2453,7 @@ PY
     echo ""
     echo "Попробуйте получить сертификат вручную с полным логом:"
     echo "  certbot --nginx -d ${domain} --verbose --debug"
+    echo "  ИЛИ используйте standalone mode: certbot certonly --standalone -d ${domain}"
     echo ""
     rm -f "$certbot_log" "$certbot_err_log"
     return 1
@@ -2354,12 +2488,41 @@ start_service() {
     fi
   fi
   
-  systemctl daemon-reload
+  # daemon-reload с проверкой
+  if ! systemctl daemon-reload 2>&1; then
+    warn "daemon-reload failed, но продолжаем..."
+  fi
+  
+  # Stop old instance
   systemctl stop "$SERVICE_NAME" 2>/dev/null || true
   sleep 1
-  systemctl start "$SERVICE_NAME"
-  sleep 2
-  return 0
+  
+  # Start service
+  if ! systemctl start "$SERVICE_NAME" 2>&1; then
+    error "Не удалось запустить сервис ${SERVICE_NAME}"
+    systemctl status "$SERVICE_NAME" --no-pager || true
+    journalctl -u "$SERVICE_NAME" -n 50 --no-pager || true
+    return 1
+  fi
+  
+  # HEALTHCHECK: ждем пока сервис станет активным
+  info "Проверяю статус сервиса..."
+  local max_wait=30 waited=0
+  while (( waited < max_wait )); do
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+      ok "Сервис ${SERVICE_NAME} успешно запущен и активен."
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+    info "Жду запуска сервиса... (${waited}/${max_wait}с)"
+  done
+  
+  # Сервис не стал активным
+  error "Сервис ${SERVICE_NAME} не перешел в состояние active за ${max_wait}с"
+  systemctl status "$SERVICE_NAME" --no-pager || true
+  journalctl -u "$SERVICE_NAME" -n 100 --no-pager || true
+  return 1
 }
 
 autobackup_timer_state() {
@@ -2799,6 +2962,7 @@ install_or_reinstall_flow() {
   write_service || die "Не удалось создать systemd сервис."
   configure_autobackup_timer || die "Не удалось настроить systemd timer autobackup."
   configure_platega_webhook || warn "Не удалось настроить Platega webhook сервис."
+  install_certbot_renewal_timer || warn "Не удалось установить certbot-renewal.timer (SSL не будет обновляться автоматически)."
   persist_repo_branch
   persist_release_sha "$deploy_sha"
   if [[ "$mode" == "reinstall" ]]; then
