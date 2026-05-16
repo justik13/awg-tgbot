@@ -1,13 +1,13 @@
 ```
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
 # Environment
 .env
 .env.local
 *.env.*
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
 
 # Editors
 .vscode/
@@ -25,24 +25,10 @@ __pycache__/
 dist/
 build/
 target/
-.coverage
-coverage/
-htmlcov/
 
-# OS generated files
+# OS specific
 .DS_Store
 Thumbs.db
-
-# Compiled files
-*.pyc
-*.class
-*.o
-*.obj
-*.exe
-*.dll
-*.so
-*.a
-*.out
 
 # Compressed files
 *.zip

@@ -1956,9 +1956,30 @@ setup_nginx_and_ssl() {
     }
   fi
   
-  # Проверяем что директории nginx существуют
+  # Проверяем что директории nginx существуют и создаём их если нет
   if [[ ! -d "/etc/nginx/sites-available" ]]; then
-    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+    mkdir -p /etc/nginx/sites-available
+  fi
+  if [[ ! -d "/etc/nginx/sites-enabled" ]]; then
+    mkdir -p /etc/nginx/sites-enabled
+  fi
+  
+  # Проверяем, что основной конфиг nginx включает sites-enabled
+  if [[ -f "/etc/nginx/nginx.conf" ]]; then
+    if ! grep -q "sites-enabled" /etc/nginx/nginx.conf 2>/dev/null; then
+      info "Добавляю включение sites-enabled в nginx.conf..."
+      if ! grep -q "include /etc/nginx/sites-enabled/" /etc/nginx/nginx.conf 2>/dev/null; then
+        # Добавляем include перед закрывающей скобкой http блока или в конец файла
+        if grep -q "^http {" /etc/nginx/nginx.conf; then
+          # Находим строку с http { и добавляем include после неё
+          sed -i '/^http {/a\    include /etc/nginx/sites-enabled/*;' /etc/nginx/nginx.conf
+        else
+          # Если структуры http {} нет, просто добавляем в конец
+          echo "include /etc/nginx/sites-enabled/*;" >> /etc/nginx/nginx.conf
+        fi
+      fi
+      ok "sites-enabled добавлен в nginx.conf"
+    fi
   fi
   
   # Предварительная проверка: нет ли уже процессов на порту 80
@@ -2067,9 +2088,7 @@ PY
   fi
   
   # Создаем конфигурацию Nginx
-  local webhook_port
-  webhook_port="$(get_env_value PLATEGA_WEBHOOK_PORT)"
-  [[ -n "$webhook_port" ]] || webhook_port="8081"
+  local webhook_port="${PLATEGA_WEBHOOK_PORT:-8081}"
   
   local nginx_conf="/etc/nginx/sites-available/${domain}"
   local nginx_link="/etc/nginx/sites-enabled/${domain}"
