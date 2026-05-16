@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Handle case when script is run via curl | bash (stdin has no path)
+# BASH_SOURCE[0] may be unset when running from stdin, so we check it safely
+if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ -f "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  SCRIPT_DIR="$(pwd)"
+fi
 ORIGIN_URL="$(git -C "$SCRIPT_DIR" config --get remote.origin.url 2>/dev/null || true)"
 if [[ "$ORIGIN_URL" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
   DETECTED_REPO_OWNER="${BASH_REMATCH[1]}"
@@ -42,6 +48,10 @@ AWG_HELPER_TARGET="/usr/local/libexec/awg-bot-helper"
 AWG_HELPER_SUDOERS="/etc/sudoers.d/awg-bot-helper"
 AWG_HELPER_POLICY="/etc/awg-bot-helper.json"
 TTY_DEVICE="/dev/tty"
+# Открываем /dev/tty на fd 3 для надёжного чтения ввода при запуске через curl | bash
+if [[ -e "$TTY_DEVICE" ]]; then
+  exec 3<>"$TTY_DEVICE"
+fi
 SELF_SYMLINK="/usr/local/bin/awg-tgbot"
 SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT="1"
 SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT="soft"
@@ -54,6 +64,8 @@ AUTO_BACKUP_SERVICE_NAME="awg-tgbot-backup.service"
 AUTO_BACKUP_TIMER_NAME="awg-tgbot-backup.timer"
 AUTO_BACKUP_SERVICE_FILE="/etc/systemd/system/${AUTO_BACKUP_SERVICE_NAME}"
 AUTO_BACKUP_TIMER_FILE="/etc/systemd/system/${AUTO_BACKUP_TIMER_NAME}"
+PLATEGA_WEBHOOK_SERVICE_NAME="platega-webhook.service"
+PLATEGA_WEBHOOK_SERVICE_FILE="/etc/systemd/system/${PLATEGA_WEBHOOK_SERVICE_NAME}"
 BACKUP_ROOT="${INSTALL_DIR}/backups"
 SAFETY_SNAPSHOT_PREFIX="${INSTALL_DIR}/.safety-snapshot"
 
@@ -173,8 +185,11 @@ setup_logging() {
 
 setup_tty_fd() {
   if [[ -c "$TTY_DEVICE" ]]; then
-    { exec 3<>"$TTY_DEVICE"; } 2>/dev/null || true
+    exec 3<>"$TTY_DEVICE"
+    return 0
   fi
+  # Fallback: используем stdin/stdout
+  exec 3<&0 4>&1
 }
 
 has_tty() { [[ -t 3 ]]; }
@@ -233,12 +248,34 @@ prompt_raw() {
   local prompt="$1"
   local __resultvar="$2"
   local __input=""
-  if ! has_tty; then
-    die "Невозможно запросить ввод без TTY (prompt: ${prompt}). Запусти скрипт в интерактивном терминале."
+  
+  # При запуске через curl | bash stdin перенаправлен, поэтому всегда читаем из /dev/tty
+  # Это единственный способ получить интерактивный ввод пользователя
+  if [[ -e "/dev/tty" ]]; then
+    if ! read -r -p "$prompt" __input < /dev/tty; then
+      __input=""
+    fi
+  elif [[ -t 0 ]]; then
+    # Fallback: stdin является терминалом (редкий случай)
+    if ! read -r -p "$prompt" __input; then
+      __input=""
+    fi
+  elif [[ -t 3 ]]; then
+    # Fallback: fd 3 является терминалом
+    if ! read -r -p "$prompt" __input <&3; then
+      __input=""
+    fi
+  else
+    # Последний шанс: читаем из stdin (не интерактивно)
+    if ! read -r -p "$prompt" __input; then
+      __input=""
+    fi
   fi
-  if ! read -r -u 3 -p "$prompt" __input; then
-    __input=""
-  fi
+  
+  # Trim whitespace
+  __input="${__input#"${__input%%[![:space:]]*}"}"
+  __input="${__input%"${__input##*[![:space:]]}"}"
+  
   printf -v "$__resultvar" '%s' "$__input"
 }
 
@@ -260,16 +297,16 @@ prompt_with_default() {
   local prompt="$1"
   local default="${2:-}"
   local __resultvar="$3"
-  local value=""
+  local input_value=""
   while true; do
     if [[ -n "$default" ]]; then
-      prompt_raw "$prompt [$default]: " value
-      value="${value:-$default}"
+      prompt_raw "$prompt [$default]: " input_value
+      input_value="${input_value:-$default}"
     else
-      prompt_raw "$prompt: " value
+      prompt_raw "$prompt: " input_value
     fi
-    if [[ -n "$value" ]]; then
-      printf -v "$__resultvar" '%s' "$value"
+    if [[ -n "$input_value" ]]; then
+      printf -v "$__resultvar" '%s' "$input_value"
       return 0
     fi
     warn "Значение не может быть пустым."
@@ -549,7 +586,7 @@ ensure_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt_get_safe update -y
   apt_get_safe install -y --no-install-recommends \
-    ca-certificates curl tar gzip openssl sudo python3 python3-venv python3-pip iproute2 psmisc nftables
+    ca-certificates curl tar gzip openssl sudo python3 python3-venv python3-pip iproute2 psmisc nftables nginx certbot python3-certbot-nginx
   if ! require_command docker; then
     warn "Docker не найден. Устанавливаю docker.io..."
     apt_get_safe install -y --no-install-recommends docker.io
@@ -1264,6 +1301,17 @@ migrate_legacy_tariff_defaults() {
   if [[ "$current" == "120" ]]; then
     set_env_value STARS_PRICE_90_DAYS "140"
   fi
+  
+  # Set default Platega prices if not set
+  if [[ -z "$(get_env_value PLATEGA_PRICE_7_DAYS)" ]]; then
+    set_env_value PLATEGA_PRICE_7_DAYS "100"
+  fi
+  if [[ -z "$(get_env_value PLATEGA_PRICE_30_DAYS)" ]]; then
+    set_env_value PLATEGA_PRICE_30_DAYS "250"
+  fi
+  if [[ -z "$(get_env_value PLATEGA_PRICE_90_DAYS)" ]]; then
+    set_env_value PLATEGA_PRICE_90_DAYS "700"
+  fi
   return 0
 }
 
@@ -1421,6 +1469,14 @@ ensure_venv_and_requirements() {
   [[ -d "$VENV_DIR" ]] || "$PYTHON_BIN" -m venv "$VENV_DIR" || return 1
   "$VENV_DIR/bin/pip" install --upgrade pip wheel || return 1
   "$VENV_DIR/bin/pip" install -r "$BOT_DIR/requirements.txt" || return 1
+  
+  # Platega SDK используется напрямую из папки bot/platega-sdk-python
+  # Установка через pip не требуется - путь добавляется в platega_service.py
+  local platega_merchant_id
+  platega_merchant_id="$(get_env_value PLATEGA_MERCHANT_ID)"
+  if [[ -n "$platega_merchant_id" && -d "$BOT_DIR/platega-sdk-python" ]]; then
+    info "Platega SDK доступен локально: $BOT_DIR/platega-sdk-python"
+  fi
   return 0
 }
 
@@ -1667,6 +1723,79 @@ configure_autobackup_timer() {
   return 0
 }
 
+install_platega_webhook_service() {
+  local service_src
+  service_src="${INSTALL_DIR}/packaging/systemd/${PLATEGA_WEBHOOK_SERVICE_NAME}"
+  if [[ ! -f "$service_src" ]]; then
+    warn "Файл platega-webhook systemd unit не найден: ${service_src}"
+    return 1
+  fi
+  cp "$service_src" "$PLATEGA_WEBHOOK_SERVICE_FILE"
+  chmod 644 "$PLATEGA_WEBHOOK_SERVICE_FILE" || true
+  systemctl daemon-reload
+  return 0
+}
+
+configure_platega_webhook() {
+  if ! require_command systemctl; then
+    warn "systemctl не найден. Platega webhook сервис не настроен."
+    return 0
+  fi
+  
+  # Настраиваем сервис только если Platega включен
+  local merchant_id
+  merchant_id="$(get_env_value PLATEGA_MERCHANT_ID)"
+  if [[ -z "$merchant_id" ]]; then
+    info "Platega не настроен (нет Merchant ID). Webhook сервис не активируется."
+    systemctl disable --now "$PLATEGA_WEBHOOK_SERVICE_NAME" >/dev/null 2>&1 || true
+    return 0
+  fi
+  
+  install_platega_webhook_service || return 1
+  systemctl enable --now "$PLATEGA_WEBHOOK_SERVICE_NAME" >/dev/null 2>&1 || return 1
+  
+  # Показываем URL для настройки Callback в Platega
+  local server_ip
+  server_ip="$(get_env_value SERVER_IP)"
+  local webhook_port
+  webhook_port="$(get_env_value PLATEGA_WEBHOOK_PORT)"
+  local webhook_domain
+  webhook_domain="$(get_env_value PLATEGA_WEBHOOK_DOMAIN)"
+  
+  local callback_url=""
+  if [[ -n "$webhook_domain" ]]; then
+    callback_url="https://${webhook_domain}/webhook"
+  elif [[ -n "$server_ip" && -n "$webhook_port" ]]; then
+    # Извлекаем только IP из SERVER_IP (формат может быть IP:port)
+    local webhook_host
+    webhook_host="${server_ip%%:*}"
+    callback_url="https://${webhook_host}:${webhook_port}/webhook"
+  fi
+  
+  if [[ -n "$callback_url" ]]; then
+    ok "Platega webhook сервис запущен: ${PLATEGA_WEBHOOK_SERVICE_NAME}"
+    info ""
+    info "╔═══════════════════════════════════════════════════════════╗"
+    info "║  ВАЖНО: Настройте Callback URL в личном кабинете Platega  ║"
+    info "╠═══════════════════════════════════════════════════════════╣"
+    info "║  URL для ввода в настройках Platega:                      ║"
+    info "║  ${callback_url}"
+    info "║                                                           ║"
+    if [[ -n "$webhook_domain" ]]; then
+      info "║  SSL-сертификат настроен автоматически.                    ║"
+    else
+      info "║  Убедитесь, что порт ${webhook_port} открыт в firewall!              ║"
+    fi
+    info "╚═══════════════════════════════════════════════════════════╝"
+    info ""
+  else
+    ok "Platega webhook сервис запущен: ${PLATEGA_WEBHOOK_SERVICE_NAME}"
+    warn "Не удалось определить SERVER_IP, PLATEGA_WEBHOOK_PORT или PLATEGA_WEBHOOK_DOMAIN для отображения Callback URL"
+  fi
+  
+  return 0
+}
+
 persist_release_sha() {
   local sha="${1:-}"
   mkdir -p "$STATE_DIR"
@@ -1676,6 +1805,372 @@ persist_release_sha() {
   fi
   rm -f "$VERSION_FILE" || true
   warn "release_sha не записан: точный commit развернутого кода не удалось подтвердить."
+  return 0
+}
+
+# Проверка состояния firewall (только если systemctl доступен)
+is_firewall_active() {
+  if ! require_command systemctl; then
+    return 1
+  fi
+  
+  # Проверяем UFW
+  if command -v ufw >/dev/null 2>&1; then
+    if ufw status 2>/dev/null | grep -q "Status: active"; then
+      return 0
+    fi
+  fi
+  
+  # Проверяем firewalld
+  if systemctl is-active firewalld >/dev/null 2>&1; then
+    return 0
+  fi
+  
+  return 1
+}
+
+# Открытие портов в firewall (только если он активен)
+open_firewall_ports() {
+  local ports=("$@")
+  
+  if ! is_firewall_active; then
+    info "Firewall не активен, пропускаем настройку правил."
+    return 0
+  fi
+  
+  info "Открываю порты в firewall..."
+  
+  # UFW
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    for port in "${ports[@]}"; do
+      if ufw status | grep -q "${port}/tcp.*ALLOW"; then
+        info "Порт ${port}/tcp уже открыт в UFW."
+      else
+        ufw allow "${port}/tcp" >/dev/null 2>&1 && ok "Порт ${port}/tcp открыт в UFW." || warn "Не удалось открыть порт ${port}/tcp в UFW."
+      fi
+    done
+    return 0
+  fi
+  
+  # firewalld
+  if systemctl is-active firewalld >/dev/null 2>&1; then
+    for port in "${ports[@]}"; do
+      if firewall-cmd --list-ports 2>/dev/null | grep -q "${port}/tcp"; then
+        info "Порт ${port}/tcp уже открыт в firewalld."
+      else
+        firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 && \
+        firewall-cmd --reload >/dev/null 2>&1 && \
+        ok "Порт ${port}/tcp открыт в firewalld." || warn "Не удалось открыть порт ${port}/tcp в firewalld."
+      fi
+    done
+    return 0
+  fi
+  
+  return 0
+}
+
+# Настройка Nginx и SSL сертификата
+setup_nginx_and_ssl() {
+  local domain="$1"
+  
+  if [[ -z "$domain" ]]; then
+    warn "Домен не указан, пропускаю настройку Nginx и SSL."
+    return 1
+  fi
+  
+  info "Настраиваю Nginx и SSL для домена ${domain}..."
+  
+  # Предварительная проверка: нет ли уже процессов на порту 80
+  info "Предварительная проверка порта 80..."
+  local existing_port80
+  existing_port80=$(ss -tlnp | grep ":80 " || true)
+  if [[ -n "$existing_port80" ]]; then
+    info "Порт 80 уже занят:"
+    echo "$existing_port80"
+    
+    # Проверяем, не Docker ли это
+    if command -v docker &>/dev/null; then
+      local docker_containers
+      docker_containers=$(docker ps --format "table {{.Names}}\t{{.Ports}}" 2>/dev/null | grep -E ":80|:443" || true)
+      if [[ -n "$docker_containers" ]]; then
+        warn "Обнаружены Docker-контейнеры на портах 80/443:"
+        echo "$docker_containers"
+        echo ""
+        echo "Это может конфликтовать с получением SSL сертификата."
+        echo "Если нужно, остановите контейнеры командой:"
+        echo "  docker stop <container_name>"
+        echo ""
+      fi
+    fi
+  fi
+  
+  # Проверка DNS
+  info "Проверяю DNS записи для ${domain}..."
+  if ! "$PYTHON_BIN" - "$domain" <<'PY'
+import socket, sys
+domain = sys.argv[1]
+try:
+    result = socket.gethostbyname(domain)
+    print(f"DNS OK: {domain} -> {result}")
+    sys.exit(0)
+except socket.gaierror:
+    print(f"DNS ERROR: не удалось разрешить {domain}")
+    sys.exit(1)
+PY
+  then
+    warn "DNS проверка не пройдена. Убедитесь, что домен ${domain} указывает на этот сервер."
+    if ! confirm_explicit "Продолжить несмотря на ошибку DNS?"; then
+      return 1
+    fi
+  fi
+  
+  # Открываем порты 80 и 443 в firewall ДО настройки Nginx и получения сертификата
+  info "Открываю порты 80 и 443 в firewall..."
+  open_firewall_ports 80 443
+
+  # Очищаем старые конфигурации для этого домена
+  local old_nginx_link="/etc/nginx/sites-enabled/${domain}"
+  local old_nginx_conf="/etc/nginx/sites-available/${domain}"
+  if [[ -L "$old_nginx_link" ]] || [[ -f "$old_nginx_link" ]]; then
+    rm -f "$old_nginx_link"
+  fi
+  if [[ -f "$old_nginx_conf" ]]; then
+    rm -f "$old_nginx_conf"
+  fi
+  
+  # Создаем конфигурацию Nginx
+  local webhook_port
+  webhook_port="$(get_env_value PLATEGA_WEBHOOK_PORT)"
+  [[ -n "$webhook_port" ]] || webhook_port="8081"
+  
+  local nginx_conf="/etc/nginx/sites-available/${domain}"
+  local nginx_link="/etc/nginx/sites-enabled/${domain}"
+  
+  cat > "$nginx_conf" <<NGINX
+server {
+    listen 80;
+    server_name ${domain};
+    
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        try_files $uri =404;
+    }
+
+    location /webhook {
+        proxy_pass http://127.0.0.1:${webhook_port};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Health check для webhook
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+    }
+}
+NGINX
+  
+  # Создаем симлинк
+  ln -sf "$nginx_conf" "$nginx_link"
+  
+  # Создаем директорию для ACME challenge (обязательно для webroot проверки)
+  info "Создаю директорию для ACME challenge..."
+  mkdir -p /var/www/certbot/.well-known/acme-challenge
+  chown -R www-data:www-data /var/www/certbot
+  chmod -R 755 /var/www/certbot
+  ok "Директория /var/www/certbot/.well-known/acme-challenge создана."
+  
+  # Проверяем конфигурацию Nginx
+  if ! nginx -t >/dev/null 2>&1; then
+    warn "Ошибка в конфигурации Nginx."
+    nginx -t
+    return 1
+  fi
+  
+  # Перезапускаем Nginx с выводом статуса
+  info "Перезапускаю Nginx..."
+  if require_command systemctl; then
+    if ! systemctl restart nginx 2>&1; then
+      warn "Не удалось перезапустить Nginx через systemctl."
+      systemctl status nginx --no-pager || true
+      return 1
+    fi
+    ok "Nginx перезапущен через systemctl."
+  else
+    if ! service nginx restart 2>&1; then
+      warn "Не удалось перезапустить Nginx через service."
+      service nginx status || true
+      return 1
+    fi
+    ok "Nginx перезапущен через service."
+  fi
+  
+  # Даём время на старт Nginx
+  sleep 2
+  
+  # Проверяем, что Nginx действительно слушает порт 80 НА ВСЕХ ИНТЕРФЕЙСАХ
+  info "Проверяю, что Nginx слушает порт 80..."
+  if ! ss -tlnp | grep -q ":80 "; then
+    warn "Nginx не слушает порт 80!"
+    ss -tlnp | grep -E ":80|nginx" || true
+    return 1
+  fi
+  ok "Nginx слушает порт 80."
+  
+  # Критическая проверка: кто именно слушает порт 80 и на каких интерфейсах
+  info "Детальная проверка процессов на порту 80..."
+  echo "=== Процессы на порту 80 ==="
+  ss -tlnp | grep ":80" || echo "[Пусто]"
+  echo ""
+  echo "=== Проверка на конфликтующие процессы (Docker, Apache, другой Nginx) ==="
+  local conflicting_procs
+  conflicting_procs=$(ps aux | grep -E "[n]ginx|[a]pache|[d]ocker" | grep -v "grep" || true)
+  if [[ -n "$conflicting_procs" ]]; then
+    echo "$conflicting_procs"
+    echo ""
+    warn "Обнаружены потенциально конфликтующие процессы!"
+    echo "Если видите несколько nginx или docker, возможно один из них перехватывает порт 80."
+  fi
+  echo ""
+  
+  # Проверяем, слушает ли Nginx на 0.0.0.0 (все интерфейсы), а не только на 127.0.0.1
+  local nginx_listen_info
+  nginx_listen_info=$(ss -tlnp | grep ":80" || true)
+  if echo "$nginx_listen_info" | grep -q "127.0.0.1:80"; then
+    if ! echo "$nginx_listen_info" | grep -qE "0\\.0\\.0\\.0:80|\\*:80|\\[::\\]:80"; then
+      warn "ВНИМАНИЕ: Nginx слушает ТОЛЬКО на localhost (127.0.0.1:80), но НЕ на внешних интерфейсах!"
+      echo "Это означает, что Let's Encrypt не сможет подключиться к вашему серверу."
+      echo ""
+      echo "Возможные причины:"
+      echo "  1. Другой процесс (например, Docker-контейнер) уже занял порт 80"
+      echo "  2. Nginx сконфигурирован слушать только на 127.0.0.1"
+      echo ""
+      echo "Проверьте конфигурацию Nginx:"
+      grep -r "listen" /etc/nginx/sites-enabled/ 2>/dev/null || true
+      echo ""
+      echo "Попробуйте найти и остановить конфликтующий процесс:"
+      echo "  docker ps 2>/dev/null | grep -E ':80|nginx' || true"
+      echo "  lsof -i :80 2>/dev/null || true"
+      if ! confirm_explicit "Попробовать получить сертификат несмотря на это?"; then
+        return 1
+      fi
+    fi
+  fi
+  
+  # Проверяем, что порт 80 доступен извне перед получением сертификата
+  info "Проверяю доступность порта 80 из интернета..."
+  sleep 2
+  if ! "$PYTHON_BIN" - "$domain" <<'PY'
+import socket, sys, time
+domain = sys.argv[1]
+for attempt in range(3):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        result = sock.connect_ex((socket.gethostbyname(domain), 80))
+        sock.close()
+        if result == 0:
+            print(f"Порт 80 открыт и доступен")
+            sys.exit(0)
+    except Exception as e:
+        pass
+    time.sleep(2)
+print("Порт 80 недоступен из интернета. Let's Encrypt не сможет проверить домен.")
+sys.exit(1)
+PY
+  then
+    warn "Порт 80 не доступен из интернета. Это может быть из-за:"
+    echo "  1. Фаервола вашего хостинг-провайдера (нужно открыть в панели управления)"
+    echo "  2. DNS еще не обновился (подождите 5-10 минут)"
+    echo "  3. Nginx не слушает порт 80 (проверьте systemctl status nginx)"
+    if ! confirm_explicit "Попробовать получить сертификат несмотря на это?"; then
+      return 1
+    fi
+  fi
+  
+  # Тестовая проверка доступности ACME challenge directory
+  info "Тестирую доступность /.well-known/acme-challenge/ локально..."
+  local test_file="/var/www/certbot/.well-known/acme-challenge/test-connectivity"
+  echo "test-ok" > "$test_file"
+  sleep 1
+  local curl_result
+  curl_result=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1/.well-known/acme-challenge/test-connectivity" 2>/dev/null || echo "000")
+  rm -f "$test_file"
+  if [[ "$curl_result" == "200" ]]; then
+    ok "ACME challenge директория доступна локально."
+  else
+    warn "ACME challenge директория НЕ доступна локально (HTTP ${curl_result})."
+    echo "Проверьте конфигурацию Nginx и права доступа к /var/www/certbot"
+    ls -la /var/www/certbot/.well-known/ 2>/dev/null || true
+    cat /etc/nginx/sites-available/"$domain" 2>/dev/null || true
+    echo ""
+    echo "Проверка nginx.conf:"
+    grep -A5 "acme-challenge" /etc/nginx/sites-available/"$domain" 2>/dev/null || echo "[Не найдено]"
+    return 1
+  fi
+  
+  # Получаем SSL сертификат через Certbot с ПОЛНЫМ логом ошибок
+  info "Получаю SSL сертификат через Let's Encrypt..."
+  local certbot_log certbot_err_log
+  certbot_log="$(mktemp)"
+  certbot_err_log="$(mktemp)"
+  
+  # Запускаем certbot с максимальным уровнем детализации
+  # Используем --register-unsafely-without-email чтобы избежать проблем с невалидным email
+  if certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d "$domain" --verbose >"$certbot_log" 2>"$certbot_err_log"; then
+    rm -f "$certbot_log" "$certbot_err_log"
+    ok "SSL сертификат успешно получен для ${domain}."
+  else
+    echo ""
+    echo "[ОШИБКА] Не удалось получить SSL сертификат автоматически."
+    echo ""
+    echo "=== Лог stdout ==="
+    cat "$certbot_log"
+    echo ""
+    echo "=== Лог stderr (ОШИБКИ) ==="
+    cat "$certbot_err_log"
+    echo "==========================="
+    echo ""
+    
+    # Дополнительные проверки для диагностики
+    echo "=== Дополнительная диагностика ==="
+    echo ""
+    echo "1. Проверка доступности домена извне:"
+    curl -v --connect-timeout 5 "http://${domain}/.well-known/acme-challenge/" 2>&1 | head -20 || echo "  [Не удалось подключиться]"
+    echo ""
+    echo "2. Текущие сертификаты (если есть):"
+    ls -la /etc/letsencrypt/live/${domain}/ 2>/dev/null || echo "  [Сертификатов нет]"
+    echo ""
+    echo "3. Статус портов:"
+    ss -tlnp | grep -E ":80|:443" || echo "  [Порты 80/443 не слушаются]"
+    echo ""
+    echo "4. Конфигурация Nginx для домена:"
+    cat /etc/nginx/sites-available/"$domain" 2>/dev/null || echo "  [Конфиг не найден]"
+    echo ""
+    
+    echo "Возможные причины:"
+    echo "  1. Порт 80 закрыт фаерволом провайдера (откройте в панели управления хостингом)"
+    echo "  2. DNS запись еще не обновилась (подождите и попробуйте позже)"
+    echo "  3. Домен уже имеет сертификат (попробуйте certbot renew)"
+    echo "  4. Директория /.well-known/acme-challenge/ недоступна из интернета"
+    echo "  5. Другой процесс (Docker/Apache) перехватывает порт 80"
+    echo ""
+    echo "Для ручной диагностики выполните:"
+    echo "  curl -v http://${domain}/.well-known/acme-challenge/test"
+    echo "  curl -v http://${domain}/webhook"
+    echo "  lsof -i :80"
+    echo "  docker ps 2>/dev/null | grep ':80'"
+    echo ""
+    echo "Попробуйте получить сертификат вручную с полным логом:"
+    echo "  certbot --nginx -d ${domain} --verbose --debug"
+    echo ""
+    rm -f "$certbot_log" "$certbot_err_log"
+    return 1
+  fi
+  
+  ok "Nginx и SSL настроены для ${domain}."
+  info "Callback URL: https://${domain}/webhook"
+  
   return 0
 }
 
@@ -1961,6 +2456,68 @@ install_or_reinstall_flow() {
         set_env_value SERVER_IP "$value"
       fi
     fi
+    
+    # Настройка Platega даже в автоматическом режиме
+    echo ""
+    echo "--- Настройка Platega (опционально, нажмите Enter для пропуска) ---"
+    
+    platega_merchant_id=""
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_MERCHANT_ID)" "")"
+    prompt_with_default 'Platega Merchant ID' "$default" platega_merchant_id
+    
+    if [[ -n "$platega_merchant_id" ]]; then
+      set_env_value PLATEGA_MERCHANT_ID "$platega_merchant_id"
+      
+      platega_secret_key=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET_KEY)" "")"
+      prompt_with_default 'Platega Secret Key' "$default" platega_secret_key
+      set_env_value PLATEGA_SECRET_KEY "$platega_secret_key"
+      
+      platega_test_mode=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_TEST_MODE)" "0")"
+      prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" platega_test_mode
+      set_env_value PLATEGA_TEST_MODE "$platega_test_mode"
+      
+      # Запрос домена для webhook
+      platega_domain=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_DOMAIN)" "")"
+      prompt_with_default 'Домен для webhook Platega (например: example.com)' "$default" platega_domain
+      
+      if [[ -n "$platega_domain" ]]; then
+        set_env_value PLATEGA_WEBHOOK_DOMAIN "$platega_domain"
+        set_env_value PLATEGA_WEBHOOK_PORT "443"
+        
+        # Автоматическая настройка Nginx и SSL
+        setup_nginx_and_ssl "$platega_domain"
+      else
+        # Если домен не указан, используем старый режим с IP:порт
+        platega_webhook_port=""
+        default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
+        prompt_with_default 'Порт webhook Platega' "$default" platega_webhook_port
+        set_env_value PLATEGA_WEBHOOK_PORT "$platega_webhook_port"
+      fi
+      
+      platega_price_7_days=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_7_DAYS)" "100")"
+      prompt_with_default 'Цена 7 дней через Platega (руб)' "$default" platega_price_7_days
+      set_env_value PLATEGA_PRICE_7_DAYS "$platega_price_7_days"
+      
+      platega_price_30_days=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_30_DAYS)" "250")"
+      prompt_with_default 'Цена 30 дней через Platega (руб)' "$default" platega_price_30_days
+      set_env_value PLATEGA_PRICE_30_DAYS "$platega_price_30_days"
+      
+      platega_price_90_days=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_90_DAYS)" "700")"
+      prompt_with_default 'Цена 90 дней через Platega (руб)' "$default" platega_price_90_days
+      set_env_value PLATEGA_PRICE_90_DAYS "$platega_price_90_days"
+      
+      echo "[+] Platega настроен."
+    else
+      echo "[*] Platega пропущен."
+      set_env_value PLATEGA_MERCHANT_ID ""
+      set_env_value PLATEGA_SECRET_KEY ""
+    fi
   else
     configure_manual_awg_only
     default="$(pick_existing_or_default "$(get_env_value STARS_PRICE_7_DAYS)" "21")"
@@ -1969,6 +2526,68 @@ install_or_reinstall_flow() {
     default="$(pick_existing_or_default "$(get_env_value STARS_PRICE_30_DAYS)" "50")"
     prompt_with_default 'Цена 30 дней в Telegram Stars' "$default" value
     set_env_value STARS_PRICE_30_DAYS "$value"
+    
+    echo ""
+    echo "--- Настройка цен Platega (руб) ---"
+    
+    platega_merchant_id=""
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_MERCHANT_ID)" "")"
+    prompt_with_default 'Platega Merchant ID' "$default" platega_merchant_id
+    
+    if [[ -n "$platega_merchant_id" ]]; then
+      set_env_value PLATEGA_MERCHANT_ID "$platega_merchant_id"
+      
+      platega_secret_key=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET_KEY)" "")"
+      prompt_with_default 'Platega Secret Key' "$default" platega_secret_key
+      set_env_value PLATEGA_SECRET_KEY "$platega_secret_key"
+      
+      platega_test_mode=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_TEST_MODE)" "0")"
+      prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" platega_test_mode
+      set_env_value PLATEGA_TEST_MODE "$platega_test_mode"
+      
+      # Запрос домена для webhook (во второй ветке тоже)
+      platega_domain=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_DOMAIN)" "")"
+      prompt_with_default 'Домен для webhook Platega (например: example.com)' "$default" platega_domain
+      
+      if [[ -n "$platega_domain" ]]; then
+        set_env_value PLATEGA_WEBHOOK_DOMAIN "$platega_domain"
+        set_env_value PLATEGA_WEBHOOK_PORT "443"
+        
+        # Автоматическая настройка Nginx и SSL
+        setup_nginx_and_ssl "$platega_domain"
+      else
+        # Если домен не указан, используем старый режим с IP:порт
+        platega_webhook_port=""
+        default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
+        prompt_with_default 'Порт webhook Platega' "$default" platega_webhook_port
+        set_env_value PLATEGA_WEBHOOK_PORT "$platega_webhook_port"
+      fi
+      
+      platega_price_7_days=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_7_DAYS)" "100")"
+      prompt_with_default 'Цена 7 дней через Platega (руб)' "$default" platega_price_7_days
+      set_env_value PLATEGA_PRICE_7_DAYS "$platega_price_7_days"
+      
+      platega_price_30_days=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_30_DAYS)" "250")"
+      prompt_with_default 'Цена 30 дней через Platega (руб)' "$default" platega_price_30_days
+      set_env_value PLATEGA_PRICE_30_DAYS "$platega_price_30_days"
+      
+      platega_price_90_days=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_90_DAYS)" "700")"
+      prompt_with_default 'Цена 90 дней через Platega (руб)' "$default" platega_price_90_days
+      set_env_value PLATEGA_PRICE_90_DAYS "$platega_price_90_days"
+      
+      echo "[+] Platega настроен."
+    else
+      echo "[*] Platega пропущен."
+      set_env_value PLATEGA_MERCHANT_ID ""
+      set_env_value PLATEGA_SECRET_KEY ""
+    fi
+    
     default="$(pick_existing_or_default "$(get_env_value DOWNLOAD_URL)" "https://github.com/amnezia-vpn/amnezia-client/releases/latest")"
     prompt_with_default 'Ссылка на Amnezia / инструкцию скачивания' "$default" value
     set_env_value DOWNLOAD_URL "$value"
@@ -1998,6 +2617,7 @@ install_or_reinstall_flow() {
   setup_logrotate || die "Не удалось настроить logrotate."
   write_service || die "Не удалось создать systemd сервис."
   configure_autobackup_timer || die "Не удалось настроить systemd timer autobackup."
+  configure_platega_webhook || warn "Не удалось настроить Platega webhook сервис."
   persist_repo_branch
   persist_release_sha "$deploy_sha"
   if [[ "$mode" == "reinstall" ]]; then
@@ -2146,7 +2766,12 @@ run_post_restart_smokecheck() {
 
   runtime_python="$PYTHON_BIN"
   [[ -x "${VENV_DIR}/bin/python" ]] && runtime_python="${VENV_DIR}/bin/python"
-  db_result="$("$runtime_python" - "$BOT_DIR" "$ENV_FILE" <<'PY' 2>/dev/null || true
+
+  # Retry loop для проверки БД: даём боту время на инициализацию схемы
+  local max_attempts=5 attempt_delay=2 db_result="" attempt=0
+  while (( attempt < max_attempts )); do
+    attempt=$((attempt + 1))
+    db_result="$( "$runtime_python" - "$BOT_DIR" "$ENV_FILE" <<'PY' 2>/dev/null || true
 import asyncio
 import os
 import sys
@@ -2173,6 +2798,16 @@ if not info.get("runtime_ready"):
 print("runtime_ready")
 PY
 )"
+    # Проверяем результат
+    if [[ "$db_result" == "runtime_ready" ]]; then
+      break
+    fi
+    # Если не готова и это не последняя попытка — ждём и пробуем снова
+    if (( attempt < max_attempts )); then
+      sleep "$attempt_delay"
+    fi
+  done
+
   if [[ "$db_result" == schema_not_ready:path=* ]]; then
     local schema_db_path="${db_result#schema_not_ready:path=}"
     warn "Проверка после перезапуска: проверка БД не пройдена (schema_ready=false, path=${schema_db_path})."
@@ -3481,8 +4116,8 @@ if [[ "${AWG_TGBOT_SOURCE_ONLY:-0}" == "1" ]]; then
 fi
 
 require_root
-setup_logging
 setup_tty_fd
+setup_logging
 
 if [[ $# -gt 0 ]]; then
   run_action "$1"

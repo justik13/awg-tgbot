@@ -804,6 +804,87 @@ async def get_payment_status(payment_id: str) -> str | None:
     return row[0] if row else None
 
 
+async def get_payment_by_order(order_id: str) -> dict[str, Any] | None:
+    """Получить платеж по order_id (формат: "user_id:sub_type")."""
+    try:
+        user_id_str, sub_type = order_id.split(":", 1)
+        user_id = int(user_id_str)
+    except (ValueError, IndexError):
+        # Если формат неверный, пробуем извлечь только sub_type
+        sub_type = order_id.split(":")[-1] if ":" in order_id else order_id
+        user_id = None
+
+    if user_id is not None:
+        # Ищем по user_id и payload (более точный поиск)
+        row = await fetchone(
+            """
+            SELECT telegram_payment_charge_id, user_id, payload, status, amount, currency, raw_payload_json
+            FROM payments
+            WHERE user_id = ? AND payload = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id, sub_type),
+        )
+    else:
+        #Fallback: ищем только по payload
+        row = await fetchone(
+            """
+            SELECT telegram_payment_charge_id, user_id, payload, status, amount, currency, raw_payload_json
+            FROM payments
+            WHERE payload = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (sub_type,),
+        )
+
+    if not row:
+        return None
+    return {
+        "payment_id": row[0],
+        "user_id": row[1],
+        "invoice_payload": row[2],
+        "order_id": f"{row[1]}:{row[2]}" if row[1] else row[2],
+        "status": row[3],
+        "amount": row[4],
+        "currency": row[5],
+        "raw_payload": json.loads(row[6]) if row[6] else {},
+    }
+
+
+async def get_payment_by_transaction_id(transaction_id: str) -> dict[str, Any] | None:
+    """Получить платеж по transaction_id (platega_transaction_id или telegram_payment_charge_id)."""
+    row = await fetchone(
+        """
+        SELECT telegram_payment_charge_id, user_id, payload, status, amount, currency, raw_payload_json, created_at
+        FROM payments
+        WHERE telegram_payment_charge_id = ?
+        LIMIT 1
+        """,
+        (transaction_id,),
+    )
+    
+    if not row:
+        return None
+    
+    user_id = row[1]
+    payload = row[2]
+    order_id = f"{user_id}:{payload}" if user_id and payload else payload
+    
+    return {
+        "payment_id": row[0],
+        "user_id": user_id,
+        "invoice_payload": payload,
+        "order_id": order_id,
+        "status": row[3],
+        "amount": row[4],
+        "currency": row[5],
+        "raw_payload_json": row[6],
+        "created_at": row[7],
+    }
+
+
 async def get_payment_activation_snapshot(payment_id: str) -> tuple[str, str | None] | None:
     row = await fetchone(
         "SELECT last_provision_status, provisioned_until FROM payments WHERE telegram_payment_charge_id = ?",
@@ -1205,6 +1286,80 @@ async def update_payment_status(
             """,
             (status, error_message, now_iso, next_retry_at, status, telegram_payment_charge_id),
         )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
+
+async def update_payment_status_by_order(
+    order_id: str,
+    status: str,
+    transaction_id: str | None = None,
+) -> None:
+    """Обновить статус платежа по order_id (для Platega callback)."""
+    now_iso = utc_now_naive().isoformat()
+    
+    # Парсим order_id (формат: "user_id:sub_type")
+    try:
+        user_id_str, sub_type = order_id.split(":", 1)
+        user_id = int(user_id_str)
+    except (ValueError, IndexError):
+        sub_type = order_id.split(":")[-1] if ":" in order_id else order_id
+        user_id = None
+    
+    db = await open_db()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        
+        # Обновляем платеж
+        if transaction_id:
+            if user_id is not None:
+                await db.execute(
+                    """
+                    UPDATE payments
+                    SET status = ?,
+                        provider_payment_charge_id = ?,
+                        updated_at = ?
+                    WHERE user_id = ? AND payload = ?
+                    """,
+                    (status, transaction_id, now_iso, user_id, sub_type),
+                )
+            else:
+                await db.execute(
+                    """
+                    UPDATE payments
+                    SET status = ?,
+                        provider_payment_charge_id = ?,
+                        updated_at = ?
+                    WHERE payload = ?
+                    """,
+                    (status, transaction_id, now_iso, sub_type),
+                )
+        else:
+            if user_id is not None:
+                await db.execute(
+                    """
+                    UPDATE payments
+                    SET status = ?,
+                        updated_at = ?
+                    WHERE user_id = ? AND payload = ?
+                    """,
+                    (status, now_iso, user_id, sub_type),
+                )
+            else:
+                await db.execute(
+                    """
+                    UPDATE payments
+                    SET status = ?,
+                        updated_at = ?
+                    WHERE payload = ?
+                    """,
+                    (status, now_iso, sub_type),
+                )
+        
         await db.commit()
     except Exception:
         await db.rollback()
