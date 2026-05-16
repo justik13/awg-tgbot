@@ -2,8 +2,22 @@
 Platega payment integration for VPN bot.
 Uses plategaio (async SDK) for non-blocking operations.
 """
+import sys
+import os
 from typing import Optional, Dict, Any
 from datetime import timedelta
+
+# Добавляем путь к async SDK если он еще не в path
+_sdk_async_path = os.path.join(os.path.dirname(__file__), '..', 'plategaio-main')
+if _sdk_async_path not in sys.path:
+    sys.path.insert(0, _sdk_async_path)
+
+try:
+    from plategaio import PlategaAsyncClient, CreateTransactionRequest, PaymentDetails
+    PLATEGAIO_AVAILABLE = True
+except ImportError as e:
+    PLATEGAIO_AVAILABLE = False
+    logger.error(f"Failed to import plategaio: {e}")
 
 from aiogram import Bot, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -29,6 +43,9 @@ class PlategaPaymentService:
         self.merchant_id = merchant_id
         self.secret = secret
         self.base_url = base_url
+        
+        if not PLATEGAIO_AVAILABLE:
+            logger.error("plategaio library not available - payments will not work")
     
     async def create_payment(
         self,
@@ -44,8 +61,24 @@ class PlategaPaymentService:
         
         Note: According to Platega API documentation, the transaction ID is generated
         automatically by the system - we do NOT send the 'id' field in the request.
+        
+        Args:
+            amount: Payment amount
+            currency: Currency code (e.g., 'RUB')
+            description: Payment description
+            payload: Custom payload (order_id in format user_id:sub_type) - returned in callback
+            return_url: Success redirect URL (optional)
+            failed_url: Failed redirect URL (optional)
+            payment_method: Payment method constant (default: SBP QR)
+        
+        Returns:
+            dict with transaction_id, redirect_url, status, expires_in
+            
+        Raises:
+            RuntimeError: If plategaio is not available or API call fails
         """
-        from plategaio import PlategaAsyncClient, CreateTransactionRequest, PaymentDetails
+        if not PLATEGAIO_AVAILABLE:
+            raise RuntimeError("plategaio library not available")
         
         async with PlategaAsyncClient(
             merchant_id=self.merchant_id,
@@ -71,8 +104,19 @@ class PlategaPaymentService:
             }
     
     async def check_payment_status(self, transaction_id: str) -> Dict[str, Any]:
-        """Check the status of a Platega payment."""
-        from plategaio import PlategaAsyncClient
+        """Check the status of a Platega payment.
+        
+        Args:
+            transaction_id: Transaction ID from Platega
+            
+        Returns:
+            dict with id, status, amount, currency, payment_method, redirect
+            
+        Raises:
+            RuntimeError: If plategaio is not available or API call fails
+        """
+        if not PLATEGAIO_AVAILABLE:
+            raise RuntimeError("plategaio library not available")
         
         async with PlategaAsyncClient(
             merchant_id=self.merchant_id,
@@ -87,6 +131,7 @@ class PlategaPaymentService:
                 "amount": status_response.payment_details.get("amount"),
                 "currency": status_response.payment_details.get("currency"),
                 "payment_method": status_response.payment_method,
+                "redirect": getattr(status_response, 'redirect', None),
             }
     
     @staticmethod
