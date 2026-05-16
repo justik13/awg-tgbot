@@ -1869,6 +1869,70 @@ open_firewall_ports() {
   return 0
 }
 
+# Проверка какие процессы слушают указанный порт (альтернатива ss)
+check_port_listeners() {
+  local port="$1"
+  local result=""
+  
+  # Пробуем ss если доступен
+  if command -v ss >/dev/null 2>&1; then
+    result=$(ss -tlnp 2>/dev/null | grep ":${port} " || true)
+    if [[ -n "$result" ]]; then
+      echo "$result"
+      return 0
+    fi
+  fi
+  
+  # Пробуем netstat если ss недоступен
+  if command -v netstat >/dev/null 2>&1; then
+    result=$(netstat -tlnp 2>/dev/null | grep ":${port} " || true)
+    if [[ -n "$result" ]]; then
+      echo "$result"
+      return 0
+    fi
+  fi
+  
+  # Используем Python как fallback
+  result=$("$PYTHON_BIN" - "$port" <<'PY'
+import socket, os, subprocess, sys
+try:
+    port = int(sys.argv[1])
+    # Пытаемся получить информацию через /proc/net/tcp
+    listeners = []
+    for tcp_file in ['/proc/net/tcp', '/proc/net/tcp6']:
+        if not os.path.exists(tcp_file):
+            continue
+        with open(tcp_file, 'r') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                local_addr = parts[1]
+                state = parts[3]
+                if state != '0A':  # Только LISTEN (0A)
+                    continue
+                ip_hex, port_hex = local_addr.split(':')
+                local_port = int(port_hex, 16)
+                if local_port == port:
+                    listeners.append(f"LISTEN 0.0.0.0:{port}")
+    if listeners:
+        for l in listeners:
+            print(l)
+        sys.exit(0)
+    sys.exit(1)
+except Exception as e:
+    sys.exit(1)
+PY
+  )
+  
+  if [[ -n "$result" ]]; then
+    echo "$result"
+    return 0
+  fi
+  
+  return 1
+}
+
 # Настройка Nginx и SSL сертификата
 setup_nginx_and_ssl() {
   local domain="$1"
@@ -1880,26 +1944,83 @@ setup_nginx_and_ssl() {
   
   info "Настраиваю Nginx и SSL для домена ${domain}..."
   
+  # Гарантируем что nginx и certbot установлены ПЕРЕД настройкой
+  info "Проверяю наличие nginx и certbot..."
+  if ! command -v nginx >/dev/null 2>&1; then
+    info "Устанавливаю nginx и certbot..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt_get_safe update -y
+    apt_get_safe install -y --no-install-recommends nginx certbot python3-certbot-nginx || {
+      error "Не удалось установить nginx и certbot."
+      return 1
+    }
+  fi
+  
+  # Проверяем что директории nginx существуют
+  if [[ ! -d "/etc/nginx/sites-available" ]]; then
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+  fi
+  
   # Предварительная проверка: нет ли уже процессов на порту 80
   info "Предварительная проверка порта 80..."
   local existing_port80
-  existing_port80=$(ss -tlnp | grep ":80 " || true)
+  existing_port80=$(check_port_listeners 80 || true)
   if [[ -n "$existing_port80" ]]; then
     info "Порт 80 уже занят:"
     echo "$existing_port80"
+    
+    # Проверяем, это nginx или Docker
+    local is_nginx=false
+    local is_docker=false
+    
+    if echo "$existing_port80" | grep -q "nginx"; then
+      is_nginx=true
+      info "Обнаружен работающий Nginx на порту 80."
+    fi
     
     # Проверяем, не Docker ли это
     if command -v docker &>/dev/null; then
       local docker_containers
       docker_containers=$(docker ps --format "table {{.Names}}\t{{.Ports}}" 2>/dev/null | grep -E ":80|:443" || true)
       if [[ -n "$docker_containers" ]]; then
+        is_docker=true
         warn "Обнаружены Docker-контейнеры на портах 80/443:"
         echo "$docker_containers"
         echo ""
         echo "Это может конфликтовать с получением SSL сертификата."
-        echo "Если нужно, остановите контейнеры командой:"
-        echo "  docker stop <container_name>"
-        echo ""
+      fi
+    fi
+    
+    # Автоматически останавливаем nginx если он мешает
+    if [[ "$is_nginx" == "true" ]]; then
+      info "Автоматически останавливаю Nginx для настройки..."
+      if command -v systemctl &>/dev/null; then
+        systemctl stop nginx 2>/dev/null || true
+        sleep 1
+      elif command -v service &>/dev/null; then
+        service nginx stop 2>/dev/null || true
+        sleep 1
+      fi
+      
+      # Проверяем что порт освободился
+      if check_port_listeners 80 | grep -q ":80 "; then
+        warn "Не удалось освободить порт 80. Попробуйте вручную остановить конфликтующие процессы."
+        echo "Команды для ручной остановки:"
+        echo "  sudo systemctl stop nginx"
+        echo "  sudo docker stop <container_name>"
+        if ! confirm_explicit "Попробовать продолжить несмотря на занятый порт?"; then
+          return 1
+        fi
+      else
+        ok "Порт 80 освобожден."
+      fi
+    elif [[ "$is_docker" == "true" ]]; then
+      warn "Docker-контейнеры занимают порт 80/443."
+      echo "Рекомендуется временно остановить их командой:"
+      echo "  docker stop <container_name>"
+      echo ""
+      if ! confirm_explicit "Продолжить несмотря на возможные конфликты?"; then
+        return 1
       fi
     fi
   fi
@@ -1938,6 +2059,13 @@ PY
     rm -f "$old_nginx_conf"
   fi
   
+  # Отключаем default конфиг, чтобы он не перехватывал порт 80
+  local default_nginx_link="/etc/nginx/sites-enabled/default"
+  if [[ -L "$default_nginx_link" ]] || [[ -f "$default_nginx_link" ]]; then
+    info "Отключаю стандартный конфиг Nginx (default)..."
+    rm -f "$default_nginx_link"
+  fi
+  
   # Создаем конфигурацию Nginx
   local webhook_port
   webhook_port="$(get_env_value PLATEGA_WEBHOOK_PORT)"
@@ -1970,8 +2098,13 @@ server {
 }
 NGINX
   
-  # Создаем симлинк
+  # Создаем симлинк и проверяем что он создан
   ln -sf "$nginx_conf" "$nginx_link"
+  if [[ ! -L "$nginx_link" ]] && [[ ! -f "$nginx_link" ]]; then
+    error "Не удалось создать символическую ссылку на конфигурацию Nginx."
+    return 1
+  fi
+  ok "Конфигурация Nginx создана и активирована."
   
   # Создаем директорию для ACME challenge (обязательно для webroot проверки)
   info "Создаю директорию для ACME challenge..."
@@ -2010,9 +2143,9 @@ NGINX
   
   # Проверяем, что Nginx действительно слушает порт 80 НА ВСЕХ ИНТЕРФЕЙСАХ
   info "Проверяю, что Nginx слушает порт 80..."
-  if ! ss -tlnp | grep -q ":80 "; then
+  if ! check_port_listeners 80 | grep -q ":80 "; then
     warn "Nginx не слушает порт 80!"
-    ss -tlnp | grep -E ":80|nginx" || true
+    check_port_listeners 80 | grep -E ":80|nginx" || true
     return 1
   fi
   ok "Nginx слушает порт 80."
@@ -2020,7 +2153,7 @@ NGINX
   # Критическая проверка: кто именно слушает порт 80 и на каких интерфейсах
   info "Детальная проверка процессов на порту 80..."
   echo "=== Процессы на порту 80 ==="
-  ss -tlnp | grep ":80" || echo "[Пусто]"
+  check_port_listeners 80 | grep ":80" || echo "[Пусто]"
   echo ""
   echo "=== Проверка на конфликтующие процессы (Docker, Apache, другой Nginx) ==="
   local conflicting_procs
@@ -2035,7 +2168,7 @@ NGINX
   
   # Проверяем, слушает ли Nginx на 0.0.0.0 (все интерфейсы), а не только на 127.0.0.1
   local nginx_listen_info
-  nginx_listen_info=$(ss -tlnp | grep ":80" || true)
+  nginx_listen_info=$(check_port_listeners 80 || true)
   if echo "$nginx_listen_info" | grep -q "127.0.0.1:80"; then
     if ! echo "$nginx_listen_info" | grep -qE "0\\.0\\.0\\.0:80|\\*:80|\\[::\\]:80"; then
       warn "ВНИМАНИЕ: Nginx слушает ТОЛЬКО на localhost (127.0.0.1:80), но НЕ на внешних интерфейсах!"
@@ -2142,7 +2275,7 @@ PY
     ls -la /etc/letsencrypt/live/${domain}/ 2>/dev/null || echo "  [Сертификатов нет]"
     echo ""
     echo "3. Статус портов:"
-    ss -tlnp | grep -E ":80|:443" || echo "  [Порты 80/443 не слушаются]"
+    check_port_listeners 80 | grep -E ":80" || check_port_listeners 443 | grep -E ":443" || echo "  [Порты 80/443 не слушаются]"
     echo ""
     echo "4. Конфигурация Nginx для домена:"
     cat /etc/nginx/sites-available/"$domain" 2>/dev/null || echo "  [Конфиг не найден]"
