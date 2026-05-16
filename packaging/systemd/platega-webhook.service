@@ -1,8 +1,8 @@
 [Unit]
 Description=Platega Webhook Server for AWG Telegram Bot
-After=network-online.target docker.service vpn-bot.service
+After=network-online.target docker.service
 Wants=network-online.target docker.service
-Requires=vpn-bot.service
+# vpn-bot.service is optional - removed to prevent dependency failures
 
 [Service]
 Type=simple

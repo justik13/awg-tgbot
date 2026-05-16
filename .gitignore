@@ -1,13 +1,26 @@
 ```
-# Environment
+# System files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Environment files
 .env
 .env.local
 *.env.*
 
-# Logs and temporary files
-*.log
-*.tmp
-*.swp
+# Build artifacts
+dist/
+build/
+target/
+*.o
+*.obj
+*.out
+*.exe
+*.dll
+*.so
+*.a
 
 # Dependencies
 node_modules/
@@ -16,17 +29,18 @@ venv/
 __pycache__/
 .mypy_cache/
 .pytest_cache/
+.coverage
+coverage/
+htmlcov/
+.julia/
+zig*/
+julia-*/
 
-# Build artifacts
-dist/
-build/
-target/
-
-# Editors
+# IDE files
 .vscode/
 .idea/
 
-# System files
+# OS files
 .DS_Store
 Thumbs.db
 
