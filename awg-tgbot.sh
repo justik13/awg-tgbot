@@ -1953,7 +1953,7 @@ server {
     
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
-        try_files $uri =404;
+        try_files \$uri =404;
     }
 
     location /webhook {
