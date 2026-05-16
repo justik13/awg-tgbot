@@ -1,1 +1,44 @@
-(empty)
+```
+# Environment variables
+.env
+.env.local
+*.env.*
+
+# Dependencies
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Build/dist folders
+dist/
+build/
+target/
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Python specific
+*.egg-info/
+.eggs/
+.mypy_cache/
+.pytest_cache/
+```

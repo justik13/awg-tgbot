@@ -22,7 +22,7 @@ except ImportError:
     PlategaCallback = None
     PlategaAPIError = Exception
 
-from config import PLATEGA_MERCHANT_ID, PLATEGA_SECRET_KEY, PLATEGA_TEST_MODE
+from config import PLATEGA_MERCHANT_ID, PLATEGA_SECRET_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class PlategaService:
             return
 
         try:
-            # Инициализация клиента (тестовый режим пока не используется в SDK явно)
+            # Инициализация клиента
             self.client = Platega(
                 merchant_id=PLATEGA_MERCHANT_ID,
                 secret=PLATEGA_SECRET_KEY

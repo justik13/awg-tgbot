@@ -2873,11 +2873,6 @@ install_or_reinstall_flow() {
       prompt_with_default 'Platega Secret Key' "$default" platega_secret_key
       set_env_value PLATEGA_SECRET_KEY "$platega_secret_key"
       
-      platega_test_mode=""
-      default="$(pick_existing_or_default "$(get_env_value PLATEGA_TEST_MODE)" "0")"
-      prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" platega_test_mode
-      set_env_value PLATEGA_TEST_MODE "$platega_test_mode"
-      
       # Запрос домена для webhook
       platega_domain=""
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_DOMAIN)" "")"
@@ -2941,11 +2936,6 @@ install_or_reinstall_flow() {
       default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET_KEY)" "")"
       prompt_with_default 'Platega Secret Key' "$default" platega_secret_key
       set_env_value PLATEGA_SECRET_KEY "$platega_secret_key"
-      
-      platega_test_mode=""
-      default="$(pick_existing_or_default "$(get_env_value PLATEGA_TEST_MODE)" "0")"
-      prompt_with_default 'Тестовый режим Platega (0 - боевой, 1 - тест)' "$default" platega_test_mode
-      set_env_value PLATEGA_TEST_MODE "$platega_test_mode"
       
       # Запрос домена для webhook (во второй ветке тоже)
       platega_domain=""
