@@ -1495,11 +1495,16 @@ enforce_root_owned_code_paths() {
   mkdir -p "$INSTALL_DIR"
   chown root:root "$INSTALL_DIR" 2>/dev/null || true
   chmod 755 "$INSTALL_DIR" 2>/dev/null || true
-  for path in "$INSTALL_DIR/awg-tgbot.sh" "$BOT_DIR" "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging" "$VENV_DIR"; do
+  for path in "$INSTALL_DIR/awg-tgbot.sh" "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging" "$VENV_DIR"; do
     [[ -e "$path" ]] || continue
     chown -R root:root "$path" 2>/dev/null || true
     chmod -R go-w "$path" 2>/dev/null || true
   done
+  # Директория с кодом бота должна быть доступна для записи пользователю awg-bot (для создания БД, логов и т.д.)
+  if [[ -d "$BOT_DIR" ]]; then
+    chown -R "$BOT_USER:$BOT_USER" "$BOT_DIR" 2>/dev/null || true
+    chmod -R u+rw "$BOT_DIR" 2>/dev/null || true
+  fi
   [[ -f "$INSTALL_DIR/awg-tgbot.sh" ]] && chmod 755 "$INSTALL_DIR/awg-tgbot.sh" 2>/dev/null || true
   return 0
 }
@@ -2328,7 +2333,30 @@ PY
 
 start_service() {
   info "Запускаю сервис..."
-  systemctl restart "$SERVICE_NAME"
+  
+  # Принудительная инициализация базы данных перед запуском сервиса
+  # Это необходимо, чтобы БД создалась с правильными правами от имени пользователя awg-bot
+  info "Инициализирую базу данных..."
+  if [[ -d "$BOT_DIR" && -f "$BOT_DIR/app.py" ]]; then
+    # Кратковременный запуск приложения для создания БД (таймаут 3 секунды)
+    su -s /bin/bash "$BOT_USER" -c "cd $BOT_DIR && timeout 3 $VENV_DIR/bin/python app.py" >/dev/null 2>&1 || true
+    
+    # Проверка и исправление прав на созданный файл БД
+    local db_file
+    db_file="$(get_bot_db_file)"
+    if [[ -f "$db_file" ]]; then
+      chown "$BOT_USER:$BOT_USER" "$db_file" 2>/dev/null || true
+      chmod 600 "$db_file" 2>/dev/null || true
+      info "База данных инициализирована: $db_file"
+    else
+      warn "База данных не была создана при инициализации. Ожидаем создание при старте сервиса."
+    fi
+  fi
+  
+  systemctl daemon-reload
+  systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  sleep 1
+  systemctl start "$SERVICE_NAME"
   sleep 2
   return 0
 }
