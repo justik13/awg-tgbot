@@ -24,7 +24,7 @@ from config import (
     PURCHASE_RATE_LIMIT_TTL_SECONDS,
     WG_INTERFACE,
     PLATEGA_MERCHANT_ID,
-    PLATEGA_SECRET,
+    PLATEGA_SECRET_KEY,
     logger,
 )
 from config_validate import read_helper_policy
@@ -78,12 +78,12 @@ _platega_service: PlategaPaymentService | None = None
 def get_platega_service() -> PlategaPaymentService | None:
     """Get Platega payment service instance if credentials are configured."""
     global _platega_service
-    if not PLATEGA_MERCHANT_ID or not PLATEGA_SECRET:
+    if not PLATEGA_MERCHANT_ID or not PLATEGA_SECRET_KEY:
         return None
     if _platega_service is None:
         _platega_service = PlategaPaymentService(
             merchant_id=PLATEGA_MERCHANT_ID,
-            secret=PLATEGA_SECRET,
+            secret=PLATEGA_SECRET_KEY,
         )
     return _platega_service
 
