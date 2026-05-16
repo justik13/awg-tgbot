@@ -2337,9 +2337,10 @@ start_service() {
   # Принудительная инициализация базы данных перед запуском сервиса
   # Это необходимо, чтобы БД создалась с правильными правами от имени пользователя awg-bot
   info "Инициализирую базу данных..."
-  if [[ -d "$BOT_DIR" && -f "$BOT_DIR/app.py" ]]; then
-    # Кратковременный запуск приложения для создания БД (таймаут 3 секунды)
-    su -s /bin/bash "$BOT_USER" -c "cd $BOT_DIR && timeout 3 $VENV_DIR/bin/python app.py" >/dev/null 2>&1 || true
+  if [[ -d "$BOT_DIR" && -f "$BOT_DIR/app.py" && -f "$BOT_DIR/database.py" ]]; then
+    # Вызываем асинхронную функцию init_db напрямую через asyncio.run
+    # Это гарантирует создание БД до запуска основного сервиса
+    su -s /bin/bash "$BOT_USER" -c "cd $BOT_DIR && $VENV_DIR/bin/python -c \"import asyncio; from database import init_db; asyncio.run(init_db())\"" >/dev/null 2>&1 || true
     
     # Проверка и исправление прав на созданный файл БД
     local db_file
