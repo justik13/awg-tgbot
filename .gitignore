@@ -1,66 +1,43 @@
-```markdown
+```
+# Compiled and build artifacts
+*.pyc
+__pycache__/
+
+# Dependencies
+.venv/
+venv/
+node_modules/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
 # Environment
 .env
 .env.local
 *.env.*
 
-# Logs and temp files
-*.log
-*.tmp
-
-# Dependencies
-node_modules/
-
 # Editors
 .vscode/
 .idea/
 
-# Python
-__pycache__/
-*.pyc
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# Python specific
 *.pyo
 *.pyd
-.Python
-venv/
-.venv/
-env/
-ENV/
-.ENV/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git/modules/
-*.sconsign.dblite
-.sconsign
-.wafpickle-N
-*.db
-*.db-journal
+*.so
 *.egg-info/
-.eggs/
-.egg
-.project
-.pydevproject
-.pytest_cache/
-.mypy_cache/
-.hypothesis/
-.coverage*
-htmlcov/
-.landscape.yaml
-.pyup.yml
-.bandit
-.isort.pkl
-.black_cache/
-.spyderproject
-.spyproject
-.ropeproject
-.vscode/
+dist/
+build/
+*.egg
+*.zip
+
+# OS generated files
 .DS_Store
 Thumbs.db
 ```
