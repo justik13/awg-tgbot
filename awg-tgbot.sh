@@ -2142,19 +2142,209 @@ PY
     rm -f "$default_nginx_link"
   fi
   
-  # Создаем конфигурацию Nginx с HTTPS redirect и правильной структурой
+  # ============================================================
+  # ШАГ 1: Создаем директорию для ACME challenge
+  # ============================================================
+  info "Создаю директорию для ACME challenge..."
+  if ! mkdir -p /var/www/certbot/.well-known/acme-challenge; then
+    error "Не удалось создать директорию /var/www/certbot/.well-known/acme-challenge"
+    return 1
+  fi
+  if ! chown -R www-data:www-data /var/www/certbot; then
+    warn "Не удалось изменить владельца /var/www/certbot"
+  fi
+  if ! chmod -R 755 /var/www/certbot; then
+    warn "Не удалось установить права на /var/www/certbot"
+  fi
+  ok "Директория /var/www/certbot/.well-known/acme-challenge создана."
+  
+  # ============================================================
+  # ШАГ 2: Создаем ВРЕМЕННУЮ HTTP-only конфигурацию Nginx
+  # (без SSL блока, чтобы nginx -t прошёл до получения сертификата)
+  # ============================================================
   local webhook_port="${PLATEGA_WEBHOOK_PORT:-8081}"
   
   local nginx_conf="/etc/nginx/sites-available/${domain}"
   local nginx_link="/etc/nginx/sites-enabled/${domain}"
   
-  cat > "$nginx_conf" <<NGINX
+  # Создаём временный конфиг ТОЛЬКО с HTTP сервером
+  cat > "$nginx_conf" <<'NGINX_HTTP'
+# HTTP server - только для ACME challenge (временная конфигурация)
+server {
+    listen 80;
+    server_name __DOMAIN_PLACEHOLDER__;
+    
+    # ACME challenge для Let's Encrypt
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        try_files $uri =404;
+    }
+
+    # Временный ответ для всех остальных запросов
+    location / {
+        return 301 https://$host$request_uri;
+        # Примечание: HTTPS будет настроен после получения сертификата
+    }
+}
+NGINX_HTTP
+  
+  # Заменяем плейсхолдер на реальный домен
+  sed -i "s/__DOMAIN_PLACEHOLDER__/${domain}/g" "$nginx_conf"
+  
+  # Создаем симлинк и проверяем что он создан
+  if ! ln -sf "$nginx_conf" "$nginx_link"; then
+    error "Не удалось создать символическую ссылку на конфигурацию Nginx."
+    return 1
+  fi
+  if [[ ! -L "$nginx_link" ]] && [[ ! -f "$nginx_link" ]]; then
+    error "Символическая ссылка не была создана."
+    return 1
+  fi
+  ok "Временная HTTP конфигурация Nginx создана."
+  
+  # Проверяем конфигурацию Nginx (HTTP-only, без SSL - файлы сертификатов ещё не нужны)
+  if ! nginx -t >/dev/null 2>&1; then
+    error "Ошибка в конфигурации Nginx после создания HTTP конфига для ${domain}"
+    nginx -t 2>&1 || true
+    rm -f "$nginx_link"
+    return 1
+  fi
+  
+  # Перезапускаем Nginx с HTTP-only конфигом
+  info "Перезапускаю Nginx с временной HTTP конфигурацией..."
+  if require_command systemctl; then
+    if ! systemctl daemon-reload 2>&1; then
+      warn "daemon-reload failed, но продолжаем..."
+    fi
+    if ! systemctl restart nginx 2>&1; then
+      error "Не удалось перезапустить Nginx через systemctl."
+      systemctl status nginx --no-pager || true
+      return 1
+    fi
+    sleep 2
+    if ! systemctl is-active --quiet nginx; then
+      error "Nginx сервис не активен после restart"
+      systemctl status nginx --no-pager || true
+      journalctl -u nginx -n 30 --no-pager || true
+      return 1
+    fi
+    ok "Nginx перезапущен с HTTP конфигурацией."
+  else
+    if ! service nginx restart 2>&1; then
+      error "Не удалось перезапустить Nginx через service."
+      service nginx status || true
+      return 1
+    fi
+    ok "Nginx перезапущен с HTTP конфигурацией."
+  fi
+  
+  # Даём время на старт Nginx
+  sleep 2
+  
+  # Проверяем, что Nginx действительно слушает порт 80
+  info "Проверяю, что Nginx слушает порт 80..."
+  if ! check_port_listeners 80 | grep -q ":80 "; then
+    warn "Nginx не слушает порт 80!"
+    check_port_listeners 80 | grep -E ":80|nginx" || true
+    return 1
+  fi
+  ok "Nginx слушает порт 80 и готов для ACME challenge."
+  
+  # ============================================================
+  # ШАГ 3: Получаем SSL сертификат через Certbot
+  # ============================================================
+  info "Получаю SSL сертификат через Let's Encrypt..."
+  local certbot_log certbot_err_log
+  certbot_log="$(mktemp)"
+  certbot_err_log="$(mktemp)"
+  
+  # Retry logic для certbot (3 попытки с паузой)
+  local max_attempts=3 attempt=1 certbot_success=false
+  while (( attempt <= max_attempts )); do
+    info "Попытка ${attempt}/${max_attempts} получения сертификата..."
+    
+    if certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d "$domain" --verbose >"$certbot_log" 2>"$certbot_err_log"; then
+      certbot_success=true
+      break
+    else
+      warn "Попытка ${attempt} не удалась."
+      if (( attempt < max_attempts )); then
+        info "Жду 10 секунд перед следующей попыткой..."
+        sleep 10
+      fi
+    fi
+    ((attempt++))
+  done
+  
+  if [[ "$certbot_success" != "true" ]]; then
+    echo ""
+    echo "[ОШИБКА] Не удалось получить SSL сертификат после ${max_attempts} попыток."
+    echo ""
+    echo "=== Лог stdout ==="
+    cat "$certbot_log"
+    echo ""
+    echo "=== Лог stderr (ОШИБКИ) ==="
+    cat "$certbot_err_log"
+    echo "==========================="
+    echo ""
+    echo "=== Дополнительная диагностика ==="
+    echo ""
+    echo "1. Проверка доступности домена извне:"
+    curl -v --connect-timeout 5 "http://${domain}/.well-known/acme-challenge/" 2>&1 | head -20 || echo "  [Не удалось подключиться]"
+    echo ""
+    echo "2. Текущие сертификаты (если есть):"
+    ls -la /etc/letsencrypt/live/${domain}/ 2>/dev/null || echo "  [Сертификатов нет]"
+    echo ""
+    echo "3. Статус портов:"
+    check_port_listeners 80 | grep -E ":80" || check_port_listeners 443 | grep -E ":443" || echo "  [Порты 80/443 не слушаются]"
+    echo ""
+    echo "4. Конфигурация Nginx для домена:"
+    cat /etc/nginx/sites-available/"$domain" 2>/dev/null || echo "  [Конфиг не найден]"
+    echo ""
+    echo "5. Проверка firewall:"
+    if command -v ufw >/dev/null 2>&1; then
+      ufw status 2>/dev/null | head -10 || true
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+      iptables -L -n 2>/dev/null | grep -E "80|443" || true
+    fi
+    echo ""
+    
+    echo "Возможные причины:"
+    echo "  1. Порт 80 закрыт фаерволом провайдера"
+    echo "  2. DNS запись еще не обновилась"
+    echo "  3. Домен уже имеет сертификат"
+    echo "  4. Директория /.well-known/acme-challenge/ недоступна"
+    echo "  5. Другой процесс перехватывает порт 80"
+    echo "  6. Домен за Cloudflare proxy"
+    echo ""
+    echo "Для ручной диагностики:"
+    echo "  curl -v http://${domain}/.well-known/acme-challenge/test"
+    echo "  lsof -i :80"
+    echo "  certbot --nginx -d ${domain} --verbose --debug"
+    echo ""
+    
+    rm -f "$certbot_log" "$certbot_err_log"
+    rm -f "$nginx_link"
+    rm -f "$nginx_conf"
+    return 1
+  fi
+  
+  rm -f "$certbot_log" "$certbot_err_log"
+  ok "SSL сертификат успешно получен для ${domain}."
+  
+  # ============================================================
+  # ШАГ 4: Обновляем конфиг Nginx с полноценной HTTPS поддержкой
+  # ============================================================
+  info "Обновляю конфигурацию Nginx с HTTPS поддержкой..."
+  
+  cat > "$nginx_conf" <<NGINX_FULL
 # HTTP server - redirect to HTTPS + ACME challenge
 server {
     listen 80;
     server_name ${domain};
     
-    # ACME challenge для Let's Encrypt
+    # ACME challenge для Let's Encrypt (для продления сертификата)
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
         try_files \$uri =404;
@@ -2166,7 +2356,7 @@ server {
     }
 }
 
-# HTTPS server (будет активирован после получения сертификата)
+# HTTPS server
 server {
     listen 443 ssl http2;
     server_name ${domain};
@@ -2191,97 +2381,47 @@ server {
     
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 }
-NGINX
+NGINX_FULL
   
-  # Создаем симлинк и проверяем что он создан
-  if ! ln -sf "$nginx_conf" "$nginx_link"; then
-    error "Не удалось создать символическую ссылку на конфигурацию Nginx."
-    return 1
-  fi
-  if [[ ! -L "$nginx_link" ]] && [[ ! -f "$nginx_link" ]]; then
-    error "Символическая ссылка не была создана."
-    return 1
-  fi
-  ok "Конфигурация Nginx создана и активирована."
-  
-  # Создаем директорию для ACME challenge (обязательно для webroot проверки)
-  info "Создаю директорию для ACME challenge..."
-  if ! mkdir -p /var/www/certbot/.well-known/acme-challenge; then
-    error "Не удалось создать директорию /var/www/certbot/.well-known/acme-challenge"
-    return 1
-  fi
-  if ! chown -R www-data:www-data /var/www/certbot; then
-    warn "Не удалось изменить владельца /var/www/certbot"
-  fi
-  if ! chmod -R 755 /var/www/certbot; then
-    warn "Не удалось установить права на /var/www/certbot"
-  fi
-  ok "Директория /var/www/certbot/.well-known/acme-challenge создана."
-  
-  # Проверяем конфигурацию Nginx ПЕРЕД созданием symlink
+  # Проверяем обновлённую конфигурацию с SSL
   if ! nginx -t >/dev/null 2>&1; then
-    error "Ошибка в конфигурации Nginx после создания конфига для ${domain}"
+    error "Ошибка в конфигурации Nginx после добавления HTTPS блока"
     nginx -t 2>&1 || true
-    rm -f "$nginx_link"  # Удаляем битый symlink если он был создан
     return 1
   fi
   
-  # Перезапускаем Nginx с выводом статуса
-  info "Перезапускаю Nginx..."
+  # Перезапускаем Nginx с полной конфигурацией
+  info "Перезапускаю Nginx с HTTPS конфигурацией..."
   if require_command systemctl; then
-    if ! systemctl daemon-reload 2>&1; then
-      warn "daemon-reload failed, но продолжаем..."
+    if ! systemctl reload nginx 2>&1; then
+      if ! systemctl restart nginx 2>&1; then
+        error "Не удалось перезагрузить/перезапустить Nginx"
+        systemctl status nginx --no-pager || true
+        return 1
+      fi
     fi
-    if ! systemctl restart nginx 2>&1; then
-      error "Не удалось перезапустить Nginx через systemctl."
-      systemctl status nginx --no-pager || true
-      return 1
-    fi
-    # Проверка что сервис активен
-    sleep 2
-    if ! systemctl is-active --quiet nginx; then
-      error "Nginx сервис не активен после restart"
-      systemctl status nginx --no-pager || true
-      journalctl -u nginx -n 30 --no-pager || true
-      return 1
-    fi
-    ok "Nginx перезапущен и активен."
+    ok "Nginx перезапущен с HTTPS конфигурацией."
   else
-    if ! service nginx restart 2>&1; then
-      error "Не удалось перезапустить Nginx через service."
-      service nginx status || true
-      return 1
+    if ! service nginx reload 2>&1; then
+      if ! service nginx restart 2>&1; then
+        error "Не удалось перезагрузить/перезапустить Nginx через service"
+        return 1
+      fi
     fi
-    ok "Nginx перезапущен через service."
+    ok "Nginx перезапущен с HTTPS конфигурацией."
   fi
   
-  # Даём время на старт Nginx
+  # Проверяем что оба порта слушаются
   sleep 2
-  
-  # Проверяем, что Nginx действительно слушает порт 80 НА ВСЕХ ИНТЕРФЕЙСАХ
-  info "Проверяю, что Nginx слушает порт 80..."
-  if ! check_port_listeners 80 | grep -q ":80 "; then
-    warn "Nginx не слушает порт 80!"
-    check_port_listeners 80 | grep -E ":80|nginx" || true
+  if ! check_port_listeners 80 | grep -q ":80"; then
+    error "Nginx не слушает порт 80"
     return 1
   fi
-  ok "Nginx слушает порт 80."
-  
-  # Критическая проверка: кто именно слушает порт 80 и на каких интерфейсах
-  info "Детальная проверка процессов на порту 80..."
-  echo "=== Процессы на порту 80 ==="
-  check_port_listeners 80 | grep ":80" || echo "[Пусто]"
-  echo ""
-  echo "=== Проверка на конфликтующие процессы (Docker, Apache, другой Nginx) ==="
-  local conflicting_procs
-  conflicting_procs=$(ps aux | grep -E "[n]ginx|[a]pache|[d]ocker" | grep -v "grep" || true)
-  if [[ -n "$conflicting_procs" ]]; then
-    echo "$conflicting_procs"
-    echo ""
-    warn "Обнаружены потенциально конфликтующие процессы!"
-    echo "Если видите несколько nginx или docker, возможно один из них перехватывает порт 80."
+  if ! check_port_listeners 443 | grep -q ":443"; then
+    error "Nginx не слушает порт 443"
+    return 1
   fi
-  echo ""
+  ok "Порты 80 и 443 активны."
   
   # Проверяем, слушает ли Nginx на 0.0.0.0 (все интерфейсы), а не только на 127.0.0.1
   local nginx_listen_info
@@ -2373,93 +2513,6 @@ PY
     if ! confirm_explicit "Продолжить несмотря на возможный Cloudflare proxy?"; then
       return 1
     fi
-  fi
-  
-  # Получаем SSL сертификат через Certbot с ПОЛНЫМ логом ошибок и RETRY logic
-  info "Получаю SSL сертификат через Let's Encrypt..."
-  local certbot_log certbot_err_log
-  certbot_log="$(mktemp)"
-  certbot_err_log="$(mktemp)"
-  
-  # Retry logic для certbot (3 попытки с паузой)
-  local max_attempts=3 attempt=1 certbot_success=false
-  while (( attempt <= max_attempts )); do
-    info "Попытка ${attempt}/${max_attempts} получения сертификата..."
-    
-    # Запускаем certbot с максимальным уровнем детализации
-    # Используем --register-unsafely-without-email чтобы избежать проблем с невалидным email
-    if certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d "$domain" --verbose >"$certbot_log" 2>"$certbot_err_log"; then
-      certbot_success=true
-      break
-    else
-      warn "Попытка ${attempt} не удалась."
-      if (( attempt < max_attempts )); then
-        info "Жду 10 секунд перед следующей попыткой..."
-        sleep 10
-      fi
-    fi
-    ((attempt++))
-  done
-  
-  if [[ "$certbot_success" == "true" ]]; then
-    rm -f "$certbot_log" "$certbot_err_log"
-    ok "SSL сертификат успешно получен для ${domain}."
-  else
-    echo ""
-    echo "[ОШИБКА] Не удалось получить SSL сертификат после ${max_attempts} попыток."
-    echo ""
-    echo "=== Лог stdout ==="
-    cat "$certbot_log"
-    echo ""
-    echo "=== Лог stderr (ОШИБКИ) ==="
-    cat "$certbot_err_log"
-    echo "==========================="
-    echo ""
-    
-    # Дополнительные проверки для диагностики
-    echo "=== Дополнительная диагностика ==="
-    echo ""
-    echo "1. Проверка доступности домена извне:"
-    curl -v --connect-timeout 5 "http://${domain}/.well-known/acme-challenge/" 2>&1 | head -20 || echo "  [Не удалось подключиться]"
-    echo ""
-    echo "2. Текущие сертификаты (если есть):"
-    ls -la /etc/letsencrypt/live/${domain}/ 2>/dev/null || echo "  [Сертификатов нет]"
-    echo ""
-    echo "3. Статус портов:"
-    check_port_listeners 80 | grep -E ":80" || check_port_listeners 443 | grep -E ":443" || echo "  [Порты 80/443 не слушаются]"
-    echo ""
-    echo "4. Конфигурация Nginx для домена:"
-    cat /etc/nginx/sites-available/"$domain" 2>/dev/null || echo "  [Конфиг не найден]"
-    echo ""
-    echo "5. Проверка firewall (возможно порт 80 закрыт провайдером):"
-    if command -v ufw >/dev/null 2>&1; then
-      ufw status 2>/dev/null | head -10 || true
-    fi
-    if command -v iptables >/dev/null 2>&1; then
-      iptables -L -n 2>/dev/null | grep -E "80|443" || true
-    fi
-    echo ""
-    
-    echo "Возможные причины:"
-    echo "  1. Порт 80 закрыт фаерволом провайдера (откройте в панели управления хостингом)"
-    echo "  2. DNS запись еще не обновилась (подождите и попробуйте позже)"
-    echo "  3. Домен уже имеет сертификат (попробуйте certbot renew)"
-    echo "  4. Директория /.well-known/acme-challenge/ недоступна из интернета"
-    echo "  5. Другой процесс (Docker/Apache) перехватывает порт 80"
-    echo "  6. Домен за Cloudflare proxy (orange cloud)"
-    echo ""
-    echo "Для ручной диагностики выполните:"
-    echo "  curl -v http://${domain}/.well-known/acme-challenge/test"
-    echo "  curl -v http://${domain}/webhook"
-    echo "  lsof -i :80"
-    echo "  docker ps 2>/dev/null | grep ':80'"
-    echo ""
-    echo "Попробуйте получить сертификат вручную с полным логом:"
-    echo "  certbot --nginx -d ${domain} --verbose --debug"
-    echo "  ИЛИ используйте standalone mode: certbot certonly --standalone -d ${domain}"
-    echo ""
-    rm -f "$certbot_log" "$certbot_err_log"
-    return 1
   fi
   
   ok "Nginx и SSL настроены для ${domain}."
