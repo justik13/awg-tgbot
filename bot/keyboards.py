@@ -82,9 +82,9 @@ def get_profile_inline_kb(subscription_active: bool, *, referrals_enabled: bool 
 def get_buy_confirm_kb(payload: str, method: str = "stars") -> InlineKeyboardMarkup:
     if method == "platega":
         action_by_payload = {
-            "sub_7": f"{CB_PLATEGA_PAY_PREFIX}sub_7",
-            "sub_30": f"{CB_PLATEGA_PAY_PREFIX}sub_30",
-            "sub_90": f"{CB_PLATEGA_PAY_PREFIX}sub_90",
+            "sub_7": CB_PLATEGA_BUY_7,
+            "sub_30": CB_PLATEGA_BUY_30,
+            "sub_90": CB_PLATEGA_BUY_90,
         }
         button_text = "🏦 Оплатить через СБП"
     else:
