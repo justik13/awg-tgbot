@@ -509,30 +509,122 @@ async def buy_90_days(cb: types.CallbackQuery):
 
 
 @router.callback_query(F.data == CB_PLATEGA_BUY_7)
-async def platega_buy_7_days(cb: types.CallbackQuery):
+async def platega_buy_7_days(cb: types.CallbackQuery, bot: Bot):
     if await is_purchase_maintenance_enabled():
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     await cb.answer()
-    await _show_buy_confirmation(cb, "sub_7", method="platega")
+    await _create_platega_payment(cb, bot, "sub_7")
 
 
 @router.callback_query(F.data == CB_PLATEGA_BUY_30)
-async def platega_buy_30_days(cb: types.CallbackQuery):
+async def platega_buy_30_days(cb: types.CallbackQuery, bot: Bot):
     if await is_purchase_maintenance_enabled():
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     await cb.answer()
-    await _show_buy_confirmation(cb, "sub_30", method="platega")
+    await _create_platega_payment(cb, bot, "sub_30")
 
 
 @router.callback_query(F.data == CB_PLATEGA_BUY_90)
-async def platega_buy_90_days(cb: types.CallbackQuery):
+async def platega_buy_90_days(cb: types.CallbackQuery, bot: Bot):
     if await is_purchase_maintenance_enabled():
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     await cb.answer()
-    await _show_buy_confirmation(cb, "sub_90", method="platega")
+    await _create_platega_payment(cb, bot, "sub_90")
+
+
+async def _create_platega_payment(cb: types.CallbackQuery, bot: Bot, sub_type: str):
+    """Создать платеж через Platega и показать ссылку на оплату."""
+    platega_service = get_platega_service()
+    if not platega_service:
+        await cb.message.answer("❌ Оплата через СБП временно недоступна. Обратитесь к администратору.")
+        logger.warning("Platega credentials not configured")
+        return
+    
+    tariff = get_tariffs_platega().get(sub_type)
+    if not tariff:
+        await cb.message.answer("❌ Неверный тариф")
+        return
+    
+    user_id = cb.from_user.id
+    order_id = f"{user_id}:{sub_type}"
+    
+    # Формируем URL для webhook callback
+    webhook_domain = config.PLATEGA_WEBHOOK_DOMAIN or config.PUBLIC_HOST
+    if webhook_domain:
+        return_url = f"https://{webhook_domain}/webhook?status=success"
+        failed_url = f"https://{webhook_domain}/webhook?status=failed"
+    else:
+        return_url = None
+        failed_url = None
+    
+    try:
+        # Создаем платеж через Platega
+        payment_data = await platega_service.create_payment(
+            amount=float(tariff["amount"]),
+            currency="RUB",
+            description=f"Подписка на {tariff['days']} дней",
+            payload=order_id,
+            return_url=return_url,
+            failed_url=failed_url,
+            payment_method=PLATEGA_METHOD_SBP_QR,
+        )
+        
+        if not payment_data:
+            await cb.message.answer("❌ Ошибка создания платежа. Попробуйте позже.")
+            logger.error(f"Failed to create Platega payment for user {user_id}")
+            return
+        
+        transaction_id = payment_data["transaction_id"]
+        payment_url = payment_data.get("redirect_url", "")
+        
+        # Сохраняем платеж в БД
+        raw_payload = {
+            "invoice_payload": sub_type,
+            "currency": "RUB",
+            "total_amount": float(tariff["amount"]),
+            "platega_transaction_id": transaction_id,
+            "payment_url": payment_url,
+        }
+        
+        await ensure_user_exists(user_id, cb.from_user.username, cb.from_user.first_name)
+        await save_payment(
+            telegram_payment_charge_id=transaction_id,
+            provider_payment_charge_id=transaction_id,
+            user_id=user_id,
+            payload=sub_type,
+            amount=float(tariff["amount"]),
+            currency="RUB",
+            payment_method="platega",
+            status="pending",
+            raw_payload_json=json.dumps(raw_payload, ensure_ascii=False),
+        )
+        
+        # Формируем сообщение со ссылкой на оплату
+        text = (
+            f"<b>Оплата подписки ({tariff['days']} дней)</b>\n\n"
+            f"Сумма: <b>{tariff['amount']}₽</b>\n"
+            f"Способ оплаты: <b>СБП</b>\n\n"
+            f"Нажмите кнопку ниже для перехода на страницу оплаты:\n"
+            f"QR-код уже отображается на странице оплаты."
+        )
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Открыть страницу оплаты", url=payment_url)],
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
+        ])
+        
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        
+        # Запускаем фоновую проверку статуса платежа
+        asyncio.create_task(_poll_payment_status(cb.bot, transaction_id, user_id, sub_type, cb.message.chat.id))
+        
+    except Exception as e:
+        logger.exception(f"Error in _create_platega_payment: {e}")
+        await cb.message.answer("❌ Ошибка при создании платежа. Попробуйте позже или обратитесь в поддержку.")
 
 
 @router.callback_query(F.data == "payment_method_stars")
@@ -600,135 +692,56 @@ async def _send_invoice_from_confirm(cb: types.CallbackQuery, bot: Bot, *, callb
 
 @router.callback_query(F.data == CB_BUY_PAY_7)
 async def buy_pay_7_days(cb: types.CallbackQuery, bot: Bot):
-    """Show payment method selection for 7 days tariff."""
+    """Create Stars invoice for 7 days tariff."""
     if await is_purchase_maintenance_enabled():
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     await cb.answer()
-    await _show_buy_confirmation(cb, "sub_7")
+    await _send_invoice_from_confirm(
+        cb, bot,
+        callback_action="buy_pay_7",
+        payload="sub_7",
+        title=f"Свободный Интернет на 7 дней",
+        label="7 дней доступа",
+        amount=int(get_tariffs_stars()["sub_7"]["amount"]),
+    )
 
 
 @router.callback_query(F.data == CB_BUY_PAY_30)
 async def buy_pay_30_days(cb: types.CallbackQuery, bot: Bot):
-    """Show payment method selection for 30 days tariff."""
+    """Create Stars invoice for 30 days tariff."""
     if await is_purchase_maintenance_enabled():
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     await cb.answer()
-    await _show_buy_confirmation(cb, "sub_30")
+    await _send_invoice_from_confirm(
+        cb, bot,
+        callback_action="buy_pay_30",
+        payload="sub_30",
+        title=f"Свободный Интернет на 30 дней",
+        label="30 дней доступа",
+        amount=int(get_tariffs_stars()["sub_30"]["amount"]),
+    )
 
 
 @router.callback_query(F.data == CB_BUY_PAY_90)
 async def buy_pay_90_days(cb: types.CallbackQuery, bot: Bot):
-    """Show payment method selection for 90 days tariff."""
+    """Create Stars invoice for 90 days tariff."""
     if await is_purchase_maintenance_enabled():
         await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
         return
     await cb.answer()
-    await _show_buy_confirmation(cb, "sub_90")
+    await _send_invoice_from_confirm(
+        cb, bot,
+        callback_action="buy_pay_90",
+        payload="sub_90",
+        title=f"Свободный Интернет на 90 дней",
+        label="90 дней доступа",
+        amount=int(get_tariffs_stars()["sub_90"]["amount"]),
+    )
 
 
-@router.callback_query(F.data.startswith(CB_PLATEGA_PAY_PREFIX))
-async def platega_pay_handler(cb: types.CallbackQuery):
-    """Обработчик оплаты через Platega (СБП QR)."""
-    if await is_purchase_maintenance_enabled():
-        await cb.answer(await get_purchase_maintenance_text(), show_alert=True)
-        return
-    
-    # Используем правильный сервис из platega_integration
-    platega_service = get_platega_service()
-    if not platega_service:
-        await cb.answer("Оплата через СБП временно недоступна. Обратитесь к администратору.", show_alert=True)
-        logger.warning("Platega credentials not configured")
-        return
-    
-    # Извлекаем тип подписки из callback_data (platega_pay:sub_7 -> sub_7)
-    sub_type = cb.data.replace(CB_PLATEGA_PAY_PREFIX, "")
-    
-    if sub_type not in get_tariffs_platega():
-        await cb.answer("Неверный тариф", show_alert=True)
-        return
-    
-    tariff = get_tariffs_platega()[sub_type]
-    user_id = cb.from_user.id
-    order_id = f"{user_id}:{sub_type}"
-    
-    await cb.answer()
-    
-    # Формируем URL для webhook callback
-    webhook_domain = config.PLATEGA_WEBHOOK_DOMAIN or config.PUBLIC_HOST
-    if webhook_domain:
-        return_url = f"https://{webhook_domain}/webhook?status=success"
-        failed_url = f"https://{webhook_domain}/webhook?status=failed"
-    else:
-        return_url = None
-        failed_url = None
-    
-    try:
-        # Создаем платеж через Platega
-        payment_data = await platega_service.create_payment(
-            amount=float(tariff["amount"]),
-            currency="RUB",
-            description=f"Подписка на {tariff['days']} дней",
-            payload=order_id,
-            return_url=return_url,
-            failed_url=failed_url,
-            payment_method=PLATEGA_METHOD_SBP_QR,
-        )
-        
-        if not payment_data:
-            await cb.message.answer("❌ Ошибка создания платежа. Попробуйте позже.")
-            logger.error(f"Failed to create Platega payment for user {user_id}")
-            return
-        
-        transaction_id = payment_data["transaction_id"]
-        payment_url = payment_data.get("redirect_url", "")
-        
-        # Сохраняем платеж в БД
-        raw_payload = {
-            "invoice_payload": sub_type,
-            "currency": "RUB",
-            "total_amount": float(tariff["amount"]),
-            "platega_transaction_id": transaction_id,
-            "payment_url": payment_url,
-        }
-        
-        await ensure_user_exists(user_id, cb.from_user.username, cb.from_user.first_name)
-        await save_payment(
-            telegram_payment_charge_id=transaction_id,
-            provider_payment_charge_id=transaction_id,
-            user_id=user_id,
-            payload=sub_type,
-            amount=float(tariff["amount"]),
-            currency="RUB",
-            payment_method="platega",
-            status="pending",
-            raw_payload_json=json.dumps(raw_payload, ensure_ascii=False),
-        )
-        
-        # Формируем сообщение со ссылкой на оплату
-        text = (
-            f"<b>Оплата подписки ({tariff['days']} дней)</b>\n\n"
-            f"Сумма: <b>{tariff['amount']}₽</b>\n"
-            f"Способ оплаты: <b>СБП</b>\n\n"
-            f"Нажмите кнопку ниже для оплаты через СБП:\n"
-            f"QR-код будет показан на странице оплаты."
-        )
-        
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
-        ])
-        
-        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
-        
-        # Запускаем фоновую проверку статуса платежа
-        asyncio.create_task(_poll_payment_status(cb.bot, transaction_id, user_id, sub_type, cb.message.chat.id))
-        
-    except Exception as e:
-        logger.exception(f"Error in platega_pay_handler: {e}")
-        await cb.message.answer("❌ Ошибка при создании платежа. Попробуйте позже или обратитесь в поддержку.")
+# Обработчик platega_pay_handler удален - теперь используется _create_platega_payment из кнопок CB_PLATEGA_BUY_*
 
 
 async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_type: str, chat_id: int):
