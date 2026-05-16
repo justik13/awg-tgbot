@@ -205,6 +205,11 @@ async def _show_buy_confirmation(cb: types.CallbackQuery, payload: str, method: 
         "sub_30": "30 дней",
         "sub_90": "90 дней",
     }
+    tariff_info = {
+        "sub_7": {"days": 7, "stars": get_tariffs_stars()["sub_7"]["amount"], "rub": config.PLATEGA_RUB_PRICE_7_DAYS},
+        "sub_30": {"days": 30, "stars": get_tariffs_stars()["sub_30"]["amount"], "rub": config.PLATEGA_RUB_PRICE_30_DAYS},
+        "sub_90": {"days": 90, "stars": get_tariffs_stars()["sub_90"]["amount"], "rub": config.PLATEGA_RUB_PRICE_90_DAYS},
+    }
     info = tariff_info.get(payload, tariff_info["sub_30"])
     
     text = await get_text(
