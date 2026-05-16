@@ -27,6 +27,7 @@ from config import (
     PLATEGA_SECRET_KEY,
     logger,
 )
+from platega_integration import PLATEGA_METHOD_SBP_QR
 from config_validate import read_helper_policy
 from database import (
     claim_payment_and_job_for_provisioning,
@@ -206,9 +207,9 @@ async def _show_buy_confirmation(cb: types.CallbackQuery, payload: str, method: 
         "sub_90": "90 дней",
     }
     tariff_info = {
-        "sub_7": {"days": 7, "stars": get_tariffs_stars()["sub_7"]["amount"], "rub": config.PLATEGA_RUB_PRICE_7_DAYS},
-        "sub_30": {"days": 30, "stars": get_tariffs_stars()["sub_30"]["amount"], "rub": config.PLATEGA_RUB_PRICE_30_DAYS},
-        "sub_90": {"days": 90, "stars": get_tariffs_stars()["sub_90"]["amount"], "rub": config.PLATEGA_RUB_PRICE_90_DAYS},
+        "sub_7": {"days": 7, "stars": get_tariffs_stars()["sub_7"]["amount"], "rub": config.PLATEGA_PRICE_7_DAYS},
+        "sub_30": {"days": 30, "stars": get_tariffs_stars()["sub_30"]["amount"], "rub": config.PLATEGA_PRICE_30_DAYS},
+        "sub_90": {"days": 90, "stars": get_tariffs_stars()["sub_90"]["amount"], "rub": config.PLATEGA_PRICE_90_DAYS},
     }
     info = tariff_info.get(payload, tariff_info["sub_30"])
     
@@ -292,9 +293,9 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
     
     payload = cb.data.split(":", 1)[1]
     tariff_info = {
-        "sub_7": {"days": 7, "rub": config.PLATEGA_RUB_PRICE_7_DAYS},
-        "sub_30": {"days": 30, "rub": config.PLATEGA_RUB_PRICE_30_DAYS},
-        "sub_90": {"days": 90, "rub": config.PLATEGA_RUB_PRICE_90_DAYS},
+        "sub_7": {"days": 7, "rub": config.PLATEGA_PRICE_7_DAYS},
+        "sub_30": {"days": 30, "rub": config.PLATEGA_PRICE_30_DAYS},
+        "sub_90": {"days": 90, "rub": config.PLATEGA_PRICE_90_DAYS},
     }
     info = tariff_info.get(payload)
     if not info:
@@ -368,16 +369,16 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
         
         # Send redirect URL to user
         tariff_info = {
-            "sub_7": {"days": 7, "rub": config.PLATEGA_RUB_PRICE_7_DAYS},
-            "sub_30": {"days": 30, "rub": config.PLATEGA_RUB_PRICE_30_DAYS},
-            "sub_90": {"days": 90, "rub": config.PLATEGA_RUB_PRICE_90_DAYS},
+            "sub_7": {"days": 7, "rub": config.PLATEGA_PRICE_7_DAYS},
+            "sub_30": {"days": 30, "rub": config.PLATEGA_PRICE_30_DAYS},
+            "sub_90": {"days": 90, "rub": config.PLATEGA_PRICE_90_DAYS},
         }
         info = tariff_info.get(payload, {"days": 30, "rub": 0})
         
         await cb.message.answer(
             f"💳 <b>Оплата {info['days']} дней — {info['rub']}₽</b>\n\n"
             f"Перейдите по ссылке для оплаты:\n"
-            f"<code>{status_result.get('redirect_url', 'URL недоступен')}</code>\n\n"
+            f"<code>{status_result.get('redirect', 'URL недоступен')}</code>\n\n"
             f"Или нажмите кнопку ниже:",
             parse_mode="HTML",
             reply_markup=types.InlineKeyboardMarkup(
@@ -704,7 +705,7 @@ async def platega_pay_handler(cb: types.CallbackQuery):
     )
     
     # Формируем правильные ссылки согласно документации Platega.io
-    sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+    sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
@@ -721,56 +722,61 @@ async def platega_pay_handler(cb: types.CallbackQuery):
 async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_type: str, chat_id: int):
     """
     Фоновая задача для опроса статуса платежа Platega.
-    Проверяет статус каждые 10 секунд в течение 3 минут.
+    Проверяет статус с экспоненциальной задержкой в течение 3 минут.
     Основной механизм подтверждения — вебхук, этот цикл — вспомогательный.
     """
-    max_attempts = 18  # 3 минуты (18 * 10 сек)
-    delay_seconds = 10
+    max_attempts = 18  # ~3 минуты с экспоненциальной задержкой
     
     for attempt in range(max_attempts):
-        await asyncio.sleep(delay_seconds)
+        # Экспоненциальная задержка: 5, 10, 20, 40... секунд (максимум 60 сек)
+        exponential_delay = min(5 * (2 ** attempt), 60)
+        await asyncio.sleep(exponential_delay)
         
         try:
-            status = await platega_service.check_status(transaction_id)
+            status_result = await platega_service.check_status(transaction_id)
+            # API возвращает dict со статусом, а не просто строку
+            status = status_result.get("status") if isinstance(status_result, dict) else status_result
             logger.info(f"Payment poll attempt {attempt + 1}/{max_attempts}: transaction={transaction_id}, status={status}")
             
             if status == "CONFIRMED":
                 logger.info(f"Payment confirmed via polling for user {user_id}, transaction {transaction_id}")
                 
-                # Сначала сохраняем платеж в БД до активации
+                # Атомарно проверяем и обновляем статус платежа в БД
                 order_id = f"{user_id}:{sub_type}"
+                from database import get_payment_by_order, update_payment_status_by_order
+                
+                existing_payment = await get_payment_by_order(order_id)
+                if existing_payment and existing_payment.get("status") in ("paid", "applied"):
+                    logger.info(f"Payment already processed for order {order_id}, skipping activation")
+                    return
+                
                 tariff = get_tariffs().get(sub_type)
                 if tariff:
-                    from database import save_payment, get_payment_by_order
-                    # Проверяем, не сохранен ли уже платеж
-                    existing_payment = await get_payment_by_order(order_id)
-                    if not existing_payment or existing_payment.get("status") not in ("paid", "applied"):
-                        raw_payload = {
-                            "invoice_payload": sub_type,
-                            "currency": "RUB",
-                            "total_amount": float(tariff["amount"]),
-                            "platega_transaction_id": transaction_id,
-                        }
-                        await save_payment(
-                            telegram_payment_charge_id=transaction_id,
-                            provider_payment_charge_id=transaction_id,
-                            user_id=user_id,
-                            payload=sub_type,
-                            amount=float(tariff["amount"]),
-                            currency="RUB",
-                            payment_method="platega",
-                            status="received",
-                            raw_payload_json=json.dumps(raw_payload, ensure_ascii=False),
-                        )
-                        logger.info(f"Payment saved to DB before activation for user {user_id}, transaction {transaction_id}")
+                    from database import save_payment
+                    raw_payload = {
+                        "invoice_payload": sub_type,
+                        "currency": "RUB",
+                        "total_amount": float(tariff["amount"]),
+                        "platega_transaction_id": transaction_id,
+                    }
+                    await save_payment(
+                        telegram_payment_charge_id=transaction_id,
+                        provider_payment_charge_id=transaction_id,
+                        user_id=user_id,
+                        payload=sub_type,
+                        amount=float(tariff["amount"]),
+                        currency="RUB",
+                        payment_method="platega",
+                        status="received",
+                        raw_payload_json=json.dumps(raw_payload, ensure_ascii=False),
+                    )
+                    logger.info(f"Payment saved to DB before activation for user {user_id}, transaction {transaction_id}")
                 
                 # Активируем подписку
-                from payments import activate_subscription
                 success = await activate_subscription(user_id, sub_type, "platega", transaction_id, bot=bot)
                 
                 if success:
                     # Обновляем статус платежа в БД
-                    from database import update_payment_status_by_order
                     await update_payment_status_by_order(order_id, "paid", transaction_id)
                     
                     # Уведомляем пользователя
@@ -790,7 +796,6 @@ async def _poll_payment_status(bot: Bot, transaction_id: str, user_id: int, sub_
             elif status in ("CANCELED", "CHARGEBACKED"):
                 logger.info(f"Payment {status} via polling for transaction {transaction_id}")
                 order_id = f"{user_id}:{sub_type}"
-                from database import update_payment_status_by_order
                 await update_payment_status_by_order(order_id, status.lower(), transaction_id)
                 return  # Выход из цикла проверки
             
@@ -816,7 +821,8 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
     await cb.answer()
     
     # Проверяем статус платежа в Platega
-    status = await platega_service.check_status(transaction_id)
+    status_result = await platega_service.check_status(transaction_id)
+    status = status_result.get("status") if isinstance(status_result, dict) else status_result
     
     # Если статус CONFIRMED - активируем подписку
     if status == "CONFIRMED":
@@ -847,7 +853,6 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
                     kb = None
                 else:
                     # Активируем подписку
-                    from payments import activate_subscription
                     success = await activate_subscription(user_id, sub_type, "platega", transaction_id, bot=cb.bot)
                     
                     if success:
@@ -890,7 +895,7 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             "Не закрывайте это сообщение — кнопки оплаты остаются активными."
         )
         # Сохраняем все оригинальные кнопки для защиты от дурака
-        sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+        sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
             [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
@@ -910,7 +915,7 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             "Попробуйте проверить позже."
         )
         # Сохраняем все оригинальные кнопки для защиты от дурака
-        sbp_url = f"https://pay.platega.io/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+        sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
             [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],

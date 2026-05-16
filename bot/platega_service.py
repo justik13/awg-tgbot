@@ -120,22 +120,32 @@ class PlategaService:
             logger.exception(f"Unexpected error creating Platega payment: {e}")
             return None
 
-    async def check_status(self, transaction_id: str) -> Optional[str]:
+    async def check_status(self, transaction_id: str) -> Optional[Dict[str, Any]]:
         """
         Проверяет статус транзакции.
         
         :param transaction_id: ID транзакции в Platega
-        :return: Статус ('CONFIRMED', 'PENDING', 'CANCELED') или None
+        :return: dict со статусом и redirect URL или None
         """
         if not self.client:
             return None
 
         try:
             response = self.client.get_payment_status(transaction_id)
-            return response.get("status")
+            # Возвращаем полный ответ API для доступа ко всем полям
+            return response
         except Exception as e:
             logger.error(f"Error checking status for {transaction_id}: {e}")
             return None
+
+    async def check_payment_status(self, transaction_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Проверяет статус транзакции (алиас для check_status).
+
+        :param transaction_id: ID транзакции в Platega
+        :return: dict со статусом и redirect URL или None
+        """
+        return await self.check_status(transaction_id)
 
     async def get_qr_code(self, transaction_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -213,6 +223,16 @@ class PlategaService:
         except Exception as e:
             logger.exception(f"Error validating callback: {e}")
             return False, None, str(e)
+
+    @staticmethod
+    def is_success_status(status: Optional[str]) -> bool:
+        """
+        Проверяет, является ли статус успешным.
+        
+        :param status: Статус транзакции
+        :return: True если статус CONFIRMED
+        """
+        return status == "CONFIRMED"
 
 
 # Глобальный экземпляр сервиса
