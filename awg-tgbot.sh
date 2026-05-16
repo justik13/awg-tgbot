@@ -255,25 +255,28 @@ prompt_raw() {
   local __resultvar="$2"
   local __input=""
   
+  # Явно выводим подсказку перед чтением ввода
+  printf '%s' "$prompt" >&3 2>/dev/null || printf '%s' "$prompt"
+  
   # При запуске через curl | bash stdin перенаправлен, поэтому всегда читаем из /dev/tty
   # Это единственный способ получить интерактивный ввод пользователя
   if [[ -e "/dev/tty" ]]; then
-    if ! read -r -p "$prompt" __input < /dev/tty; then
+    if ! read -r __input < /dev/tty; then
       __input=""
     fi
   elif [[ -t 0 ]]; then
     # Fallback: stdin является терминалом (редкий случай)
-    if ! read -r -p "$prompt" __input; then
+    if ! read -r __input; then
       __input=""
     fi
   elif [[ -t 3 ]]; then
     # Fallback: fd 3 является терминалом
-    if ! read -r -p "$prompt" __input <&3; then
+    if ! read -r __input <&3; then
       __input=""
     fi
   else
     # Последний шанс: читаем из stdin (не интерактивно)
-    if ! read -r -p "$prompt" __input; then
+    if ! read -r __input; then
       __input=""
     fi
   fi
