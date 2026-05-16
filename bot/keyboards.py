@@ -106,9 +106,9 @@ def get_buy_confirm_kb(payload: str, method: str = "stars") -> InlineKeyboardMar
 def get_payment_method_selection_kb(payload: str) -> InlineKeyboardMarkup:
     """Generate keyboard for selecting payment method (Stars vs Platega)."""
     tariff_info = {
-        "sub_7": {"days": 7, "stars": config.STARS_PRICE_7_DAYS, "rub": config.PLATEGA_RUB_PRICE_7_DAYS},
-        "sub_30": {"days": 30, "stars": config.STARS_PRICE_30_DAYS, "rub": config.PLATEGA_RUB_PRICE_30_DAYS},
-        "sub_90": {"days": 90, "stars": config.STARS_PRICE_90_DAYS, "rub": config.PLATEGA_RUB_PRICE_90_DAYS},
+        "sub_7": {"days": 7, "stars": config.STARS_PRICE_7_DAYS, "rub": config.PLATEGA_PRICE_7_DAYS},
+        "sub_30": {"days": 30, "stars": config.STARS_PRICE_30_DAYS, "rub": config.PLATEGA_PRICE_30_DAYS},
+        "sub_90": {"days": 90, "stars": config.STARS_PRICE_90_DAYS, "rub": config.PLATEGA_PRICE_90_DAYS},
     }
     info = tariff_info.get(payload, tariff_info["sub_30"])
     
