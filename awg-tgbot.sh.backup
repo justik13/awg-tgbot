@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Prevent recursive trap execution
-trap_executing=0
-
 # Handle case when script is run via curl | bash (stdin has no path)
 # BASH_SOURCE[0] may be unset when running from stdin, so we check it safely
 if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ -f "${BASH_SOURCE[0]:-}" ]]; then
@@ -159,34 +156,15 @@ register_reinstall_guard_pending_log() {
 
 on_error_trap() {
   local line_no="${1:-unknown}" exit_code="${2:-1}"
-  
-  # Prevent recursive trap execution
-  if [[ "$trap_executing" == "1" ]]; then
-    printf "[!] RECURSIVE TRAP DETECTED (line=%s). Forcing exit to prevent hang.\n" "$line_no" >&2
-    exit "${exit_code}"
-  fi
-  trap_executing=1
-  
-  # Save errno and pipestatus for restoration
-  local saved_errno=$?
-  local saved_pipestatus="${PIPESTATUS[*]:-}"
-  
-  # Disable errexit and ERR trap during rollback to prevent infinite loops
-  set +e
-  set +E
-  
   if [[ "$REINSTALL_GUARD_ACTIVE" == "1" && "$REINSTALL_GUARD_ROLLING_BACK" != "1" ]]; then
     REINSTALL_GUARD_ROLLING_BACK=1
     warn "Сработал аварийный rollback-guard для reinstall (line=${line_no}, rc=${exit_code})."
-    rollback_failed_reinstall "$REINSTALL_GUARD_REPO_SNAPSHOT" "$REINSTALL_GUARD_RUNTIME_SNAPSHOT" "$REINSTALL_GUARD_PENDING_LOG" || true
+    set +e
+    rollback_failed_reinstall "$REINSTALL_GUARD_REPO_SNAPSHOT" "$REINSTALL_GUARD_RUNTIME_SNAPSHOT" "$REINSTALL_GUARD_PENDING_LOG"
+    set -e
     clear_reinstall_guard
   fi
-  
-  # Restore errno and pipestatus
-  : "${saved_errno:?}"
-  
   printf "[!] Ошибка на строке %s (rc=%s). Подробности: %s\n" "$line_no" "$exit_code" "$INSTALL_LOG" >&2
-  exit "${exit_code}"
 }
 trap 'on_error_trap "$LINENO" "$?"' ERR
 
@@ -202,10 +180,7 @@ setup_logging() {
   mkdir -p "$(dirname "$INSTALL_LOG")" "$APP_LOG_DIR"
   touch "$INSTALL_LOG" "$APP_LOG_FILE"
   chmod 640 "$INSTALL_LOG" "$APP_LOG_FILE" || true
-  
-  # Filter secrets from logs to prevent leakage
-  # This prevents API_TOKEN, ENCRYPTION_SECRET, FERNET_KEY from being logged
-  exec > >(grep -v -E 'API_TOKEN|ENCRYPTION_SECRET|FERNET_KEY|PLATEGA_SECRET' | tee -a "$INSTALL_LOG") 2>&1
+  exec > >(tee -a "$INSTALL_LOG") 2>&1
 }
 
 setup_tty_fd() {
@@ -391,24 +366,12 @@ resolve_db_file_from_db_path() {
 set_env_value() {
   local key="$1"
   local value="$2"
-  
-  # Validate key to prevent regex injection
-  if [[ ! "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
-    warn "Invalid env key format: ${key}"
-    return 1
-  fi
-  
   mkdir -p "$INSTALL_DIR"
   touch "$ENV_FILE"
   chmod 600 "$ENV_FILE" || true
-  
-  # Properly escape value for sed replacement
-  # Handle &, \, /, and newlines correctly
   local escaped
-  escaped="$(printf '%s\n' "$value" | sed -e 's/[&/\]/\\&/g' -e '$!s/$/\\/' -e '$s/\\$//')"
-  
+  escaped="$(printf '%s' "$value" | sed -e 's/[\\/&|]/\\&/g')"
   if grep -q -E "^${key}=" "$ENV_FILE" 2>/dev/null; then
-    # Use | as delimiter to avoid conflicts with / in value
     sed -i "s|^${key}=.*|${key}=${escaped}|" "$ENV_FILE"
   else
     printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
@@ -599,22 +562,15 @@ dpkg_lock_free() {
 }
 
 wait_for_apt_locks() {
-  local waited=0 max_wait=120  # Reduced from 300 to 120 seconds
+  local waited=0 max_wait=300
   while ! dpkg_lock_free; do
     if (( waited == 0 )); then
       warn "apt/dpkg сейчас занят другим процессом. Жду освобождения блокировки..."
     fi
-    sleep 2  # Check more frequently (every 2 seconds instead of 5)
-    waited=$((waited + 2))
+    sleep 5
+    waited=$((waited + 5))
     if (( waited >= max_wait )); then
-      # Try to kill stuck apt processes as last resort
-      warn "Превышено время ожидания apt/dpkg lock. Попытка очистки..."
-      pkill -9 -f "apt-get|dpkg" 2>/dev/null || true
-      sleep 5
-      if ! dpkg_lock_free; then
-        die "Не удалось освободить apt/dpkg lock за ${max_wait} секунд. Проверьте вручную: ps aux | grep -E 'apt|dpkg'"
-      fi
-      warn "apt/dpkg lock освобождён после принудительной очистки."
+      die "Не удалось дождаться освобождения apt/dpkg lock за ${max_wait} секунд. Попробуй позже."
     fi
   done
   return 0
@@ -1060,7 +1016,7 @@ refresh_update_status_quiet() {
     return 0
   fi
 
-  now_ts="$(date +%s 2>/dev/null || echo "${EPOCHSECONDS:-0}")"
+  now_ts="${EPOCHSECONDS:-0}"
   if [[ "$UPDATE_CHECK_TS" -gt 0 && "$UPDATE_CACHE_BRANCH" == "$REPO_BRANCH" && "$now_ts" -gt 0 ]]; then
     if (( now_ts - UPDATE_CHECK_TS < UPDATE_CACHE_TTL )); then
       if [[ -z "$UPDATE_REMOTE_SHA" ]]; then
@@ -1266,37 +1222,14 @@ download_repo() {
   tmp_dir="$(mktemp -d)"
   download_url="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/${ref}"
   info "Скачиваю код из ${REPO_URL} (ref=${ref})..."
-  
-  # Download with improved retry logic and timeout
-  if ! curl -fsSL --connect-timeout 20 --retry 5 --retry-delay 2 --retry-max-time 60 "$download_url" -o "$tmp_dir/repo.tar.gz"; then
-    warn "Не удалось скачать репозиторий после нескольких попыток."
-    rm -rf -- "$tmp_dir"
-    return 1
-  fi
-  
-  # SECURITY: Validate archive contents before extraction to prevent zip slip
-  local archive_entries
-  archive_entries="$(tar -tzf "$tmp_dir/repo.tar.gz" 2>/dev/null || true)"
-  if [[ -z "$archive_entries" ]]; then
-    warn "Archive is empty or corrupted."
-    rm -rf -- "$tmp_dir"
-    return 1
-  fi
-  
-  # Check for absolute paths or path traversal attempts
-  if printf '%s\n' "$archive_entries" | grep -qE '^/|\.\./'; then
-    warn "Archive contains suspicious paths (absolute or path traversal). Possible zip slip attack."
-    rm -rf -- "$tmp_dir"
-    return 1
-  fi
-  
+  curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 1 "$download_url" -o "$tmp_dir/repo.tar.gz"
   tar -xzf "$tmp_dir/repo.tar.gz" -C "$tmp_dir"
   src_dir="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n1 || true)"
   if [[ -z "$src_dir" || ! -d "$src_dir/bot" || ! -f "$src_dir/awg-tgbot.sh" ]]; then
     warn "Не удалось скачать корректную структуру репозитория."
     ls -la "$tmp_dir" >&2 || true
     [[ -n "$src_dir" ]] && ls -la "$src_dir" >&2 || true
-    rm -rf -- "$tmp_dir"
+    rm -rf "$tmp_dir"
     return 1
   fi
   printf '%s' "$tmp_dir"
@@ -1304,13 +1237,6 @@ download_repo() {
 
 deploy_repo() {
   local tmp_dir="$1" src_dir backup_dir=""
-  
-  # SECURITY: Validate BOT_DIR path before any destructive operations
-  if [[ "$BOT_DIR" != "/opt/amnezia/bot/bot" ]]; then
-    warn "BOT_DIR has unexpected value: ${BOT_DIR}. Aborting to prevent data loss."
-    return 1
-  fi
-  
   src_dir="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n1 || true)"
   if [[ -z "$src_dir" || ! -d "$src_dir/bot" || ! -f "$src_dir/awg-tgbot.sh" ]]; then
     warn "Не найдены файлы репозитория для развёртывания."
@@ -1319,16 +1245,14 @@ deploy_repo() {
   mkdir -p "$INSTALL_DIR" "$STATE_DIR" "$(dirname "$SELF_SYMLINK")"
   if [[ -d "$BOT_DIR" || -f "$INSTALL_DIR/awg-tgbot.sh" || -d "$INSTALL_DIR/scripts" || -d "$INSTALL_DIR/packaging" ]]; then
     backup_dir="$(mktemp -d "${INSTALL_DIR}/.backup.XXXXXX")"
-    [[ -d "$BOT_DIR" ]] && mv -- "$BOT_DIR" "$backup_dir/bot"
-    [[ -f "$INSTALL_DIR/awg-tgbot.sh" ]] && mv -- "$INSTALL_DIR/awg-tgbot.sh" "$backup_dir/awg-tgbot.sh"
-    [[ -d "$INSTALL_DIR/scripts" ]] && mv -- "$INSTALL_DIR/scripts" "$backup_dir/scripts"
-    [[ -d "$INSTALL_DIR/packaging" ]] && mv -- "$INSTALL_DIR/packaging" "$backup_dir/packaging"
+    [[ -d "$BOT_DIR" ]] && mv "$BOT_DIR" "$backup_dir/bot"
+    [[ -f "$INSTALL_DIR/awg-tgbot.sh" ]] && mv "$INSTALL_DIR/awg-tgbot.sh" "$backup_dir/awg-tgbot.sh"
+    [[ -d "$INSTALL_DIR/scripts" ]] && mv "$INSTALL_DIR/scripts" "$backup_dir/scripts"
+    [[ -d "$INSTALL_DIR/packaging" ]] && mv "$INSTALL_DIR/packaging" "$backup_dir/packaging"
   fi
-  
-  # Use -- to prevent interpretation of paths starting with -
-  rm -rf -- "$BOT_DIR"
+  rm -rf "$BOT_DIR"
   mkdir -p "$BOT_DIR"
-  rm -rf -- "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging"
+  rm -rf "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging"
   if cp -a "$src_dir/bot/." "$BOT_DIR/" \
     && cp "$src_dir/awg-tgbot.sh" "$INSTALL_DIR/awg-tgbot.sh" \
     && { [[ ! -d "$src_dir/scripts" ]] || cp -a "$src_dir/scripts" "$INSTALL_DIR/scripts"; } \
@@ -1336,19 +1260,19 @@ deploy_repo() {
     && chmod +x "$INSTALL_DIR/awg-tgbot.sh" \
     && { [[ ! -f "$AUTO_BACKUP_SCRIPT" ]] || chmod +x "$AUTO_BACKUP_SCRIPT"; } \
     && ln -sfn "$INSTALL_DIR/awg-tgbot.sh" "$SELF_SYMLINK"; then
-    [[ -n "$backup_dir" ]] && rm -rf -- "$backup_dir"
+    [[ -n "$backup_dir" ]] && rm -rf "$backup_dir"
     return 0
   fi
   warn "Не удалось развернуть файлы репозитория. Выполняю откат."
-  rm -rf -- "$BOT_DIR"
-  rm -f -- "$INSTALL_DIR/awg-tgbot.sh"
-  rm -rf -- "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging"
+  rm -rf "$BOT_DIR"
+  rm -f "$INSTALL_DIR/awg-tgbot.sh"
+  rm -rf "$INSTALL_DIR/scripts" "$INSTALL_DIR/packaging"
   if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
-    [[ -d "$backup_dir/bot" ]] && mv -- "$backup_dir/bot" "$BOT_DIR"
-    [[ -f "$backup_dir/awg-tgbot.sh" ]] && mv -- "$backup_dir/awg-tgbot.sh" "$INSTALL_DIR/awg-tgbot.sh"
-    [[ -d "$backup_dir/scripts" ]] && mv -- "$backup_dir/scripts" "$INSTALL_DIR/scripts"
-    [[ -d "$backup_dir/packaging" ]] && mv -- "$backup_dir/packaging" "$INSTALL_DIR/packaging"
-    rm -rf -- "$backup_dir"
+    [[ -d "$backup_dir/bot" ]] && mv "$backup_dir/bot" "$BOT_DIR"
+    [[ -f "$backup_dir/awg-tgbot.sh" ]] && mv "$backup_dir/awg-tgbot.sh" "$INSTALL_DIR/awg-tgbot.sh"
+    [[ -d "$backup_dir/scripts" ]] && mv "$backup_dir/scripts" "$INSTALL_DIR/scripts"
+    [[ -d "$backup_dir/packaging" ]] && mv "$backup_dir/packaging" "$INSTALL_DIR/packaging"
+    rm -rf "$backup_dir"
   fi
   return 1
 }
@@ -1535,16 +1459,6 @@ ensure_bot_not_in_docker_group() {
   fi
   if id -nG "$BOT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
     gpasswd -d "$BOT_USER" docker >/dev/null 2>&1 || true
-    warn "Removed $BOT_USER from docker group (security hardening)"
-  fi
-  
-  # Additional check: verify docker socket permissions
-  if [[ -S /var/run/docker.sock ]]; then
-    local sock_perms
-    sock_perms="$(stat -c '%a' /var/run/docker.sock 2>/dev/null || true)"
-    if [[ -n "$sock_perms" && "$sock_perms" != "660" && "$sock_perms" != "666" ]]; then
-      warn "Docker socket has unusual permissions: $sock_perms (should be 660 or 666)"
-    fi
   fi
   return 0
 }
@@ -1629,23 +1543,7 @@ snapshot_sqlite_runtime_bundle() {
   local src_db="$1" snapshot_dir="$2" snapshot_name="$3"
   local snapshot_db="${snapshot_dir}/${snapshot_name}"
   [[ -f "$src_db" ]] || return 1
-  
-  # CRITICAL: Perform WAL checkpoint before snapshot to ensure consistency
-  # This prevents race conditions where data is in WAL but not in main DB file
-  if require_command sqlite3; then
-    sqlite3 "$src_db" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || true
-  fi
-  
-  # Use flock to prevent concurrent writes during snapshot (if available)
-  if require_command flock; then
-    (
-      flock -n 200 || { warn "SQLite DB is locked by another process, snapshot may be inconsistent"; }
-      copy_sqlite_runtime_bundle "$src_db" "$snapshot_db"
-    ) 200>"$src_db.lock"
-    rm -f "$src_db.lock"
-  else
-    copy_sqlite_runtime_bundle "$src_db" "$snapshot_db"
-  fi
+  copy_sqlite_runtime_bundle "$src_db" "$snapshot_db"
 }
 
 restore_sqlite_runtime_bundle() {
@@ -1752,28 +1650,10 @@ install_awg_helper() {
     chown root:"$BOT_USER" "$AWG_HELPER_POLICY"
     chmod 640 "$AWG_HELPER_POLICY"
   fi
-  
-  # SECURITY FIX: Use explicit command list instead of wildcard
-  # This prevents command injection via malicious arguments
-  # Only allow specific commands with validated argument patterns
   cat > "$AWG_HELPER_SUDOERS" <<SUDOERS
-${BOT_USER} ALL=(root) NOPASSWD: ${AWG_HELPER_TARGET} check-awg, ${AWG_HELPER_TARGET} remove-peer --public-key [a-zA-Z0-9+/=]+
+${BOT_USER} ALL=(root) NOPASSWD: ${AWG_HELPER_TARGET} *
 SUDOERS
   chmod 440 "$AWG_HELPER_SUDOERS"
-  
-  # Validate sudoers syntax before using it
-  if ! visudo -c -f "$AWG_HELPER_SUDOERS" >/dev/null 2>&1; then
-    warn "Sudoers syntax validation failed! Rolling back..."
-    rm -f "$AWG_HELPER_SUDOERS"
-    return 1
-  fi
-  
-  # Additional security: ensure policy file is owned by root and not writable by bot
-  if [[ -f "$AWG_HELPER_POLICY" ]]; then
-    chown root:root "$AWG_HELPER_POLICY" || true
-    chmod 644 "$AWG_HELPER_POLICY" || true
-  fi
-  
   return 0
 }
 
@@ -1796,22 +1676,11 @@ Restart=always
 RestartSec=3
 User=${BOT_USER}
 Group=${BOT_USER}
-
-# Security Hardening
-# NoNewPrivileges=false required for sudo to helper
+# sudo к root helper требует возможности повышения привилегий.
 NoNewPrivileges=false
 PrivateTmp=true
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=${RUNTIME_DIR} ${APP_LOG_DIR} ${INSTALL_DIR}/.env ${INSTALL_DIR}/.state
-ReadOnlyPaths=/etc /usr /bin /sbin /lib /lib64
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-AmbientCapabilities=
-SystemCallFilter=@system-service
-SystemCallErrorNumber=EPERM
-MemoryMax=512M
-CPUQuota=50%
-
 StandardOutput=append:${APP_LOG_FILE}
 StandardError=append:${APP_LOG_FILE}
 
@@ -3239,7 +3108,7 @@ EOF
 
 restore_from_backup() {
   local backup_root="${BACKUP_ROOT}"
-  local selected_index="" selected_archive=""
+  local selected_index="" selected_archive="" confirm_restore=""
   local original_db_file payload_db_basename meta_content snapshot_dir tmp_restore service_active_before service_enabled_before service_state_after_stop=""
   local archive_env_file archive_db_path="" archive_db_file="" archive_db_basename=""
   local restore_target_db_file="" rollback_target_db_file="" rollback_cleanup_db_file=""
