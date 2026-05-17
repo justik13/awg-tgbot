@@ -377,11 +377,15 @@ async def _send_or_edit_user_screen(
             await message.edit_text(text, **kwargs)
             return
         except TelegramBadRequest as error:
-            if "message is not modified" in str(error).lower():
+            error_str = str(error).lower()
+            if "message is not modified" in error_str or "message to edit not found" in error_str:
+                # Игнорируем ошибки редактирования - пользователь уже видит актуальные данные
+                await cb.answer("Обновлено", show_alert=False)
                 return
             logger.debug("User screen edit fallback due to TelegramBadRequest: %s", error)
         except Exception as error:
             logger.warning("User screen edit fallback due to unexpected error: %s", error)
+    # Fallback только если редактирование невозможно (сообщение удалено или недоступно)
     if message is not None:
         kwargs = {"parse_mode": "HTML", "reply_markup": reply_markup}
         if disable_web_page_preview is not None:
@@ -621,7 +625,8 @@ async def show_selected_device_config(cb: types.CallbackQuery):
 
     selected = await _find_user_config_by_key_id(cb.from_user.id, key_id)
     if not selected:
-        await cb.message.answer(
+        await _send_or_edit_user_screen(
+            cb,
             await get_text("config_not_found"),
             reply_markup=get_instruction_inline_kb(),
         )
@@ -654,7 +659,8 @@ async def send_selected_device_conf(cb: types.CallbackQuery):
 
     selected = await _find_user_config_by_key_id(cb.from_user.id, key_id)
     if not selected:
-        await cb.message.answer(
+        await _send_or_edit_user_screen(
+            cb,
             await get_text("config_conf_not_found"),
             reply_markup=get_instruction_inline_kb(),
         )
@@ -672,7 +678,8 @@ async def send_selected_device_conf(cb: types.CallbackQuery):
         )
         await _send_or_edit_user_screen(cb, await get_text("config_conf_sent"), reply_markup=get_config_post_conf_kb(key_id))
     else:
-        await cb.message.answer(
+        await _send_or_edit_user_screen(
+            cb,
             await get_text("config_conf_missing"),
             reply_markup=get_configs_empty_kb(),
         )
@@ -747,7 +754,7 @@ async def user_reissue_cancel(cb: types.CallbackQuery):
     await cb.answer()
     await clear_pending_admin_action(cb.from_user.id, "user_reissue_device")
     if cb.message:
-        await cb.message.answer("❌ Перевыпуск отменён.")
+        await _send_or_edit_user_screen(cb, "❌ Перевыпуск отменён.")
 
 
 @router.callback_query(F.data == CB_USER_REISSUE_CONFIRM)
@@ -756,12 +763,12 @@ async def user_reissue_confirm(cb: types.CallbackQuery):
     action = await get_pending_admin_action(cb.from_user.id, "user_reissue_device")
     if not action or action.get("action") != "user_reissue_device":
         if cb.message:
-            await cb.message.answer("Нет ожидающего запроса на перевыпуск. Используйте /resetdevice.")
+            await _send_or_edit_user_screen(cb, "Нет ожидающего запроса на перевыпуск. Используйте /resetdevice.")
         return
     cooldown_hit = await persistent_guard_hit("user_reissue", cb.from_user.id, "current_device", USER_REISSUE_COOLDOWN_SECONDS)
     if cooldown_hit:
         if cb.message:
-            await cb.message.answer(f"⏳ Слишком часто. Повторите через {USER_REISSUE_COOLDOWN_SECONDS} сек.")
+            await _send_or_edit_user_screen(cb, f"⏳ Слишком часто. Повторите через {USER_REISSUE_COOLDOWN_SECONDS} сек.")
         return
     try:
         device_num = int(action.get("device_num", 1))
@@ -769,7 +776,8 @@ async def user_reissue_confirm(cb: types.CallbackQuery):
         await clear_pending_admin_action(cb.from_user.id, "user_reissue_device")
         if result.get("status") != "reissued":
             if cb.message:
-                await cb.message.answer(
+                await _send_or_edit_user_screen(
+                    cb,
                     "Не удалось перевыпустить устройство. Попробуйте позже или напишите в поддержку.",
                     reply_markup=get_support_back_kb(),
                 )
@@ -782,7 +790,7 @@ async def user_reissue_confirm(cb: types.CallbackQuery):
     except Exception as error:
         logger.exception("Ошибка user_reissue_confirm: %s", error)
         if cb.message:
-            await cb.message.answer("❌ Ошибка перевыпуска. Попробуйте позже или напишите в поддержку.", reply_markup=get_support_back_kb())
+            await _send_or_edit_user_screen(cb, "❌ Ошибка перевыпуска. Попробуйте позже или напишите в поддержку.", reply_markup=get_support_back_kb())
 
 
 @router.callback_query(F.data == CB_CHECK_ACTIVATION_STATUS)
@@ -948,7 +956,7 @@ async def promo_input_cancel_callback(cb: types.CallbackQuery):
     await cb.answer()
     await _clear_promo_input_pending(cb.from_user.id)
     if cb.message:
-        await cb.message.answer("❌ Ввод промокода отменён.")
+        await _send_or_edit_user_screen(cb, "❌ Ввод промокода отменён.")
 
 
 @router.message(HasPendingPromoInput())
