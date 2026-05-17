@@ -1,4 +1,16 @@
 ```
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+bot/logs/
+
+# Environment
+.env
+.env.local
+.env.*
 ```
