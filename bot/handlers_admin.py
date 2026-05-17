@@ -804,7 +804,7 @@ async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_
     message = cb.message
     if message is not None and hasattr(message, "edit_text"):
         try:
-            await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
+            await message.edit_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
             await cb.answer(show_alert=False)
             return
         except TelegramBadRequest as error:
@@ -1114,13 +1114,13 @@ async def _render_users_page(target_message: types.Message | None, page: int) ->
         lines.append(f"• <code>{uid}</code> — {short_name} — {status_text} — {until_text}")
     try:
         await target_message.edit_text(
-            "\n".join(lines),
+            text="\n".join(lines),
             parse_mode="HTML",
             reply_markup=_users_page_kb(labels, page, total_pages),
         )
     except TelegramBadRequest:
         await target_message.answer(
-            "\n".join(lines),
+            text="\n".join(lines),
             parse_mode="HTML",
             reply_markup=_users_page_kb(labels, page, total_pages),
         )
@@ -1217,9 +1217,9 @@ async def _send_user_manage_card(
         source=source,
     )
     try:
-        await target_message.edit_text(text, markup)
+        await target_message.edit_text(text=text, reply_markup=markup)
     except TelegramBadRequest:
-        await target_message.answer(text, markup)
+        await target_message.answer(text=text, reply_markup=markup)
 
 
 def build_admin_manual_commands_text() -> str:
@@ -1332,9 +1332,9 @@ async def _render_problem_activations_screen(target_message: types.Message | Non
             items=keyboard_items,
         )
     try:
-        await target_message.edit_text(text, markup)
+        await target_message.edit_text(text=text, reply_markup=markup)
     except TelegramBadRequest:
-        await target_message.answer(text, markup)
+        await target_message.answer(text=text, reply_markup=markup)
 
 
 @router.callback_query(F.data == CB_ADMIN_PROBLEM_ACTIVATIONS)

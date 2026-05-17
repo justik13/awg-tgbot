@@ -189,7 +189,7 @@ async def _send_or_edit_payment_screen(cb: types.CallbackQuery, text: str, *, re
     message = cb.message
     if message is not None and hasattr(message, "edit_text"):
         try:
-            await message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
+            await message.edit_text(text=text, parse_mode="HTML", reply_markup=reply_markup)
             await cb.answer(show_alert=False)
             return
         except TelegramBadRequest as error:
@@ -382,7 +382,7 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
         
         if cb.message is not None:
             await cb.message.edit_text(
-                text,
+                text=text,
                 parse_mode="HTML",
                 reply_markup=get_platega_payment_kb(transaction_id, payload, payment_url),
             )
@@ -390,7 +390,7 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
             logger.debug("pay_platega_handler: message is None for user=%s", cb.from_user.id)
             await cb.bot.send_message(
                 cb.from_user.id,
-                text,
+                text=text,
                 parse_mode="HTML",
                 reply_markup=get_platega_payment_kb(transaction_id, payload, payment_url),
             )
@@ -496,7 +496,7 @@ async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
             
             if cb.message is not None:
                 await cb.message.edit_text(
-                    f"{success_text}\n{next_step_text}",
+                    text=f"{success_text}\n{next_step_text}",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup(
                         inline_keyboard=[
@@ -764,7 +764,7 @@ async def select_payment_method_stars(cb: types.CallbackQuery):
         [InlineKeyboardButton(text=f"90 дней — {config.STARS_PRICE_90_DAYS}⭐", callback_data=CB_BUY_90)],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_SHOW_BUY_MENU)],
     ]
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await cb.message.edit_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @router.callback_query(F.data == "payment_method_platega")
@@ -799,7 +799,7 @@ async def select_payment_method_platega(cb: types.CallbackQuery):
         [InlineKeyboardButton(text=f"90 дней — {config.PLATEGA_PRICE_90_DAYS}₽", callback_data=CB_PLATEGA_BUY_90)],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_SHOW_BUY_MENU)],
     ]
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await cb.message.edit_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 async def _send_invoice_from_confirm(cb: types.CallbackQuery, bot: Bot, *, callback_action: str, payload: str, title: str, label: str, amount: int) -> None:
@@ -1297,13 +1297,13 @@ async def success_pay(message: types.Message):
             final_text = await get_payment_result_text(result_status)
             try:
                 await progress_message.edit_text(
-                    final_text,
+                    text=final_text,
                     parse_mode="HTML",
                     reply_markup=get_post_payment_kb(),
                 )
             except Exception:
                 await message.answer(
-                    final_text,
+                    text=final_text,
                     parse_mode="HTML",
                     reply_markup=get_post_payment_kb(),
                 )
@@ -1311,13 +1311,13 @@ async def success_pay(message: types.Message):
             pending_text = await get_payment_result_text("pending")
             try:
                 await progress_message.edit_text(
-                    pending_text,
+                    text=pending_text,
                     parse_mode="HTML",
                     reply_markup=get_post_payment_kb(),
                 )
             except Exception:
                 await message.answer(
-                    pending_text,
+                    text=pending_text,
                     parse_mode="HTML",
                     reply_markup=get_post_payment_kb(),
                 )

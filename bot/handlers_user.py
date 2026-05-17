@@ -365,10 +365,10 @@ async def _send_or_edit_user_screen(
     message = cb.message
     if message is not None and hasattr(message, "edit_text"):
         try:
-            kwargs = {"parse_mode": "HTML", "reply_markup": reply_markup}
+            kwargs = {"text": text, "parse_mode": "HTML", "reply_markup": reply_markup}
             if disable_web_page_preview is not None:
                 kwargs["disable_web_page_preview"] = disable_web_page_preview
-            await message.edit_text(text, **kwargs)
+            await message.edit_text(**kwargs)
             await cb.answer(show_alert=False)  # Подтверждаем успешное редактирование
             return
         except TelegramBadRequest as error:
