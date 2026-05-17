@@ -25,6 +25,11 @@ from filters import (
 # Aliases for backward compatibility with existing handlers
 HasPendingBroadcastInput = AdminHasPendingBroadcastInput
 HasPendingPromoInput = AdminHasPendingPromoInput
+HasPendingPriceInput = AdminHasPendingPriceInput
+HasPendingPaymentLookupInput = AdminHasPendingPaymentLookupInput
+HasPendingNetworkPolicyInput = AdminHasPendingNetworkPolicyInput
+HasPendingServiceSettingsInput = AdminHasPendingServiceSettingsInput
+HasPendingTextOverrideInput = AdminHasPendingTextOverrideInput
 
 from awg_backend import (
     check_awg_container, count_free_ip_slots, delete_user_everywhere,

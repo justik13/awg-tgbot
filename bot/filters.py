@@ -109,3 +109,16 @@ class AdminHasPendingTextOverrideInput(BaseFilter):
         TEXT_OVERRIDE_INPUT_ACTION_KEY = "text_override_input"
         pending = await get_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY)
         return bool(pending)
+
+
+# =============================================================================
+# ALIASES FOR BACKWARD COMPATIBILITY
+# =============================================================================
+# Старые имена фильтров для обратной совместимости с handlers_admin.py
+HasPendingBroadcastInput = AdminHasPendingBroadcastInput
+HasPendingPriceInput = AdminHasPendingPriceInput
+HasPendingPaymentLookupInput = AdminHasPendingPaymentLookupInput
+HasPendingPromoInput = AdminHasPendingPromoInput
+HasPendingServiceSettingsInput = AdminHasPendingServiceSettingsInput
+HasPendingTextOverrideInput = AdminHasPendingTextOverrideInput
+HasPendingNetworkPolicyInput = AdminHasPendingNetworkPolicyInput
