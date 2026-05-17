@@ -1213,6 +1213,75 @@ PY
   set_env_value FERNET_KEY "$key"
 }
 
+# Валидация критических переменных окружения после генерации/обновления .env
+validate_critical_env() {
+  local errors=0
+  local value
+  
+  info "Выполняю валидацию критических переменных окружения..."
+  
+  # Проверка ENCRYPTION_SECRET
+  value="$(get_env_value ENCRYPTION_SECRET)"
+  if [[ -z "$value" ]]; then
+    error "Критическая ошибка: ENCRYPTION_SECRET отсутствует или пустой!"
+    errors=$((errors + 1))
+  elif [[ ${#value} -lt 32 ]]; then
+    error "Критическая ошибка: ENCRYPTION_SECRET слишком короткий (минимум 32 символа)!"
+    errors=$((errors + 1))
+  else
+    ok "ENCRYPTION_SECRET: OK (длина: ${#value})"
+  fi
+  
+  # Проверка API_TOKEN
+  value="$(get_env_value API_TOKEN)"
+  if [[ -z "$value" ]]; then
+    error "Критическая ошибка: API_TOKEN отсутствует!"
+    errors=$((errors + 1))
+  elif [[ ! "$value" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+    error "Критическая ошибка: API_TOKEN имеет неверный формат (ожидается XXX:YYY)!"
+    errors=$((errors + 1))
+  else
+    ok "API_TOKEN: OK (формат верный)"
+  fi
+  
+  # Проверка ADMIN_ID
+  value="$(get_env_value ADMIN_ID)"
+  if [[ -z "$value" ]]; then
+    error "Критическая ошибка: ADMIN_ID отсутствует!"
+    errors=$((errors + 1))
+  elif [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    error "Критическая ошибка: ADMIN_ID должен быть числом!"
+    errors=$((errors + 1))
+  else
+    ok "ADMIN_ID: OK"
+  fi
+  
+  # Проверка SERVER_PUBLIC_KEY
+  value="$(get_env_value SERVER_PUBLIC_KEY)"
+  if [[ -z "$value" ]]; then
+    error "Критическая ошибка: SERVER_PUBLIC_KEY отсутствует!"
+    errors=$((errors + 1))
+  else
+    ok "SERVER_PUBLIC_KEY: OK"
+  fi
+  
+  # Проверка DB_PATH
+  value="$(get_env_value DB_PATH)"
+  if [[ -z "$value" ]]; then
+    warn "DB_PATH не установлен, будет использовано значение по умолчанию"
+  else
+    ok "DB_PATH: OK ($value)"
+  fi
+  
+  if [[ $errors -gt 0 ]]; then
+    error "Валидация не пройдена! Найдено ошибок: $errors"
+    return 1
+  fi
+  
+  ok "Все критические переменные прошли валидацию."
+  return 0
+}
+
 setup_logrotate() {
   cat > /etc/logrotate.d/awg-tgbot <<ROTATE
 ${APP_LOG_FILE} {
@@ -1449,7 +1518,10 @@ write_common_env() {
   local db_path=""
   set_env_value API_TOKEN "$api_token"
   set_env_value ADMIN_ID "$admin_id"
-  set_env_value SERVER_NAME "$server_name"
+  # Записываем SERVER_NAME только если он не пустой, чтобы не затереть сохранённое значение
+  if [[ -n "$server_name" ]]; then
+    set_env_value SERVER_NAME "$server_name"
+  fi
   set_env_value ENCRYPTION_SECRET "$secret"
   db_path="$(get_env_value DB_PATH)"
   if [[ -n "$db_path" ]]; then
@@ -1531,7 +1603,9 @@ configure_manual_awg_only() {
   
   # Запрос имени сервера
   prompt_server_name server_name
-  set_env_value SERVER_NAME "$server_name"
+  if [[ -n "$server_name" ]]; then
+    set_env_value SERVER_NAME "$server_name"
+  fi
   
   # Настройка AWG параметров
   default="$(pick_existing_or_default "$(get_env_value DOCKER_CONTAINER)" "$DETECTED_CONTAINER")"
@@ -1588,7 +1662,16 @@ ensure_venv_and_requirements() {
   
   [[ -d "$VENV_DIR" ]] || "$PYTHON_BIN" -m venv "$VENV_DIR" || return 1
   "$VENV_DIR/bin/pip" install --upgrade pip wheel || return 1
-  "$VENV_DIR/bin/pip" install -r "$BOT_DIR/requirements.txt" || return 1
+  
+  # При переустановке используем --force-reinstall для гарантии целостности зависимостей
+  local pip_install_flags="-r"
+  if [[ "${FORCE_REINSTALL_DEPS:-0}" == "1" ]]; then
+    pip_install_flags="--force-reinstall --no-cache-dir -r"
+    info "Выполняется принудительная переустановка зависимостей (--force-reinstall)..."
+  fi
+  
+  # shellcheck disable=SC2086
+  "$VENV_DIR/bin/pip" install $pip_install_flags "$BOT_DIR/requirements.txt" || return 1
   
   # Platega SDK используется напрямую из папки bot/platega-sdk-python
   # Установка через pip не требуется - путь добавляется в platega_service.py
@@ -2640,6 +2723,20 @@ start_service() {
     fi
   fi
   
+  # Дополнительная гарантия прав доступа к runtime файлам перед запуском
+  # Исправляем права на .env и БД если они существуют
+  if [[ -f "$ENV_FILE" ]]; then
+    chown "$BOT_USER:$BOT_USER" "$ENV_FILE" 2>/dev/null || true
+    chmod 600 "$ENV_FILE" 2>/dev/null || true
+  fi
+  
+  local db_file_check
+  db_file_check="$(get_bot_db_file)"
+  if [[ -f "$db_file_check" ]]; then
+    chown "$BOT_USER:$BOT_USER" "$db_file_check" 2>/dev/null || true
+    chmod 600 "$db_file_check" 2>/dev/null || true
+  fi
+  
   # daemon-reload с проверкой
   if ! systemctl daemon-reload 2>&1; then
     warn "daemon-reload failed, но продолжаем..."
@@ -2958,15 +3055,24 @@ install_or_reinstall_flow() {
   # Для быстрой переустановки (choice=1) сохраняем текущие env значения
   if [[ "$mode" == "reinstall" && "$choice" == "1" ]]; then
     # Быстрая переустановка: сохраняем все текущие значения из .env
-    # write_common_env перезаписывает только основные поля, остальные сохраняются
-    write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
-    # Сохраняем все остальные env переменные из текущего .env файла
+    # Сначала восстанавливаем существующие значения (включая SERVER_NAME)
     preserve_existing_env_values
+    # Затем записываем обновлённые основные поля
+    write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
+    # Принудительная переустановка зависимостей
+    export FORCE_REINSTALL_DEPS=1
   else
     write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
+    # При полной переустановке с новым конфигом тоже переустанавливаем зависимости
+    if [[ "$mode" == "reinstall" ]]; then
+      export FORCE_REINSTALL_DEPS=1
+    fi
   fi
   ensure_selfhost_network_defaults
   ensure_fernet_key
+  
+  # Валидация критических переменных после обновления .env
+  validate_critical_env || die "Валидация критических переменных не пройдена. Проверьте .env файл."
 
   # Обработка выбора режима для AWG и других настроек
   if [[ "$mode" == "reinstall" && "$choice" == "1" ]]; then
@@ -2986,7 +3092,9 @@ install_or_reinstall_flow() {
     
     # Запрос имени сервера
     prompt_server_name server_name
-    set_env_value SERVER_NAME "$server_name"
+    if [[ -n "$server_name" ]]; then
+      set_env_value SERVER_NAME "$server_name"
+    fi
     
     write_detected_awg_env
     if [[ -z "$(get_env_value SERVER_PUBLIC_KEY)" ]]; then
@@ -3077,7 +3185,9 @@ install_or_reinstall_flow() {
     
     # Запрос имени сервера
     prompt_server_name server_name
-    set_env_value SERVER_NAME "$server_name"
+    if [[ -n "$server_name" ]]; then
+      set_env_value SERVER_NAME "$server_name"
+    fi
     
     write_detected_awg_env
     if [[ -z "$(get_env_value SERVER_PUBLIC_KEY)" ]]; then
@@ -3250,7 +3360,7 @@ install_or_reinstall_flow() {
   write_service || die "Не удалось создать systemd сервис."
   configure_autobackup_timer || die "Не удалось настроить systemd timer autobackup."
   configure_platega_webhook || warn "Не удалось настроить Platega webhook сервис."
-  install_certbot_renewal_timer || warn "Не удалось установить certbot-renewal.timer (SSL не будет обновляться автоматически)."
+  # SSL таймер устанавливается ПОСЛЕ успешного smokecheck (см. ниже)
   persist_repo_branch
   persist_release_sha "$deploy_sha"
   if [[ "$mode" == "reinstall" ]]; then
@@ -3274,6 +3384,8 @@ install_or_reinstall_flow() {
     else
       ok "Smokecheck после установки пройден."
     fi
+    # Установка certbot-renewal.timer ПОСЛЕ успешного smokecheck
+    install_certbot_renewal_timer || warn "Не удалось установить certbot-renewal.timer (SSL не будет обновляться автоматически)."
   else
     if [[ "$mode" == "reinstall" ]]; then
       clear_reinstall_guard
