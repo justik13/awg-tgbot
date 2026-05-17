@@ -1743,7 +1743,8 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     try:
-        _, _, _, uid_raw, days_raw, page_raw = cb.data.split("_", 5)
+        raw = cb.data.removeprefix(CB_ADMIN_ADD_DAYS_PREFIX)
+        uid_raw, days_raw, page_raw = raw.split("_", 2)
         uid = int(uid_raw)
         days = int(days_raw)
         page = int(page_raw)
@@ -1841,7 +1842,8 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     try:
-        _, _, _, uid_raw, page_raw = cb.data.split("_", 4)
+        raw = cb.data.removeprefix(CB_ADMIN_RETRY_ACTIVATION_PREFIX)
+        uid_raw, page_raw = raw.split("_", 1)
         uid = int(uid_raw)
         page = int(page_raw)
         if admin_command_limited(f"admin_retry_activation_{uid}", cb.from_user.id):
@@ -1964,7 +1966,8 @@ async def admin_device_delete_btn(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     try:
-        _, _, _, uid_raw, device_num_raw, page_raw = cb.data.split("_", 5)
+        raw = cb.data.removeprefix(CB_ADMIN_DEVICE_DELETE_PREFIX)
+        uid_raw, device_num_raw, page_raw = raw.split("_", 2)
         uid = int(uid_raw)
         device_num = int(device_num_raw)
         page = int(page_raw)
@@ -2070,7 +2073,8 @@ async def admin_device_reissue_btn(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     try:
-        _, _, _, uid_raw, device_num_raw, page_raw = cb.data.split("_", 5)
+        raw = cb.data.removeprefix(CB_ADMIN_DEVICE_REISSUE_PREFIX)
+        uid_raw, device_num_raw, page_raw = raw.split("_", 2)
         uid = int(uid_raw)
         device_num = int(device_num_raw)
         page = int(page_raw)
@@ -2173,7 +2177,8 @@ async def admin_revoke_btn(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     try:
-        _, _, uid_raw, page_raw = cb.data.split("_", 3)
+        raw = cb.data.removeprefix(CB_ADMIN_REVOKE_PREFIX)
+        uid_raw, page_raw = raw.split("_", 1)
         uid = int(uid_raw)
         page = int(page_raw)
         source = _infer_user_manage_source(cb)
@@ -2258,7 +2263,8 @@ async def admin_del_user(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     try:
-        _, _, uid_raw, page_raw = cb.data.split("_", 3)
+        raw = cb.data.removeprefix(CB_ADMIN_DELETE_PREFIX)
+        uid_raw, page_raw = raw.split("_", 1)
         uid = int(uid_raw)
         page = int(page_raw)
         source = _infer_user_manage_source(cb)

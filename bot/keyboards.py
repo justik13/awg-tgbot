@@ -54,8 +54,8 @@ def get_main_menu(user_id: int, admin_id: int) -> ReplyKeyboardMarkup:
 
 def get_buy_inline_kb() -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="💳 Telegram Stars", callback_data="payment_method_stars")],
-        [InlineKeyboardButton(text="🏦 СБП (QR)", callback_data="payment_method_platega")],
+        [InlineKeyboardButton(text="💳 Telegram Stars", callback_data=CB_PAY_STARS_PREFIX + "sub_30")],
+        [InlineKeyboardButton(text="🏦 СБП (QR)", callback_data=CB_PAY_PLATEGA_PREFIX + "sub_30")],
         [InlineKeyboardButton(text="📖 Как подключиться", callback_data=CB_SHOW_INSTRUCTION)],
         [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
     ]
