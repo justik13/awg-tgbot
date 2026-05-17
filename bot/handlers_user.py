@@ -83,6 +83,7 @@ from ui_constants import (
     CB_OPEN_REFERRALS,
     CB_OPEN_TRAFFIC_DEVICES,
     CB_OPEN_SUPPORT,
+    CB_PLATEGA_CHECK_PREFIX,
     CB_PROMO_INPUT_CANCEL,
     CB_PROMO_INPUT_START,
     CB_SHOW_BUY_MENU,
@@ -889,15 +890,47 @@ async def check_payment_status_callback(cb: types.CallbackQuery):
         from bot.payments import platega_check_status_by_id
         await platega_check_status_by_id(cb, transaction_id=transaction_id)
     else:
-        # Если нет transaction_id, показываем общий статус
-        is_active = subscription_is_active(await get_user_subscription(cb.from_user.id))
-        has_config = bool(await get_user_keys(cb.from_user.id))
-        reply_markup = get_profile_inline_kb(subscription_active=is_active)
-        await _send_or_edit_user_screen(
-            cb,
-            f"{await get_activation_status_text(status, has_config=has_config)}\n\n{await get_support_short_text()}",
-            reply_markup=reply_markup,
+        # Если нет transaction_id, показываем экран оплаты с кнопкой "Я оплатил"
+        # Получаем информацию о последнем платеже для формирования ссылки
+        from database import fetchone
+        row = await fetchone(
+            "SELECT telegram_payment_charge_id, invoice_payload FROM payments WHERE user_id = ? AND status IN ('pending', 'received') ORDER BY created_at DESC LIMIT 1",
+            (cb.from_user.id,)
         )
+        
+        if row and row[0]:
+            # Есть активный платеж - показываем экран оплаты
+            txn_id = row[0]
+            
+            # Формируем ссылку на оплату
+            sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={txn_id}&mh={config.PLATEGA_MERCHANT_ID}"
+            
+            text = (
+                "<b>⏳ Платёж ещё в обработке</b>\n\n"
+                "Ожидайте подтверждения от банка.\n"
+                "Вы можете проверить статус или оплатить повторно."
+            )
+            
+            kb = types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
+                    [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{txn_id}")],
+                    [types.InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
+                ]
+            )
+            
+            from payments import _send_or_edit_payment_screen
+            await _send_or_edit_payment_screen(cb, text, reply_markup=kb)
+        else:
+            # Нет активного платежа - показываем профиль
+            is_active = subscription_is_active(await get_user_subscription(cb.from_user.id))
+            has_config = bool(await get_user_keys(cb.from_user.id))
+            reply_markup = get_profile_inline_kb(subscription_active=is_active)
+            await _send_or_edit_user_screen(
+                cb,
+                f"{await get_activation_status_text(status, has_config=has_config)}\n\n{await get_support_short_text()}",
+                reply_markup=reply_markup,
+            )
 
 
 @router.callback_query(F.data == CB_OPEN_SUPPORT)
