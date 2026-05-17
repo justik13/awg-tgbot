@@ -2859,7 +2859,9 @@ install_or_reinstall_flow() {
     ensure_docker_ready || die "Docker недоступен."
     detect_awg_environment
     print_detected_awg_summary
+  fi
 
+  # Общий код для всех режимов переустановки/установки
   if [[ "$mode" == "reinstall" ]]; then
     pre_reinstall_repo_snapshot="$(create_repo_snapshot_before_reinstall)"
     ok "Создан snapshot файлов приложения перед переустановкой: ${pre_reinstall_repo_snapshot}"
@@ -2978,9 +2980,6 @@ install_or_reinstall_flow() {
       set_env_value PLATEGA_MERCHANT_ID ""
       set_env_value PLATEGA_SECRET_KEY ""
     fi
-  elif [[ "$mode" == "reinstall" && "$choice" == "1" ]]; then
-    # Быстрая переустановка: сохраняем все текущие значения цен и настроек из .env
-    : # Ничего не делаем, оставляем текущие значения
   else
     configure_manual_awg_only
     default="$(pick_existing_or_default "$(get_env_value STARS_PRICE_7_DAYS)" "21")"
