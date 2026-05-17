@@ -54,7 +54,7 @@ def find_awg_container(default_name: str) -> str:
         return configured or default_name
 
     ranked: list[tuple[int, str]] = []
-    patterns = [('amnezia-awg', 100), ('awg', 70), ('wireguard', 60), ('vpn', 30)]
+    patterns = [('amnezia-awg2', 150), ('amnezia-awg', 100), ('awg', 70), ('wireguard', 60), ('vpn', 30)]
     for raw in lines:
         parts = raw.split('\t', 1)
         name = parts[0].strip()
