@@ -2792,7 +2792,8 @@ check_updates() {
 }
 
 install_or_reinstall_flow() {
-  local mode="$1" tmp_dir choice api_token admin_id server_name secret value default deploy_sha=""
+  local mode="$1" tmp_dir choice deploy_sha=""
+  local api_token="" admin_id="" server_name="" secret=""
   local pre_reinstall_runtime_snapshot="" pre_reinstall_repo_snapshot="" pre_reinstall_log_pending="" pre_reinstall_log_final="" pre_reinstall_log_archive=""
   clear_reinstall_guard
   detect_install_state
