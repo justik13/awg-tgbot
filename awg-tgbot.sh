@@ -690,6 +690,7 @@ find_awg_container() {
     image="${line#*$'\t'}"
     haystack="${name,,} ${image,,}"
     score=0
+    [[ "$haystack" == *"amnezia-awg2"* ]] && score=$((score+150))
     [[ "$haystack" == *"amnezia-awg"* ]] && score=$((score+100))
     [[ "$haystack" == *"awg"* ]] && score=$((score+70))
     [[ "$haystack" == *"wireguard"* ]] && score=$((score+60))
