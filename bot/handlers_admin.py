@@ -845,7 +845,7 @@ async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_
     message = cb.message
     if message is not None and hasattr(message, "edit_text"):
         try:
-            await message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
+            await message.edit_text(text, reply_markup)
             return
         except TelegramBadRequest as error:
             if "message is not modified" in str(error).lower():
@@ -854,7 +854,7 @@ async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_
         except Exception as error:
             logger.warning("Admin screen edit fallback due to unexpected error: %s", error)
     if message is not None:
-        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+        await message.answer(text, reply_markup)
 
 
 async def _render_network_policy_text() -> str:
@@ -1243,9 +1243,9 @@ async def _send_user_manage_card(
         source=source,
     )
     try:
-        await target_message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+        await target_message.edit_text(text, markup)
     except TelegramBadRequest:
-        await target_message.answer(text, parse_mode="HTML", reply_markup=markup)
+        await target_message.answer(text, markup)
 
 
 def build_admin_manual_commands_text() -> str:
@@ -1355,9 +1355,9 @@ async def _render_problem_activations_screen(target_message: types.Message, page
             items=keyboard_items,
         )
     try:
-        await target_message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+        await target_message.edit_text(text, markup)
     except TelegramBadRequest:
-        await target_message.answer(text, parse_mode="HTML", reply_markup=markup)
+        await target_message.answer(text, markup)
 
 
 @router.callback_query(F.data == CB_ADMIN_PROBLEM_ACTIVATIONS)
@@ -1413,7 +1413,7 @@ async def admin_payments_find_charge_start(cb: types.CallbackQuery):
         return
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY, {"action": PAYMENT_CHARGE_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите Charge ID платежа", disable_notification=True)
+    await _send_or_edit_admin_message(cb, "Введите Charge ID платежа", disable_notification=True)
     await cb.answer()
 
 
@@ -1423,7 +1423,7 @@ async def admin_payments_latest_by_user_start(cb: types.CallbackQuery):
         return
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY, {"action": PAYMENT_USER_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите user_id", disable_notification=True)
+    await _send_or_edit_admin_message(cb, "Введите user_id", disable_notification=True)
     await cb.answer()
 
 
@@ -1455,7 +1455,7 @@ async def admin_prices_start_edit(cb: types.CallbackQuery):
     currency_symbol = "⭐" if is_stars else "₽"
     await clear_pending_admin_action(ADMIN_ID, PRICE_CONFIRM_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY, {"env_key": env_key, "label": label, "is_stars": is_stars})
-    await cb.message.answer(f"Введите новую цену для «{label}» в {currency_symbol}. Текущая: {current_value}{currency_symbol}", disable_notification=True)
+    await _send_or_edit_admin_message(cb, f"Введите новую цену для «{label}» в {currency_symbol}. Текущая: {current_value}{currency_symbol}", disable_notification=True)
     await cb.answer()
 
 
@@ -1475,7 +1475,7 @@ async def admin_platega_prices_start_edit(cb: types.CallbackQuery):
     current_value = int(getattr(config, env_key))
     await clear_pending_admin_action(ADMIN_ID, PRICE_CONFIRM_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY, {"env_key": env_key, "label": label, "is_stars": False})
-    await cb.message.answer(f"Введите новую цену для «{label}» в ₽. Текущая: {current_value}₽", disable_notification=True)
+    await _send_or_edit_admin_message(cb, f"Введите новую цену для «{label}» в ₽. Текущая: {current_value}₽", disable_notification=True)
     await cb.answer()
 
 
@@ -1652,7 +1652,7 @@ async def admin_denylist_view_domains(cb: types.CallbackQuery):
     lines = [item.strip() for item in domains.split(",") if item.strip()]
     body = "\n".join(f"• {escape_html(item)}" for item in lines[:100]) if lines else "Список пуст."
     text = f"🧾 <b>Список доменов denylist</b>\n{body}"
-    await _send_or_edit_admin_message(cb, text, reply_markup=await _denylist_keyboard())
+    await _send_or_edit_admin_message(cb, text, await _denylist_keyboard())
     await cb.answer()
 
 
@@ -1664,7 +1664,7 @@ async def admin_denylist_view_cidrs(cb: types.CallbackQuery):
     lines = [item.strip() for item in cidrs.split(",") if item.strip()]
     body = "\n".join(f"• {escape_html(item)}" for item in lines[:100]) if lines else "Список пуст."
     text = f"🧾 <b>Список CIDR denylist</b>\n{body}"
-    await _send_or_edit_admin_message(cb, text, reply_markup=await _denylist_keyboard())
+    await _send_or_edit_admin_message(cb, text, await _denylist_keyboard())
     await cb.answer()
 
 
@@ -1673,7 +1673,7 @@ async def admin_denylist_replace_domains_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await set_pending_admin_action(ADMIN_ID, DENYLIST_DOMAINS_INPUT_ACTION_KEY, {"action": DENYLIST_DOMAINS_INPUT_ACTION_KEY})
-    await cb.message.answer("Отправьте список доменов: один домен на строку.", disable_notification=True)
+    await _send_or_edit_admin_message(cb, "Отправьте список доменов: один домен на строку.", disable_notification=True)
     await cb.answer()
 
 
@@ -1682,7 +1682,7 @@ async def admin_denylist_replace_cidrs_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await set_pending_admin_action(ADMIN_ID, DENYLIST_CIDRS_INPUT_ACTION_KEY, {"action": DENYLIST_CIDRS_INPUT_ACTION_KEY})
-    await cb.message.answer("Отправьте CIDR списком: одна сеть на строку.", disable_notification=True)
+    await _send_or_edit_admin_message(cb, "Отправьте CIDR списком: одна сеть на строку.", disable_notification=True)
     await cb.answer()
 
 
@@ -1759,7 +1759,7 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
                 "⚠️ <b>Подтвердите действие</b>\n\n"
                 f"Выдать пользователю <code>{uid}</code> <b>+{days} дней</b>?"
             )
-            await _send_or_edit_admin_message(cb, text, reply_markup=get_admin_add_days_confirm_kb(token))
+            await _send_or_edit_admin_message(cb, text, get_admin_add_days_confirm_kb(token))
             await cb.answer("Нужно подтверждение")
             return
         if admin_command_limited(f"admin_add_{days}", cb.from_user.id):
@@ -1774,9 +1774,9 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
             f"🆔 <code>{uid}</code>\n"
             f"📅 До: <b>{format_moscow_datetime(new_until)}</b>"
         )
-        await _send_or_edit_admin_message(cb, text, reply_markup=_user_manage_result_markup(uid, page, source))
+        await _send_or_edit_admin_message(cb, text, _user_manage_result_markup(uid, page, source))
         if not notified:
-            await cb.message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.", disable_notification=True)
+            await _send_or_edit_admin_message(cb, "⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.", disable_notification=True)
     except Exception as e:
         logger.exception("Ошибка admin_add_days_btn: %s", e)
         await cb.answer("❌ Не удалось продлить доступ", show_alert=True)
@@ -1816,9 +1816,9 @@ async def admin_add_days_confirm(cb: types.CallbackQuery):
         f"🆔 <code>{uid}</code>\n"
         f"📅 До: <b>{format_moscow_datetime(new_until)}</b>"
     )
-    await _send_or_edit_admin_message(cb, text, reply_markup=_user_manage_result_markup(uid, page, source))
+    await _send_or_edit_admin_message(cb, text, _user_manage_result_markup(uid, page, source))
     if not notified:
-        await cb.message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.", disable_notification=True)
+        await _send_or_edit_admin_message(cb, "⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.", disable_notification=True)
 
 
 @router.callback_query(F.data.startswith(CB_CANCEL_ADD_DAYS))
@@ -1832,7 +1832,7 @@ async def admin_add_days_cancel(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key(ADD_DAYS_CONFIRM_ACTION_KEY, token))
     await cb.answer("Отменено")
     if cb.message:
-        await cb.message.answer("❌ Выдача дней отменена.", disable_notification=True)
+        await _send_or_edit_admin_message(cb, "❌ Выдача дней отменена.", types.InlineKeyboardMarkup(inline_keyboard=[]))
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_RETRY_ACTIVATION_PREFIX))
@@ -1850,10 +1850,7 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
         payment_summary = await get_latest_user_payment_summary(uid)
         if not payment_summary:
             await write_audit_log(ADMIN_ID, "manual_retry_noop", f"target={uid}; reason=no_payment")
-            await cb.message.answer(
-                "ℹ️ Нет платежей для повтора активации. Нечего запускать повторно.",
-                reply_markup=_user_manage_kb(uid, page),
-            )
+            await _send_or_edit_admin_message(cb, "ℹ️ Нет платежей для повтора активации. Нечего запускать повторно.", _user_manage_kb(uid, page))
             await cb.answer("Нечего повторять")
             return
 
@@ -1872,7 +1869,8 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
             await write_audit_log(ADMIN_ID, "manual_retry_failed", f"target={uid}; payment_id={payment_id}; result={result_code}")
             outcome = "⚠️ Повтор активации не удался"
 
-        await cb.message.answer(
+        await _send_or_edit_admin_message(
+            cb,
             (
                 f"{outcome}\n\n"
                 f"🆔 <code>{uid}</code>\n"
@@ -1881,8 +1879,7 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
                 f"📝 Детали: {escape_html(result_message)}\n\n"
                 "Следующий шаг: обновите карточку; если статус не меняется — проверьте журнал и выдайте доступ вручную."
             ),
-            parse_mode="HTML",
-            reply_markup=_user_manage_kb(uid, page),
+            _user_manage_kb(uid, page),
         )
         await cb.answer("Повтор обработан")
     except ValueError:
@@ -1914,10 +1911,7 @@ async def admin_retry_activation_from_problem(cb: types.CallbackQuery):
         payment_summary = await get_latest_user_payment_summary(uid)
         if not payment_summary:
             await write_audit_log(ADMIN_ID, "manual_retry_noop", f"target={uid}; reason=no_payment; source=problem_activations")
-            await cb.message.answer(
-                "ℹ️ Нет платежей для повтора активации. Нечего запускать повторно.",
-                reply_markup=_user_manage_kb(uid, page, show_retry_activation=False, source="problem_activations"),
-            )
+            await _send_or_edit_admin_message(cb, "ℹ️ Нет платежей для повтора активации. Нечего запускать повторно.", _user_manage_kb(uid, page, show_retry_activation=False, source="problem_activations"))
             await cb.answer("Нечего повторять")
             return
         payment_id = str(payment_summary["payment_id"])
@@ -1947,7 +1941,8 @@ async def admin_retry_activation_from_problem(cb: types.CallbackQuery):
             )
             outcome = "⚠️ Повтор активации не удался"
         show_retry_activation = result_code not in {"already_applied"}
-        await cb.message.answer(
+        await _send_or_edit_admin_message(
+            cb,
             (
                 f"{outcome}\n\n"
                 f"🆔 <code>{uid}</code>\n"
@@ -1955,8 +1950,7 @@ async def admin_retry_activation_from_problem(cb: types.CallbackQuery):
                 f"🧩 Результат: <b>{escape_html(result_code)}</b>\n"
                 f"📝 Детали: {escape_html(result_message)}"
             ),
-            parse_mode="HTML",
-            reply_markup=_user_manage_kb(uid, page, show_retry_activation=show_retry_activation, source="problem_activations"),
+            _user_manage_kb(uid, page, show_retry_activation=show_retry_activation, source="problem_activations"),
         )
         await cb.answer("Повтор обработан")
     except Exception as error:
@@ -1983,15 +1977,15 @@ async def admin_device_delete_btn(cb: types.CallbackQuery):
         _make_token_action_key("device_delete", token),
         {"action": "device_delete", "target": uid, "device_num": device_num, "page": page, "source": source, "issued_at": utc_now_naive().isoformat()},
     )
-    await cb.message.answer(
+    await _send_or_edit_admin_message(
+        cb,
         (
             "⚠️ <b>Подтвердите удаление устройства</b>\n\n"
             f"Пользователь: <code>{uid}</code>\n"
             f"Устройство: <b>{device_num}</b>\n\n"
             "Будет удалён только выбранный peer."
         ),
-        parse_mode="HTML",
-        reply_markup=types.InlineKeyboardMarkup(
+        types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"{CB_CONFIRM_DEVICE_DELETE}:{token}")],
                 [types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"{CB_CANCEL_DEVICE_DELETE}:{token}")],
@@ -2028,7 +2022,7 @@ async def confirm_device_delete(cb: types.CallbackQuery):
             f"target={uid}; device_num={device_num}; status={result['status']}; removed_runtime={int(result.get('removed_runtime', False))}",
         )
         if result["status"] == "not_found":
-            await cb.message.answer(
+            await _send_or_edit_admin_message(cb, 
                 (
                     "ℹ️ <b>Устройство уже отсутствует</b>\n\n"
                     f"🆔 <code>{uid}</code>\n"
@@ -2040,7 +2034,7 @@ async def confirm_device_delete(cb: types.CallbackQuery):
             )
             await cb.answer("Нечего удалять")
             return
-        await cb.message.answer(
+        await _send_or_edit_admin_message(cb, 
             (
                 "✅ <b>Устройство удалено</b>\n\n"
                 f"🆔 <code>{uid}</code>\n"
@@ -2066,7 +2060,7 @@ async def cancel_device_delete(cb: types.CallbackQuery):
         await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
         return
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("device_delete", token))
-    await cb.message.answer("❌ Удаление устройства отменено")
+    await _send_or_edit_admin_message(cb, "❌ Удаление устройства отменено", types.InlineKeyboardMarkup(inline_keyboard=[]))
     await cb.answer("Отменено")
 
 
@@ -2089,7 +2083,7 @@ async def admin_device_reissue_btn(cb: types.CallbackQuery):
         _make_token_action_key("device_reissue", token),
         {"action": "device_reissue", "target": uid, "device_num": device_num, "page": page, "source": source, "issued_at": utc_now_naive().isoformat()},
     )
-    await cb.message.answer(
+    await _send_or_edit_admin_message(cb, 
         (
             "⚠️ <b>Подтвердите перевыпуск конфига устройства</b>\n\n"
             f"Пользователь: <code>{uid}</code>\n"
@@ -2130,7 +2124,7 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
         result = await reissue_user_device(uid, device_num)
         await write_audit_log(ADMIN_ID, "admin_device_reissue", f"target={uid}; device_num={device_num}; status={result['status']}")
         if result["status"] == "not_found":
-            await cb.message.answer(
+            await _send_or_edit_admin_message(cb, 
                 (
                     "ℹ️ <b>Перевыпуск не требуется</b>\n\n"
                     f"🆔 <code>{uid}</code>\n"
@@ -2142,7 +2136,7 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
             )
             await cb.answer("Нечего перевыпускать")
             return
-        await cb.message.answer(
+        await _send_or_edit_admin_message(cb, 
             (
                 "♻️ <b>Конфиг устройства перевыпущен</b>\n\n"
                 f"🆔 <code>{uid}</code>\n"
@@ -2169,7 +2163,7 @@ async def cancel_device_reissue(cb: types.CallbackQuery):
         await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
         return
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("device_reissue", token))
-    await cb.message.answer("❌ Перевыпуск устройства отменён")
+    await _send_or_edit_admin_message(cb, "❌ Перевыпуск устройства отменён", types.InlineKeyboardMarkup(inline_keyboard=[]))
     await cb.answer("Отменено")
 
 
@@ -2191,7 +2185,7 @@ async def admin_revoke_btn(cb: types.CallbackQuery):
         _make_token_action_key("revoke", token),
         {"action": "revoke", "target": uid, "page": page, "source": source, "issued_at": utc_now_naive().isoformat()},
     )
-    await cb.message.answer(
+    await _send_or_edit_admin_message(cb, 
         (
             "⚠️ <b>Подтвердите отключение доступа</b>\n\n"
             f"Пользователь: <code>{uid}</code>"
@@ -2228,7 +2222,7 @@ async def confirm_revoke(cb: types.CallbackQuery):
     try:
         removed = await revoke_user_access(uid)
         await write_audit_log(ADMIN_ID, "admin_revoke", f"target={uid}; removed={removed}")
-        await cb.message.answer(
+        await _send_or_edit_admin_message(cb, 
             (
                 f"⛔ <b>Доступ отключён</b>\n\n"
                 f"🆔 <code>{uid}</code>\n"
@@ -2254,7 +2248,7 @@ async def cancel_revoke(cb: types.CallbackQuery):
         await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
         return
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("revoke", token))
-    await cb.message.answer("❌ Отключение отменено")
+    await _send_or_edit_admin_message(cb, "❌ Отключение отменено", types.InlineKeyboardMarkup(inline_keyboard=[]))
     await cb.answer("Отменено")
 
 
@@ -2276,7 +2270,7 @@ async def admin_del_user(cb: types.CallbackQuery):
         _make_token_action_key("delete_user", token),
         {"action": "delete_user", "target": uid, "page": page, "source": source, "issued_at": utc_now_naive().isoformat()},
     )
-    await cb.message.answer(
+    await _send_or_edit_admin_message(cb, 
         (
             "⚠️ <b>Подтвердите полное удаление пользователя</b>\n\n"
             f"Пользователь: <code>{uid}</code>"
@@ -2313,7 +2307,7 @@ async def confirm_delete_user(cb: types.CallbackQuery):
     try:
         peers_count, _ = await delete_user_everywhere(uid)
         await write_audit_log(ADMIN_ID, "admin_delete_user", f"target={uid}; removed={peers_count}")
-        await cb.message.answer(
+        await _send_or_edit_admin_message(cb, 
             (
                 f"🗑 <b>Пользователь удалён</b>\n\n"
                 f"🆔 <code>{uid}</code>\n"
@@ -2339,7 +2333,7 @@ async def cancel_delete_user(cb: types.CallbackQuery):
         await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
         return
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("delete_user", token))
-    await cb.message.answer("❌ Удаление отменено")
+    await _send_or_edit_admin_message(cb, "❌ Удаление отменено", types.InlineKeyboardMarkup(inline_keyboard=[]))
     await cb.answer("Отменено")
 
 
@@ -2355,7 +2349,7 @@ async def admin_broadcast_btn(cb: types.CallbackQuery):
         BROADCAST_SEGMENT_SELECTION_ACTION_KEY,
         {"action": BROADCAST_SEGMENT_SELECTION_ACTION_KEY},
     )
-    await cb.message.answer(
+    await _send_or_edit_admin_message(cb, 
         (
             "📢 <b>Рассылка</b>\n\n"
             "Сначала выберите сегмент получателей.\n"
@@ -2386,7 +2380,7 @@ async def broadcast_select_segment(cb: types.CallbackQuery):
         await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
         await cb.answer("Некорректный сегмент рассылки. Выберите сегмент заново.", show_alert=True)
         return
-    await cb.message.answer(
+    await _send_or_edit_admin_message(cb, 
         (
             "📢 <b>Рассылка</b>\n\n"
             f"Сегмент: <b>{escape_html(_broadcast_segment_label(segment))}</b>\n"
@@ -2422,7 +2416,7 @@ async def broadcast_confirm(cb: types.CallbackQuery):
         "broadcast_queued",
         f"job_id={job_id}; segment={segment}; expected_total={expected_total}; text_len={len(text)}",
     )
-    await cb.message.answer(
+    await _send_or_edit_admin_message(cb, 
         (
             "📢 <b>Рассылка поставлена в очередь</b>\n\n"
             f"job_id: <code>{job_id}</code>\n"
@@ -2444,7 +2438,7 @@ async def broadcast_cancel(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, BROADCAST_SEGMENT_SELECTION_ACTION_KEY)
     await write_audit_log(ADMIN_ID, "broadcast_cancel", "")
-    await cb.message.answer("❌ Рассылка отменена")
+    await _send_or_edit_admin_message(cb, "❌ Рассылка отменена", types.InlineKeyboardMarkup(inline_keyboard=[]))
     await cb.answer("Отменено")
 
 
@@ -2454,7 +2448,7 @@ async def broadcast_capture_text(message: types.Message):
         return
     text = message.text.strip()
     if not text:
-        await message.answer("Текст пустой. Отправьте сообщение для рассылки или нажмите «Отменить».", reply_markup=get_broadcast_cancel_kb())
+        await message.answer("Текст пустой. Отправьте сообщение для рассылки или нажмите «Отменить».", get_broadcast_cancel_kb())
         return
 
     action = await get_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
@@ -2517,7 +2511,7 @@ async def admin_service_support_start(cb: types.CallbackQuery):
         return
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_SUPPORT_INPUT_ACTION_KEY, {"action": SERVICE_SUPPORT_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите username поддержки (пример: @support).")
+    await _send_or_edit_admin_message(cb, "Введите username поддержки (пример: @support).")
     await cb.answer()
 
 
@@ -2527,7 +2521,7 @@ async def admin_service_download_start(cb: types.CallbackQuery):
         return
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_DOWNLOAD_INPUT_ACTION_KEY, {"action": SERVICE_DOWNLOAD_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите ссылку на загрузку (не пустую).")
+    await _send_or_edit_admin_message(cb, "Введите ссылку на загрузку (не пустую).")
     await cb.answer()
 
 
@@ -2548,7 +2542,7 @@ async def admin_service_invitee_bonus_start(cb: types.CallbackQuery):
         return
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите бонус другу в днях (целое > 0).")
+    await _send_or_edit_admin_message(cb, "Введите бонус другу в днях (целое > 0).")
     await cb.answer()
 
 
@@ -2558,7 +2552,7 @@ async def admin_service_inviter_bonus_start(cb: types.CallbackQuery):
         return
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_INVITER_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_INVITER_BONUS_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите бонус пригласившему в днях (целое > 0).")
+    await _send_or_edit_admin_message(cb, "Введите бонус пригласившему в днях (целое > 0).")
     await cb.answer()
 
 
@@ -2568,7 +2562,7 @@ async def admin_service_ref_recurring_bonus_start(cb: types.CallbackQuery):
         return
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите recurring-бонус пригласившему в днях (целое > 0).")
+    await _send_or_edit_admin_message(cb, "Введите recurring-бонус пригласившему в днях (целое > 0).")
     await cb.answer()
 
 
@@ -2578,7 +2572,7 @@ async def admin_service_ref_recurring_min_start(cb: types.CallbackQuery):
         return
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY, {"action": SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите минимальную длительность покупки для recurring (целое > 0).")
+    await _send_or_edit_admin_message(cb, "Введите минимальную длительность покупки для recurring (целое > 0).")
     await cb.answer()
 
 
@@ -2632,7 +2626,7 @@ async def admin_text_override_view_key(cb: types.CallbackQuery):
         await cb.answer("Неизвестный ключ", show_alert=True)
         return
     text = await get_text(key)
-    await cb.message.answer(
+    await _send_or_edit_admin_message(cb, 
         f"📝 <b>Шаблон: {key}</b>\n\n{text}",
         parse_mode="HTML",
         reply_markup=get_admin_text_override_item_kb(key),
@@ -2649,7 +2643,7 @@ async def admin_text_override_view_key_prefixed(cb: types.CallbackQuery):
         await cb.answer("Ключ недоступен", show_alert=True)
         return
     text = await get_text(key)
-    await cb.message.answer(
+    await _send_or_edit_admin_message(cb, 
         f"📝 <b>Шаблон: {key}</b>\n\n{text}",
         parse_mode="HTML",
         reply_markup=get_admin_text_override_item_kb(key),
@@ -2667,7 +2661,7 @@ async def admin_text_override_set_start(cb: types.CallbackQuery):
         await cb.answer("Ключ недоступен", show_alert=True)
         return
     await set_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY, {"action": TEXT_OVERRIDE_INPUT_ACTION_KEY, "key": key})
-    await cb.message.answer(f"Отправьте новый текст для <b>{key}</b>.", parse_mode="HTML")
+    await _send_or_edit_admin_message(cb, f"Отправьте новый текст для <b>{key}</b>.")
     await cb.answer()
 
 
@@ -2681,7 +2675,7 @@ async def admin_text_override_reset(cb: types.CallbackQuery):
         return
     await reset_text_override(key)
     await write_audit_log(ADMIN_ID, "admin_text_override_reset", f"key={key}")
-    await cb.message.answer(
+    await _send_or_edit_admin_message(cb, 
         f"✅ Сброшен шаблон: <b>{key}</b>\n\n{TEXT_DEFAULTS.get(key, '')}",
         parse_mode="HTML",
         reply_markup=get_admin_text_override_item_kb(key),
@@ -2758,7 +2752,7 @@ async def admin_promocodes_create_start(cb: types.CallbackQuery):
         return
     await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY, {"action": PROMO_CREATE_INPUT_ACTION_KEY})
-    await cb.message.answer("Формат: CODE DAYS [MAX]")
+    await _send_or_edit_admin_message(cb, "Формат: CODE DAYS [MAX]")
     await cb.answer()
 
 
@@ -2768,7 +2762,7 @@ async def admin_promocodes_disable_start(cb: types.CallbackQuery):
         return
     await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY, {"action": PROMO_DISABLE_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите CODE для отключения")
+    await _send_or_edit_admin_message(cb, "Введите CODE для отключения")
     await cb.answer()
 
 
@@ -2798,7 +2792,7 @@ async def admin_payment_lookup_capture_input(message: types.Message):
         await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
         payment_summary = await get_payment_summary_by_charge_id(raw)
         if not payment_summary:
-            await message.answer("Платёж не найден.", reply_markup=get_admin_payments_kb())
+            await message.answer("Платёж не найден.", get_admin_payments_kb())
             return
         await message.answer(
             _render_payment_lookup_text(payment_summary),
@@ -2815,7 +2809,7 @@ async def admin_payment_lookup_capture_input(message: types.Message):
         uid = int(raw)
         payment_summary = await get_latest_user_payment_summary(uid)
         if not payment_summary:
-            await message.answer("Платежей не найдено.", reply_markup=get_admin_payments_kb())
+            await message.answer("Платежей не найдено.", get_admin_payments_kb())
             return
         await message.answer(
             _render_payment_lookup_text(payment_summary),
@@ -2844,10 +2838,10 @@ async def admin_promo_capture_input(message: types.Message):
             created = await create_promo_code(code, days, max_activations, created_by=message.from_user.id)
             await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
             if not created:
-                await message.answer("⚠️ Такой промокод уже существует.", reply_markup=get_admin_promocodes_kb())
+                await message.answer("⚠️ Такой промокод уже существует.", get_admin_promocodes_kb())
                 return
             await write_audit_log(message.from_user.id, "promo_created", f"code={code}; days={days}; max={max_activations or 0}")
-            await message.answer(f"✅ Промокод <code>{code}</code> создан.", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
+            await message.answer(f"✅ Промокод <code>{code}</code> создан.", get_admin_promocodes_kb())
         except ValueError:
             await message.answer("Ошибка формата. Формат: CODE DAYS [MAX]")
         return
@@ -2860,10 +2854,10 @@ async def admin_promo_capture_input(message: types.Message):
         disabled = await disable_promo_code(code)
         await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
         if not disabled:
-            await message.answer("⚠️ Промокод не найден или уже выключен.", reply_markup=get_admin_promocodes_kb())
+            await message.answer("⚠️ Промокод не найден или уже выключен.", get_admin_promocodes_kb())
             return
         await write_audit_log(message.from_user.id, "promo_disabled", f"code={code}")
-        await message.answer(f"✅ Промокод <code>{code}</code> отключён.", parse_mode="HTML", reply_markup=get_admin_promocodes_kb())
+        await message.answer(f"✅ Промокод <code>{code}</code> отключён.", get_admin_promocodes_kb())
 
 
 @router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingServiceSettingsInput())
@@ -2931,12 +2925,12 @@ async def admin_text_override_capture_input(message: types.Message):
         return
     valid, error = await validate_text_template(key, value)
     if not valid:
-        await message.answer(f"Шаблон не сохранён: {escape_html(error)}", parse_mode="HTML")
+        await message.answer(f"Шаблон не сохранён: {escape_html(error)}")
         return
     await set_text_override(key, value, updated_by=ADMIN_ID)
     await clear_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY)
     await write_audit_log(ADMIN_ID, "admin_text_override_set", f"key={key}")
-    await message.answer(f"✅ Сохранено: <b>{key}</b>", parse_mode="HTML", reply_markup=get_admin_text_override_item_kb(key))
+    await message.answer(f"✅ Сохранено: <b>{key}</b>", get_admin_text_override_item_kb(key))
 
 
 @router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingNetworkPolicyInput())
@@ -2978,7 +2972,7 @@ async def give_manual(message: types.Message, command: CommandObject):
         await message.answer("⏳ Слишком частый вызов /give")
         return
     if not command.args:
-        await message.answer("Формат: <code>/give ID [ДНИ]</code>\nПо умолчанию: 30 дней", parse_mode="HTML")
+        await message.answer("Формат: <code>/give ID [ДНИ]</code>\nПо умолчанию: 30 дней")
         return
     try:
         parts = command.args.split()
@@ -3000,7 +2994,7 @@ async def give_manual(message: types.Message, command: CommandObject):
         if not notified:
             await message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.")
     except ValueError:
-        await message.answer("Ошибка формата. Пример: <code>/give 123456789 30</code> или <code>/give 123456789</code>", parse_mode="HTML")
+        await message.answer("Ошибка формата. Пример: <code>/give 123456789 30</code> или <code>/give 123456789</code>")
     except Exception as e:
         logger.exception("Ошибка /give: %s", e)
         await message.answer("❌ Не удалось выдать доступ.")
@@ -3011,7 +3005,7 @@ async def promo_create_cmd(message: types.Message, command: CommandObject):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     if not command.args:
-        await message.answer("Формат: <code>/promo_create CODE DAYS [MAX]</code>", parse_mode="HTML")
+        await message.answer("Формат: <code>/promo_create CODE DAYS [MAX]</code>")
         return
     try:
         parts = command.args.split()
@@ -3028,9 +3022,9 @@ async def promo_create_cmd(message: types.Message, command: CommandObject):
             return
         await write_audit_log(message.from_user.id, "promo_created", f"code={code}; days={days}; max={max_activations or 0}")
         max_text = str(max_activations) if max_activations is not None else "∞"
-        await message.answer(f"✅ Промокод <code>{code}</code> создан: +{days} дней, лимит: {max_text}.", parse_mode="HTML")
+        await message.answer(f"✅ Промокод <code>{code}</code> создан: +{days} дней, лимит: {max_text}.")
     except ValueError:
-        await message.answer("Ошибка формата. Пример: <code>/promo_create SPRING10 10 50</code>", parse_mode="HTML")
+        await message.answer("Ошибка формата. Пример: <code>/promo_create SPRING10 10 50</code>")
     except Exception as e:
         logger.exception("Ошибка /promo_create: %s", e)
         await message.answer("❌ Не удалось создать промокод.")
@@ -3055,7 +3049,7 @@ async def promo_list_cmd(message: types.Message, command: CommandObject):
         max_text = str(max_activations) if max_activations is not None else "∞"
         status = "on" if int(is_active) == 1 else "off"
         lines.append(f"• <code>{code}</code> | +{int(days)}д | {int(used_count)}/{max_text} | {status}")
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("promo_disable"), IsAdmin())
@@ -3064,7 +3058,7 @@ async def promo_disable_cmd(message: types.Message, command: CommandObject):
     await _clear_service_settings_pending()
     code = normalize_promo_code(command.args or "")
     if not code:
-        await message.answer("Формат: <code>/promo_disable CODE</code>", parse_mode="HTML")
+        await message.answer("Формат: <code>/promo_disable CODE</code>")
         return
     try:
         disabled = await disable_promo_code(code)
@@ -3072,7 +3066,7 @@ async def promo_disable_cmd(message: types.Message, command: CommandObject):
             await message.answer("⚠️ Промокод не найден или уже выключен.")
             return
         await write_audit_log(message.from_user.id, "promo_disabled", f"code={code}")
-        await message.answer(f"✅ Промокод <code>{code}</code> отключён.", parse_mode="HTML")
+        await message.answer(f"✅ Промокод <code>{code}</code> отключён.")
     except Exception as e:
         logger.exception("Ошибка /promo_disable: %s", e)
         await message.answer("❌ Не удалось отключить промокод.")
@@ -3083,7 +3077,7 @@ async def revoke_user_cmd(message: types.Message, command: CommandObject):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     if not command.args:
-        await message.answer("Формат: <code>/revoke ID</code>", parse_mode="HTML")
+        await message.answer("Формат: <code>/revoke ID</code>")
         return
     try:
         uid = int(command.args)
@@ -3116,7 +3110,7 @@ async def list_users_cmd(message: types.Message):
         status_text, until_text = get_status_text(sub_until)
         tg_username, _ = await get_user_meta(uid)
         lines.append(f"• <code>{uid}</code> — {format_tg_username(tg_username)} — {status_text} — {until_text}")
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("finduser"), IsAdmin())
@@ -3125,7 +3119,7 @@ async def find_user_cmd(message: types.Message, command: CommandObject):
     await _clear_service_settings_pending()
     query = (command.args or "").strip()
     if not query:
-        await message.answer("Формат: <code>/finduser QUERY</code>\nQUERY: user_id или username/@username", parse_mode="HTML")
+        await message.answer("Формат: <code>/finduser QUERY</code>\nQUERY: user_id или username/@username")
         return
     if query.isdigit():
         uid = int(query)
@@ -3185,14 +3179,14 @@ async def payinfo_cmd(message: types.Message, command: CommandObject):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     if not command.args or not command.args.strip().isdigit():
-        await message.answer("Формат: <code>/payinfo USER_ID</code>", parse_mode="HTML")
+        await message.answer("Формат: <code>/payinfo USER_ID</code>")
         return
     uid = int(command.args.strip())
     payment_summary = await get_latest_user_payment_summary(uid)
     if not payment_summary:
         await message.answer("Платежей не найдено.")
         return
-    await message.answer(_render_payment_lookup_text(payment_summary), parse_mode="HTML", reply_markup=get_open_user_card_kb(uid))
+    await message.answer(_render_payment_lookup_text(payment_summary), get_open_user_card_kb(uid))
 
 
 @router.message(Command("findpay"), IsAdmin())
@@ -3201,7 +3195,7 @@ async def findpay_cmd(message: types.Message, command: CommandObject):
     await _clear_service_settings_pending()
     charge_id = (command.args or "").strip()
     if not charge_id:
-        await message.answer("Формат: <code>/findpay CHARGE_ID</code>", parse_mode="HTML")
+        await message.answer("Формат: <code>/findpay CHARGE_ID</code>")
         return
     payment_summary = await get_payment_summary_by_charge_id(charge_id)
     if not payment_summary:
@@ -3218,7 +3212,7 @@ async def findpay_cmd(message: types.Message, command: CommandObject):
 async def stats_cmd(message: types.Message):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await message.answer(await build_stats_text(), parse_mode="HTML")
+    await message.answer(await build_stats_text())
 
 
 @router.message(Command("audit"), IsAdmin())
@@ -3243,7 +3237,7 @@ async def audit_cmd(message: types.Message, command: CommandObject):
                 f"{_format_optional_iso_moscow(str(created_at))}\n"
                 f"{details or '-'}\n"
             )
-        await message.answer("\n".join(lines), parse_mode="HTML")
+        await message.answer("\n".join(lines))
     except Exception as e:
         logger.exception("Ошибка /audit: %s", e)
         await message.answer("❌ Не удалось получить audit log.")
@@ -3254,7 +3248,7 @@ async def sync_awg_cmd(message: types.Message):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     try:
-        await message.answer(await build_awg_sync_text(), parse_mode="HTML")
+        await message.answer(await build_awg_sync_text())
     except Exception as e:
         logger.exception("Ошибка /sync_awg: %s", e)
         await message.answer("❌ Ошибка проверки AWG.")
@@ -3278,7 +3272,7 @@ async def broadcast_prepare(message: types.Message, command: CommandObject):
         return
     text = command.args.strip()
     if not text:
-        await message.answer("Текст пустой. Отправьте сообщение после <code>/send</code>.", parse_mode="HTML")
+        await message.answer("Текст пустой. Отправьте сообщение после <code>/send</code>.")
         return
     segment = "all"
     await set_pending_broadcast(ADMIN_ID, text, segment=segment)
@@ -3300,7 +3294,7 @@ async def broadcast_prepare(message: types.Message, command: CommandObject):
 async def health_cmd(message: types.Message):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await message.answer(await build_runtime_smokecheck_text(), parse_mode="HTML")
+    await message.answer(await build_runtime_smokecheck_text())
 
 
 @router.message(Command("maintenance_status"), IsAdmin())
@@ -3345,7 +3339,7 @@ async def maintenance_off_cmd(message: types.Message):
 async def netpolicy_cmd(message: types.Message):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await message.answer(await _render_network_policy_text(), parse_mode="HTML", reply_markup=get_admin_network_policy_kb())
+    await message.answer(await _render_network_policy_text(), get_admin_network_policy_kb())
 
 
 @router.message(Command("denylist_status"), IsAdmin())
@@ -3382,4 +3376,4 @@ async def denylist_sync_cmd(message: types.Message):
 async def ref_stats_cmd(message: types.Message):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
-    await message.answer(await build_ref_stats_text(), parse_mode="HTML")
+    await message.answer(await build_ref_stats_text())
