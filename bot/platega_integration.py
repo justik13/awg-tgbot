@@ -72,7 +72,7 @@ class PlategaPaymentService:
             payment_method: Payment method constant (default: SBP QR)
         
         Returns:
-            dict with transaction_id, redirect_url, status, expires_in
+            dict with transaction_id, payment_url, status, expires_in
             
         Raises:
             RuntimeError: If plategaio is not available or API call fails
@@ -99,7 +99,7 @@ class PlategaPaymentService:
             
             return {
                 "transaction_id": response.transaction_id,
-                "redirect_url": response.redirect,
+                "payment_url": response.redirect or "",
                 "status": response.status,
                 "expires_in": response.expires_in,
             }
