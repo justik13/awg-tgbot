@@ -90,12 +90,11 @@ dp.message.middleware(DuplicateMessageGuardMiddleware())
 dp.callback_query.middleware(DuplicateCallbackGuardMiddleware())
 
 
-@fallback_router.callback_query()
+@fallback_router.callback_query(lambda c: not c.data.startswith(("config_", "open_", "show_", "user_", "support_", "promo_", "pay_", "platega_")))
 async def fallback_callback(cb: types.CallbackQuery) -> None:
-    if is_admin_callback_data(cb.data):
-        await cb.answer("Нет доступа", show_alert=True)
-        return
-    await cb.answer(await get_text("unknown_callback_action"))
+    # Логируем неизвестный callback для отладки
+    logger.debug("Unknown callback from user=%s: %s", cb.from_user.id, cb.data)
+    await cb.answer(show_alert=False)  # Тихий ответ без текста
 
 
 dp.include_router(payments_router)

@@ -9,7 +9,22 @@ import config
 from aiogram import F, Router, types
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import BaseFilter, Command, CommandObject
+from aiogram.filters import Command, CommandObject
+
+from filters import (
+    IsAdmin,
+    AdminHasPendingBroadcastInput,
+    AdminHasPendingPriceInput,
+    AdminHasPendingPaymentLookupInput,
+    AdminHasPendingPromoInput,
+    AdminHasPendingNetworkPolicyInput,
+    AdminHasPendingServiceSettingsInput,
+    AdminHasPendingTextOverrideInput,
+)
+
+# Aliases for backward compatibility with existing handlers
+HasPendingBroadcastInput = AdminHasPendingBroadcastInput
+HasPendingPromoInput = AdminHasPendingPromoInput
 
 from awg_backend import (
     check_awg_container, count_free_ip_slots, delete_user_everywhere,
@@ -292,71 +307,10 @@ def admin_command_limited(action: str, actor_id: int = ADMIN_ID) -> bool:
     key = f"{actor_id}:{action}"
     last = admin_command_rate_limit.get(key)
     admin_command_rate_limit[key] = now
-    return bool(last and (now - last).total_seconds() < ADMIN_COMMAND_COOLDOWN_SECONDS)
-
-
-class IsAdmin(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        return bool(message.from_user and message.from_user.id == ADMIN_ID)
-
-
-class HasPendingBroadcastInput(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        pending_action = await get_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
-        return bool(pending_action)
-
-
-class HasPendingPriceInput(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        pending_action = await get_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY)
-        return bool(pending_action)
-
-
-class HasPendingPaymentLookupInput(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        pending_charge = await get_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
-        pending_user = await get_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
-        return bool(pending_charge or pending_user)
-
-
-class HasPendingPromoInput(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        pending_create = await get_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
-        pending_disable = await get_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
-        return bool(pending_create or pending_disable)
-
-
-class HasPendingNetworkPolicyInput(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        keys = (
-            DENYLIST_DOMAINS_INPUT_ACTION_KEY,
-            DENYLIST_CIDRS_INPUT_ACTION_KEY,
-        )
-        for key in keys:
-            if await get_pending_admin_action(ADMIN_ID, key):
-                return True
-        return False
-
-
-class HasPendingServiceSettingsInput(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        keys = (
-            SERVICE_SUPPORT_INPUT_ACTION_KEY,
-            SERVICE_DOWNLOAD_INPUT_ACTION_KEY,
-            SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY,
-            SERVICE_INVITER_BONUS_INPUT_ACTION_KEY,
-            SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY,
-            SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY,
-        )
-        for key in keys:
-            if await get_pending_admin_action(ADMIN_ID, key):
-                return True
-        return False
-
-
-class HasPendingTextOverrideInput(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        return bool(await get_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY))
+    is_limited = bool(last and (now - last).total_seconds() < ADMIN_COMMAND_COOLDOWN_SECONDS)
+    if is_limited:
+        logger.debug("Admin rate limit hit: action=%s actor=%s", action, actor_id)
+    return is_limited
 
 
 async def _clear_network_policy_pending() -> None:
@@ -846,15 +800,24 @@ async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_
     if message is not None and hasattr(message, "edit_text"):
         try:
             await message.edit_text(text, reply_markup=reply_markup)
+            await cb.answer(show_alert=False)
             return
         except TelegramBadRequest as error:
-            if "message is not modified" in str(error).lower():
+            error_str = str(error).lower()
+            if "message is not modified" in error_str:
+                await cb.answer(show_alert=False)
                 return
-            logger.debug("Admin screen edit fallback due to TelegramBadRequest: %s", error)
+            if "message to edit not found" in error_str or "have no rights" in error_str:
+                pass
+            else:
+                logger.debug("Admin screen edit fallback due to TelegramBadRequest: %s", error)
         except Exception as error:
             logger.warning("Admin screen edit fallback due to unexpected error: %s", error)
     if message is not None:
-        await message.answer(text, reply_markup=reply_markup)
+        try:
+            await message.answer(text, reply_markup=reply_markup)
+        except TelegramBadRequest as send_error:
+            logger.warning("Failed to send fallback admin message: %s", send_error)
 
 
 async def _render_network_policy_text() -> str:
@@ -1115,7 +1078,11 @@ async def _build_admin_device_traffic_lines(uid: int) -> list[str]:
     return lines
 
 
-async def _render_users_page(target_message: types.Message, page: int) -> None:
+async def _render_users_page(target_message: types.Message | None, page: int) -> None:
+    if target_message is None:
+        logger.debug("_render_users_page: message is None, skipping")
+        return
+    total_users = (await fetchone("SELECT COUNT(*) FROM users"))[0]
     total_users = (await fetchone("SELECT COUNT(*) FROM users"))[0]
     if total_users == 0:
         await target_message.answer("Список пользователей пуст.")
@@ -1313,7 +1280,10 @@ async def admin_payments_screen(cb: types.CallbackQuery):
     await cb.answer(show_alert=False)
 
 
-async def _render_problem_activations_screen(target_message: types.Message, page: int) -> None:
+async def _render_problem_activations_screen(target_message: types.Message | None, page: int) -> None:
+    if target_message is None:
+        logger.debug("_render_problem_activations_screen: message is None, skipping")
+        return
     total = await count_problematic_activations()
     total_pages = max(1, (total + ADMIN_PROBLEM_ACTIVATIONS_PAGE_SIZE - 1) // ADMIN_PROBLEM_ACTIVATIONS_PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
@@ -1479,7 +1449,7 @@ async def admin_platega_prices_start_edit(cb: types.CallbackQuery):
     await cb.answer(show_alert=False)
 
 
-@router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingPriceInput())
+@router.message(IsAdmin(), F.text, ~F.text.startswith("/"), AdminHasPendingPriceInput())
 async def admin_prices_capture_input(message: types.Message):
     action = await get_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY)
     if not action:
@@ -1765,7 +1735,8 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
             await cb.answer("Нужно подтверждение", show_alert=False)
             return
         if admin_command_limited(f"admin_add_{days}", cb.from_user.id):
-            await cb.answer("Слишком часто", show_alert=False)
+            logger.debug("Admin add days rate limited: user=%s days=%s", uid, days)
+            await _send_or_edit_admin_message(cb, "⏳ Подождите немного перед повторным действием.", get_admin_users_back_kb(page))
             return
         new_until = await issue_subscription(uid, days)
         notified = await notify_user_subscription_granted(cb.bot, uid, days, new_until)
@@ -1807,7 +1778,8 @@ async def admin_add_days_confirm(cb: types.CallbackQuery):
         await cb.answer("Некорректные параметры", show_alert=False)
         return
     if admin_command_limited(f"admin_add_{days}", cb.from_user.id):
-        await cb.answer("Слишком часто", show_alert=False)
+        logger.debug("Admin add days confirm rate limited: user=%s days=%s", uid, days)
+        await _send_or_edit_admin_message(cb, "⏳ Подождите немного перед повторным действием.", get_admin_users_back_kb(page))
         return
     new_until = await issue_subscription(uid, days)
     notified = await notify_user_subscription_granted(cb.bot, uid, days, new_until)
@@ -1847,7 +1819,8 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
         uid = int(uid_raw)
         page = int(page_raw)
         if admin_command_limited(f"admin_retry_activation_{uid}", cb.from_user.id):
-            await cb.answer("Слишком часто: подождите перед повтором активации.", show_alert=False)
+            logger.debug("Admin retry activation rate limited: user=%s", uid)
+            await _send_or_edit_admin_message(cb, "⏳ Подождите немного перед повторной попыткой.", _user_manage_kb(uid, page))
             return
 
         payment_summary = await get_latest_user_payment_summary(uid)
@@ -1907,7 +1880,8 @@ async def admin_retry_activation_from_problem(cb: types.CallbackQuery):
         return
 
     if admin_command_limited(f"admin_retry_activation_problem_{uid}", cb.from_user.id):
-        await cb.answer("Слишком часто: подождите перед повтором активации.", show_alert=False)
+        logger.debug("Admin retry activation problem rate limited: user=%s", uid)
+        await _send_or_edit_admin_message(cb, "⏳ Подождите немного перед повторной попыткой.", _user_manage_kb(uid, page, show_retry_activation=False, source="problem_activations"))
         return
 
     try:

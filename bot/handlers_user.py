@@ -2,7 +2,7 @@ import re
 
 from aiogram import F, Router, types
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import BaseFilter, Command, CommandObject
+from aiogram.filters import Command, CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
@@ -15,6 +15,7 @@ from config import (
     get_support_username,
     maybe_set_support_username,
 )
+from filters import UserHasPendingPromoInput, USER_PROMO_INPUT_ACTION_KEY
 from awg_backend import get_awg_peers
 from awg_backend import issue_subscription
 from awg_backend import reissue_user_device
@@ -99,13 +100,6 @@ from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_e
 from payments import clear_pending_invoice_for_user
 
 router = Router()
-USER_PROMO_INPUT_ACTION_KEY = "user_promo_input"
-
-
-class HasPendingPromoInput(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        pending_action = await get_pending_admin_action(message.from_user.id, USER_PROMO_INPUT_ACTION_KEY)
-        return bool(pending_action)
 
 
 def _config_filename_prefix() -> str:
@@ -375,22 +369,32 @@ async def _send_or_edit_user_screen(
             if disable_web_page_preview is not None:
                 kwargs["disable_web_page_preview"] = disable_web_page_preview
             await message.edit_text(text, **kwargs)
+            await cb.answer(show_alert=False)  # Подтверждаем успешное редактирование
             return
         except TelegramBadRequest as error:
             error_str = str(error).lower()
-            if "message is not modified" in error_str or "message to edit not found" in error_str:
-                # Игнорируем ошибки редактирования - пользователь уже видит актуальные данные
-                await cb.answer("Обновлено", show_alert=False)
+            # Игнорируем штатные ошибки редактирования
+            if "message is not modified" in error_str:
+                await cb.answer(show_alert=False)
                 return
-            logger.debug("User screen edit fallback due to TelegramBadRequest: %s", error)
+            if "message to edit not found" in error_str or "have no rights" in error_str:
+                # Сообщение удалено или бот не имеет прав - отправляем новое
+                pass
+            else:
+                logger.debug("Edit failed, falling back to send: %s", error)
         except Exception as error:
-            logger.warning("User screen edit fallback due to unexpected error: %s", error)
-    # Fallback только если редактирование невозможно (сообщение удалено или недоступно)
+            logger.warning("Unexpected edit error, falling back: %s", error)
+    
+    # Fallback: отправляем новое сообщение
     if message is not None:
-        kwargs = {"parse_mode": "HTML", "reply_markup": reply_markup}
-        if disable_web_page_preview is not None:
-            kwargs["disable_web_page_preview"] = disable_web_page_preview
-        await message.answer(text, **kwargs)
+        try:
+            kwargs = {"parse_mode": "HTML", "reply_markup": reply_markup}
+            if disable_web_page_preview is not None:
+                kwargs["disable_web_page_preview"] = disable_web_page_preview
+            await message.answer(text, **kwargs)
+        except TelegramBadRequest as send_error:
+            # Если даже отправить не удалось - логируем и молчим
+            logger.warning("Failed to send fallback message: %s", send_error)
 
 
 async def _clear_promo_input_pending(user_id: int) -> None:
@@ -673,6 +677,10 @@ async def send_selected_device_conf(cb: types.CallbackQuery):
 
     _, device_num, cfg, _vpn_key = selected
     if cfg and cfg.strip():
+        if cb.message is None:
+            logger.warning("Cannot send document: message is None for user=%s key_id=%s", cb.from_user.id, key_id)
+            await cb.answer("Ошибка: сообщение недоступно", show_alert=True)
+            return
         await cb.message.answer_document(
             types.BufferedInputFile(
                 cfg.encode("utf-8"),
@@ -698,11 +706,18 @@ async def open_configs_from_profile(cb: types.CallbackQuery):
     if cb.from_user.id == ADMIN_ID:
         maybe_set_support_username(cb.from_user.username)
     await cb.answer(show_alert=False)
-    if not cb.message:
+    if cb.message is None:
+        # Сообщение недоступно (удалено или очень старое)
+        logger.debug("Callback received but message is None for user=%s data=%s", cb.from_user.id, cb.data)
         try:
-            await cb.message.answer(await get_text("callback_message_unavailable"))
-        except Exception:
-            pass
+            await cb.bot.send_message(
+                cb.from_user.id,
+                await get_text("start"),
+                parse_mode="HTML",
+                reply_markup=get_main_menu(cb.from_user.id, ADMIN_ID),
+            )
+        except Exception as e:
+            logger.warning("Failed to send fallback message: %s", e)
         return
     text, markup = await _render_configs_menu_screen(cb.from_user.id)
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
@@ -714,6 +729,18 @@ async def open_profile_callback(cb: types.CallbackQuery):
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer(show_alert=False)
+    if cb.message is None:
+        logger.debug("Profile callback: message is None for user=%s", cb.from_user.id)
+        try:
+            await cb.bot.send_message(
+                cb.from_user.id,
+                await get_text("start"),
+                parse_mode="HTML",
+                reply_markup=get_main_menu(cb.from_user.id, ADMIN_ID),
+            )
+        except Exception as e:
+            logger.warning("Failed to send fallback message: %s", e)
+        return
     text, markup = await _render_profile_screen(cb.from_user)
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
@@ -724,6 +751,18 @@ async def open_traffic_devices_callback(cb: types.CallbackQuery):
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer(show_alert=False)
+    if cb.message is None:
+        logger.debug("Traffic devices callback: message is None for user=%s", cb.from_user.id)
+        try:
+            await cb.bot.send_message(
+                cb.from_user.id,
+                await get_text("start"),
+                parse_mode="HTML",
+                reply_markup=get_main_menu(cb.from_user.id, ADMIN_ID),
+            )
+        except Exception as e:
+            logger.warning("Failed to send fallback message: %s", e)
+        return
     text, markup = await _render_traffic_devices_screen(cb.from_user.id)
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
@@ -935,8 +974,18 @@ async def show_buy_menu_callback(cb: types.CallbackQuery):
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer(show_alert=False)
-    if not cb.message:
-        await cb.message.answer(await get_text("callback_message_unavailable"))
+    if cb.message is None:
+        # Сообщение недоступно (удалено или очень старое)
+        logger.debug("Callback received but message is None for user=%s data=%s", cb.from_user.id, cb.data)
+        try:
+            await cb.bot.send_message(
+                cb.from_user.id,
+                await get_text("start"),
+                parse_mode="HTML",
+                reply_markup=get_main_menu(cb.from_user.id, ADMIN_ID),
+            )
+        except Exception as e:
+            logger.warning("Failed to send fallback message: %s", e)
         return
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_user_screen(cb, await get_purchase_maintenance_text())
@@ -972,7 +1021,7 @@ async def promo_input_cancel_callback(cb: types.CallbackQuery):
         await _send_or_edit_user_screen(cb, "❌ Ввод промокода отменён.")
 
 
-@router.message(HasPendingPromoInput())
+@router.message(UserHasPendingPromoInput())
 async def promo_input_pending_message(message: types.Message):
     await _handle_promo_input_message(message)
 
