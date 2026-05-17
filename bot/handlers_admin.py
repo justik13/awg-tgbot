@@ -1217,9 +1217,9 @@ async def _send_user_manage_card(
         source=source,
     )
     try:
-        await target_message.edit_text(text=text, reply_markup=markup)
+        await target_message.edit_text(text=text, reply_markup=markup, parse_mode="HTML")
     except TelegramBadRequest:
-        await target_message.answer(text=text, reply_markup=markup)
+        await target_message.answer(text=text, reply_markup=markup, parse_mode="HTML")
 
 
 def build_admin_manual_commands_text() -> str:
@@ -1332,9 +1332,9 @@ async def _render_problem_activations_screen(target_message: types.Message | Non
             items=keyboard_items,
         )
     try:
-        await target_message.edit_text(text=text, reply_markup=markup)
+        await target_message.edit_text(text=text, reply_markup=markup, parse_mode="HTML")
     except TelegramBadRequest:
-        await target_message.answer(text=text, reply_markup=markup)
+        await target_message.answer(text=text, reply_markup=markup, parse_mode="HTML")
 
 
 @router.callback_query(F.data == CB_ADMIN_PROBLEM_ACTIVATIONS)
