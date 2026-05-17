@@ -694,7 +694,10 @@ async def open_configs_from_profile(cb: types.CallbackQuery):
         maybe_set_support_username(cb.from_user.username)
     await cb.answer()
     if not cb.message:
-        await cb.message.answer(await get_text("callback_message_unavailable"))
+        try:
+            await cb.message.answer(await get_text("callback_message_unavailable"))
+        except Exception:
+            pass
         return
     text, markup = await _render_configs_menu_screen(cb.from_user.id)
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
@@ -810,10 +813,12 @@ async def check_activation_status(cb: types.CallbackQuery):
     status = payment_summary["last_provision_status"] or payment_summary["status"]
     if payment_summary["status"] in {"needs_repair", "stuck_manual", "failed"}:
         status = payment_summary["status"]
+    # Если оплата не прошла - показываем кнопки профиля (с кнопкой покупки/продления)
+    reply_markup = get_profile_inline_kb(subscription_active=is_active)
     await _send_or_edit_user_screen(
         cb,
         f"{await get_activation_status_text(status, has_config=has_config)}\n\n{await get_support_short_text()}",
-        reply_markup=get_support_back_kb() if status in {"needs_repair", "stuck_manual", "failed"} else get_profile_inline_kb(subscription_active=is_active),
+        reply_markup=reply_markup,
     )
 
 

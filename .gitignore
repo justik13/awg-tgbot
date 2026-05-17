@@ -6,6 +6,7 @@ __pycache__/
 # Dependencies
 .venv/
 venv/
+node_modules/
 
 # Logs and temp files
 *.log
@@ -21,7 +22,7 @@ venv/
 .vscode/
 .idea/
 
-# Coverage reports
+# Coverage
 .coverage
 coverage/
 htmlcov/
@@ -29,38 +30,16 @@ htmlcov/
 # Python specific
 *.pyo
 *.pyd
-*.so
-*.egg-info/
 .Python
-pip-log.txt
-pip-delete-this-directory.txt
+*.so
 
-# Distribution / packaging
-.Python
-*.so
-.Python
+# Build directories
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
 
-# Pytest
-.pytest_cache/
-
-# Mypy
+# MyPy cache
 .mypy_cache/
-
-# VSCode settings
-.vscode/settings.json
+# Pytest cache
+.pytest_cache/
 ```
