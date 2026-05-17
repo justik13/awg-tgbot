@@ -1739,6 +1739,14 @@ async def admin_manage_user(cb: types.CallbackQuery):
         uid = int(uid_raw)
         page = int(page_raw)
         logger.debug("admin_manage_user: uid=%s, page=%s", uid, page)
+        
+        # Проверяем существование пользователя перед вызовом _send_user_manage_card
+        row = await fetchone("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+        if not row:
+            logger.warning("admin_manage_user: пользователь с uid=%s не найден в БД", uid)
+            await cb.answer(f"❌ Пользователь {uid} не найден в базе данных", show_alert=True)
+            return
+        
         await _send_user_manage_card(cb.message, uid, page)
         await cb.answer("Открыто", show_alert=False)
     except ValueError as e:
