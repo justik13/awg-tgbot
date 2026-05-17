@@ -274,7 +274,7 @@ async def pay_stars_handler(cb: types.CallbackQuery, bot: Bot):
         return
     
     payload = cb.data.split(":", 1)[1]
-    tariff = get_tariffs().get(payload)
+    tariff = get_tariffs_stars().get(payload)
     if not tariff:
         await _send_or_edit_payment_screen(cb, "❌ Ошибка\n\nНеизвестный тариф. Попробуйте выбрать другой.")
         return
