@@ -67,6 +67,7 @@ from ui_constants import (
     CB_SHOW_BUY_MENU, CB_PAY_STARS_PREFIX, CB_PAY_PLATEGA_PREFIX,
     CB_PLATEGA_PAY_PREFIX, CB_PLATEGA_CHECK_PREFIX,
     CB_TARIFF_7, CB_TARIFF_30, CB_TARIFF_90,
+    CB_CHECK_PAYMENT_STATUS, CB_OPEN_SUPPORT, CB_OPEN_CONFIGS, CB_CHECK_ACTIVATION_STATUS,
 )
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 from platega_service import platega_service
@@ -455,7 +456,16 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
 async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
     """Handle Platega payment status check."""
     transaction_id = cb.data.split(":", 1)[1]
-    
+    await _platega_check_status_logic(cb, transaction_id)
+
+
+async def platega_check_status_by_id(cb: types.CallbackQuery, transaction_id: str):
+    """Check Platega payment status by transaction ID (for external calls)."""
+    await _platega_check_status_logic(cb, transaction_id)
+
+
+async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: str):
+    """Internal logic for checking Platega payment status."""
     platega_service = get_platega_service()
     if not platega_service:
         await _send_or_edit_payment_screen(cb, "❌ Сервис оплаты временно недоступен\n\nПопробуйте позже.")
@@ -522,7 +532,16 @@ async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
                 )
         
         elif platega_service.is_pending_status(status):
-            await _send_or_edit_payment_screen(cb, "⏳ Платёж ещё в обработке. Ожидайте подтверждения от банка.")
+            await _send_or_edit_payment_screen(
+                cb, 
+                "⏳ Платёж ещё в обработке. Ожидайте подтверждения от банка.",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="⏱ Проверить статус", callback_data=CB_CHECK_PAYMENT_STATUS)],
+                        [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
+                    ]
+                )
+            )
         
         elif platega_service.is_failed_status(status):
             await update_payment_status(transaction_id, "failed")
