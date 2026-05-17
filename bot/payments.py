@@ -276,6 +276,16 @@ async def pay_stars_handler(cb: types.CallbackQuery, bot: Bot):
     await cb.answer(show_alert=False)
     await clear_pending_invoice_for_user(bot, cb.from_user.id)
     
+    # Проверка на доступность сообщения
+    if cb.message is None:
+        logger.debug("Stars payment: message is None for user=%s", cb.from_user.id)
+        await cb.bot.send_message(
+            cb.from_user.id,
+            "⚠️ Не удалось создать счёт: сообщение недоступно. Попробуйте снова.",
+            reply_markup=get_buy_inline_kb(),
+        )
+        return
+    
     invoice_message = await _send_stars_invoice(
         bot, 
         cb.message.chat.id, 
@@ -353,11 +363,20 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
             days=info["days"],
         )
         
-        await cb.message.edit_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=get_platega_payment_kb(transaction_id, payload, payment_url),
-        )
+        if cb.message is not None:
+            await cb.message.edit_text(
+                text,
+                parse_mode="HTML",
+                reply_markup=get_platega_payment_kb(transaction_id, payload, payment_url),
+            )
+        else:
+            logger.debug("pay_platega_handler: message is None for user=%s", cb.from_user.id)
+            await cb.bot.send_message(
+                cb.from_user.id,
+                text,
+                parse_mode="HTML",
+                reply_markup=get_platega_payment_kb(transaction_id, payload, payment_url),
+            )
         
     except Exception as e:
         logger.exception("Failed to create Platega payment: %s", e)
@@ -454,17 +473,32 @@ async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
             success_text = await get_text("payment_success")
             next_step_text = await get_text("payment_next_step", configs_per_user=CONFIGS_PER_USER)
             
-            await cb.message.edit_text(
-                f"{success_text}\n{next_step_text}",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text="🔑 Подключиться", callback_data=CB_OPEN_CONFIGS)],
-                        [InlineKeyboardButton(text="⏱ Проверить статус активации", callback_data=CB_CHECK_ACTIVATION_STATUS)],
-                        [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
-                    ]
-                ),
-            )
+            if cb.message is not None:
+                await cb.message.edit_text(
+                    f"{success_text}\n{next_step_text}",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [InlineKeyboardButton(text="🔑 Подключиться", callback_data=CB_OPEN_CONFIGS)],
+                            [InlineKeyboardButton(text="⏱ Проверить статус активации", callback_data=CB_CHECK_ACTIVATION_STATUS)],
+                            [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
+                        ]
+                    ),
+                )
+            else:
+                logger.debug("platega_check_status_handler: message is None for user=%s", cb.from_user.id)
+                await cb.bot.send_message(
+                    cb.from_user.id,
+                    f"{success_text}\n{next_step_text}",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [InlineKeyboardButton(text="🔑 Подключиться", callback_data=CB_OPEN_CONFIGS)],
+                            [InlineKeyboardButton(text="⏱ Проверить статус активации", callback_data=CB_CHECK_ACTIVATION_STATUS)],
+                            [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
+                        ]
+                    ),
+                )
         
         elif platega_service.is_pending_status(status):
             await _send_or_edit_payment_screen(cb, "⏳ Платёж ещё в обработке. Ожидайте подтверждения от банка.")
@@ -633,6 +667,17 @@ async def select_payment_method_stars(cb: types.CallbackQuery):
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
     await cb.answer(show_alert=False)
+    
+    if cb.message is None:
+        logger.debug("payment_method_stars: message is None for user=%s", cb.from_user.id)
+        await cb.bot.send_message(
+            cb.from_user.id,
+            "<b>Выбран способ оплаты: Telegram Stars</b>\n\nВыберите тариф:",
+            parse_mode="HTML",
+            reply_markup=get_buy_inline_kb(),
+        )
+        return
+    
     text = (
         "<b>Выбран способ оплаты: Telegram Stars</b>\n\n"
         "Выберите тариф:\n"
@@ -655,6 +700,17 @@ async def select_payment_method_platega(cb: types.CallbackQuery):
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
     await cb.answer(show_alert=False)
+    
+    if cb.message is None:
+        logger.debug("payment_method_platega: message is None for user=%s", cb.from_user.id)
+        await cb.bot.send_message(
+            cb.from_user.id,
+            "<b>Выбран способ оплаты: СБП (QR)</b>\n\nВыберите тариф:",
+            parse_mode="HTML",
+            reply_markup=get_buy_inline_kb(),
+        )
+        return
+    
     text = (
         "<b>Выбран способ оплаты: СБП (QR)</b>\n\n"
         "Способ оплаты: <b>Система Быстрых Платежей</b>\n"
@@ -686,6 +742,17 @@ async def _send_invoice_from_confirm(cb: types.CallbackQuery, bot: Bot, *, callb
         return
     await cb.answer(show_alert=False)
     await clear_pending_invoice_for_user(bot, cb.from_user.id)
+    
+    # Проверка на доступность сообщения
+    if cb.message is None:
+        logger.debug("_send_invoice_from_confirm: message is None for user=%s", cb.from_user.id)
+        await cb.bot.send_message(
+            cb.from_user.id,
+            "⚠️ Не удалось создать счёт: сообщение недоступно. Попробуйте снова.",
+            reply_markup=get_buy_inline_kb(),
+        )
+        return
+    
     invoice_message = await _send_stars_invoice(bot, cb.message.chat.id, payload, title, label, amount)
     remember_pending_invoice(cb.from_user.id, cb.message.chat.id, invoice_message.message_id, payload)
 

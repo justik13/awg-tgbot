@@ -683,6 +683,10 @@ async def send_selected_device_conf(cb: types.CallbackQuery):
 
     _, device_num, cfg, _vpn_key = selected
     if cfg and cfg.strip():
+        if cb.message is None:
+            logger.warning("Cannot send document: message is None for user=%s key_id=%s", cb.from_user.id, key_id)
+            await cb.answer("Ошибка: сообщение недоступно", show_alert=True)
+            return
         await cb.message.answer_document(
             types.BufferedInputFile(
                 cfg.encode("utf-8"),
@@ -731,6 +735,18 @@ async def open_profile_callback(cb: types.CallbackQuery):
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer(show_alert=False)
+    if cb.message is None:
+        logger.debug("Profile callback: message is None for user=%s", cb.from_user.id)
+        try:
+            await cb.bot.send_message(
+                cb.from_user.id,
+                await get_text("start"),
+                parse_mode="HTML",
+                reply_markup=get_main_menu(cb.from_user.id, ADMIN_ID),
+            )
+        except Exception as e:
+            logger.warning("Failed to send fallback message: %s", e)
+        return
     text, markup = await _render_profile_screen(cb.from_user)
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
@@ -741,6 +757,18 @@ async def open_traffic_devices_callback(cb: types.CallbackQuery):
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer(show_alert=False)
+    if cb.message is None:
+        logger.debug("Traffic devices callback: message is None for user=%s", cb.from_user.id)
+        try:
+            await cb.bot.send_message(
+                cb.from_user.id,
+                await get_text("start"),
+                parse_mode="HTML",
+                reply_markup=get_main_menu(cb.from_user.id, ADMIN_ID),
+            )
+        except Exception as e:
+            logger.warning("Failed to send fallback message: %s", e)
+        return
     text, markup = await _render_traffic_devices_screen(cb.from_user.id)
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
