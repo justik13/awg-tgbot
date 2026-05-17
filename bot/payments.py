@@ -352,7 +352,7 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
         
     except Exception as e:
         logger.exception("Failed to create Platega payment: %s", e)
-        await cb.message.answer("Не удалось создать платёж. Попробуйте позже или выберите другой способ оплаты.")
+        await _send_or_edit_payment_screen(cb, "Не удалось создать платёж. Попробуйте позже или выберите другой способ оплаты.")
 
 
 @router.callback_query(F.data.startswith(CB_PLATEGA_PAY_PREFIX))
@@ -382,24 +382,24 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
         }
         info = tariff_info.get(payload, {"days": 30, "rub": 0})
         
-        await cb.message.answer(
+        text = (
             f"💳 <b>Оплата {info['days']} дней — {info['rub']}₽</b>\n\n"
             f"Перейдите по ссылке для оплаты:\n"
             f"<code>{status_result.get('redirect', 'URL недоступен')}</code>\n\n"
-            f"Или нажмите кнопку ниже:",
-            parse_mode="HTML",
-            reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[[
-                    types.InlineKeyboardButton(
-                        text="💳 Открыть страницу оплаты",
-                        url=status_result.get("redirect", ""),
-                    )
-                ]]
-            ),
+            f"Или нажмите кнопку ниже:"
         )
+        reply_markup = types.InlineKeyboardMarkup(
+            inline_keyboard=[[
+                types.InlineKeyboardButton(
+                    text="💳 Открыть страницу оплаты",
+                    url=status_result.get("redirect", ""),
+                )
+            ]]
+        )
+        await _send_or_edit_payment_screen(cb, text, reply_markup=reply_markup)
     except Exception as e:
         logger.exception("Failed to get Platega payment URL: %s", e)
-        await cb.message.answer("Не удалось получить ссылку на оплату. Попробуйте позже.")
+        await _send_or_edit_payment_screen(cb, "Не удалось получить ссылку на оплату. Попробуйте позже.")
 
 
 @router.callback_query(F.data.startswith(CB_PLATEGA_CHECK_PREFIX))
@@ -426,7 +426,7 @@ async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
         )
         
         if not row:
-            await cb.message.answer("Платёж не найден в базе данных.")
+            await _send_or_edit_payment_screen(cb, "Платёж не найден в базе данных.")
             return
         
         user_id = int(row[0])
@@ -439,7 +439,7 @@ async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
             # Show success message with connect button
             tariff = get_tariffs().get(payload)
             if not tariff:
-                await cb.message.answer("Неизвестный тариф")
+                await _send_or_edit_payment_screen(cb, "Неизвестный тариф")
                 return
             
             success_text = await get_text("payment_success")
@@ -458,18 +458,18 @@ async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
             )
         
         elif platega_service.is_pending_status(status):
-            await cb.message.answer("⏳ Платёж ещё в обработке. Ожидайте подтверждения от банка.")
+            await _send_or_edit_payment_screen(cb, "⏳ Платёж ещё в обработке. Ожидайте подтверждения от банка.")
         
         elif platega_service.is_failed_status(status):
             await update_payment_status(transaction_id, "failed")
-            await cb.message.answer("❌ Платёж отменён или не удался. Попробуйте снова.")
+            await _send_or_edit_payment_screen(cb, "❌ Платёж отменён или не удался. Попробуйте снова.")
         
         else:
-            await cb.message.answer(f"Статус платежа: {status}")
+            await _send_or_edit_payment_screen(cb, f"Статус платежа: {status}")
             
     except Exception as e:
         logger.exception("Failed to check Platega payment status: %s", e)
-        await cb.message.answer("Не удалось проверить статус платежа. Попробуйте позже.")
+        await _send_or_edit_payment_screen(cb, "Не удалось проверить статус платежа. Попробуйте позже.")
 
 
 @router.callback_query(F.data == CB_BUY_7)
@@ -530,13 +530,13 @@ async def _create_platega_payment(cb: types.CallbackQuery, bot: Bot, sub_type: s
     """Создать платеж через Platega и показать ссылку на оплату."""
     platega_service = get_platega_service()
     if not platega_service:
-        await cb.message.answer("❌ Оплата через СБП временно недоступна. Обратитесь к администратору.")
+        await _send_or_edit_payment_screen(cb, "❌ Оплата через СБП временно недоступна. Обратитесь к администратору.")
         logger.warning("Platega credentials not configured")
         return
     
     tariff = get_tariffs_platega().get(sub_type)
     if not tariff:
-        await cb.message.answer("❌ Неверный тариф")
+        await _send_or_edit_payment_screen(cb, "❌ Неверный тариф")
         return
     
     user_id = cb.from_user.id
@@ -564,7 +564,7 @@ async def _create_platega_payment(cb: types.CallbackQuery, bot: Bot, sub_type: s
         )
         
         if not payment_data:
-            await cb.message.answer("❌ Ошибка создания платежа. Попробуйте позже.")
+            await _send_or_edit_payment_screen(cb, "❌ Ошибка создания платежа. Попробуйте позже.")
             logger.error(f"Failed to create Platega payment for user {user_id}")
             return
         
@@ -608,14 +608,14 @@ async def _create_platega_payment(cb: types.CallbackQuery, bot: Bot, sub_type: s
             [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
         ])
         
-        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        await _send_or_edit_payment_screen(cb, text, reply_markup=kb)
         
         # Запускаем фоновую проверку статуса платежа
         asyncio.create_task(_poll_payment_status(cb.bot, transaction_id, user_id, sub_type, cb.message.chat.id))
         
     except Exception as e:
         logger.exception(f"Error in _create_platega_payment: {e}")
-        await cb.message.answer("❌ Ошибка при создании платежа. Попробуйте позже или обратитесь в поддержку.")
+        await _send_or_edit_payment_screen(cb, "❌ Ошибка при создании платежа. Попробуйте позже или обратитесь в поддержку.")
 
 
 @router.callback_query(F.data == "payment_method_stars")

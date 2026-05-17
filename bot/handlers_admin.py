@@ -1413,7 +1413,7 @@ async def admin_payments_find_charge_start(cb: types.CallbackQuery):
         return
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY, {"action": PAYMENT_CHARGE_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите Charge ID платежа")
+    await cb.message.answer("Введите Charge ID платежа", disable_notification=True)
     await cb.answer()
 
 
@@ -1423,7 +1423,7 @@ async def admin_payments_latest_by_user_start(cb: types.CallbackQuery):
         return
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY, {"action": PAYMENT_USER_INPUT_ACTION_KEY})
-    await cb.message.answer("Введите user_id")
+    await cb.message.answer("Введите user_id", disable_notification=True)
     await cb.answer()
 
 
@@ -1455,7 +1455,7 @@ async def admin_prices_start_edit(cb: types.CallbackQuery):
     currency_symbol = "⭐" if is_stars else "₽"
     await clear_pending_admin_action(ADMIN_ID, PRICE_CONFIRM_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY, {"env_key": env_key, "label": label, "is_stars": is_stars})
-    await cb.message.answer(f"Введите новую цену для «{label}» в {currency_symbol}. Текущая: {current_value}{currency_symbol}")
+    await cb.message.answer(f"Введите новую цену для «{label}» в {currency_symbol}. Текущая: {current_value}{currency_symbol}", disable_notification=True)
     await cb.answer()
 
 
@@ -1475,7 +1475,7 @@ async def admin_platega_prices_start_edit(cb: types.CallbackQuery):
     current_value = int(getattr(config, env_key))
     await clear_pending_admin_action(ADMIN_ID, PRICE_CONFIRM_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY, {"env_key": env_key, "label": label, "is_stars": False})
-    await cb.message.answer(f"Введите новую цену для «{label}» в ₽. Текущая: {current_value}₽")
+    await cb.message.answer(f"Введите новую цену для «{label}» в ₽. Текущая: {current_value}₽", disable_notification=True)
     await cb.answer()
 
 
@@ -1530,16 +1530,13 @@ async def admin_prices_save(cb: types.CallbackQuery):
         currency_symbol = "₽"
     
     await write_audit_log(ADMIN_ID, "admin_price_updated", f"key={env_key}; old={old_value}; new={saved_value}")
-    await cb.message.answer(
+    await _send_or_edit_admin_message(
+        cb,
         (
             f"✅ Сохранено: {label}\n"
             f"{old_value}{currency_symbol} → {saved_value}{currency_symbol}"
         ),
-    )
-    await cb.message.answer(
-        _render_admin_prices_text(),
-        parse_mode="HTML",
-        reply_markup=get_admin_prices_kb(),
+        get_admin_prices_kb(),
     )
     await cb.answer("Сохранено")
 
@@ -1550,7 +1547,8 @@ async def admin_prices_cancel(cb: types.CallbackQuery):
         return
     await clear_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PRICE_CONFIRM_ACTION_KEY)
-    await cb.message.answer(
+    await _send_or_edit_admin_message(
+        cb,
         _render_admin_prices_text(),
         parse_mode="HTML",
         reply_markup=get_admin_prices_kb(),
@@ -1626,8 +1624,10 @@ async def admin_denylist_toggle(cb: types.CallbackQuery):
     await set_app_setting("EGRESS_DENYLIST_ENABLED", new_value, updated_by=ADMIN_ID)
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_denylist_enabled_set", f"value={new_value}")
-    await cb.message.answer(
-        f"✅ denylist: {_bool_on_off(int(new_value))}. Синхронизация выполнена."
+    await _send_or_edit_admin_message(
+        cb,
+        f"✅ denylist: {_bool_on_off(int(new_value))}. Синхронизация выполнена.",
+        await _denylist_keyboard(),
     )
     await cb.answer()
 
@@ -1640,7 +1640,7 @@ async def admin_denylist_mode_set(cb: types.CallbackQuery):
     await set_app_setting("EGRESS_DENYLIST_MODE", mode, updated_by=ADMIN_ID)
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_denylist_mode_set", f"value={mode}")
-    await cb.message.answer(f"✅ Режим denylist: {mode}.")
+    await _send_or_edit_admin_message(cb, f"✅ Режим denylist: {mode}.", await _denylist_keyboard())
     await cb.answer()
 
 
@@ -1651,7 +1651,8 @@ async def admin_denylist_view_domains(cb: types.CallbackQuery):
     domains = str(await get_setting("EGRESS_DENYLIST_DOMAINS", str) or "")
     lines = [item.strip() for item in domains.split(",") if item.strip()]
     body = "\n".join(f"• {escape_html(item)}" for item in lines[:100]) if lines else "Список пуст."
-    await cb.message.answer(f"🧾 <b>Список доменов denylist</b>\n{body}", parse_mode="HTML")
+    text = f"🧾 <b>Список доменов denylist</b>\n{body}"
+    await _send_or_edit_admin_message(cb, text, reply_markup=await _denylist_keyboard())
     await cb.answer()
 
 
@@ -1662,7 +1663,8 @@ async def admin_denylist_view_cidrs(cb: types.CallbackQuery):
     cidrs = str(await get_setting("EGRESS_DENYLIST_CIDRS", str) or "")
     lines = [item.strip() for item in cidrs.split(",") if item.strip()]
     body = "\n".join(f"• {escape_html(item)}" for item in lines[:100]) if lines else "Список пуст."
-    await cb.message.answer(f"🧾 <b>Список CIDR denylist</b>\n{body}", parse_mode="HTML")
+    text = f"🧾 <b>Список CIDR denylist</b>\n{body}"
+    await _send_or_edit_admin_message(cb, text, reply_markup=await _denylist_keyboard())
     await cb.answer()
 
 
@@ -1671,7 +1673,7 @@ async def admin_denylist_replace_domains_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await set_pending_admin_action(ADMIN_ID, DENYLIST_DOMAINS_INPUT_ACTION_KEY, {"action": DENYLIST_DOMAINS_INPUT_ACTION_KEY})
-    await cb.message.answer("Отправьте список доменов: один домен на строку.")
+    await cb.message.answer("Отправьте список доменов: один домен на строку.", disable_notification=True)
     await cb.answer()
 
 
@@ -1680,7 +1682,7 @@ async def admin_denylist_replace_cidrs_start(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await set_pending_admin_action(ADMIN_ID, DENYLIST_CIDRS_INPUT_ACTION_KEY, {"action": DENYLIST_CIDRS_INPUT_ACTION_KEY})
-    await cb.message.answer("Отправьте CIDR списком: одна сеть на строку.")
+    await cb.message.answer("Отправьте CIDR списком: одна сеть на строку.", disable_notification=True)
     await cb.answer()
 
 
@@ -1690,7 +1692,7 @@ async def admin_denylist_sync_now(cb: types.CallbackQuery):
         return
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_denylist_sync", "manual_sync=1")
-    await cb.message.answer("✅ Синхронизация denylist выполнена.")
+    await _send_or_edit_admin_message(cb, "✅ Синхронизация denylist выполнена.", await _denylist_keyboard())
     await cb.answer("Готово")
 
 @router.callback_query(F.data == CB_ADMIN_LIST)
@@ -1753,14 +1755,11 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
                 token_action_key,
                 {"uid": uid, "days": days, "page": page, "source": source, "issued_at": utc_now_naive().isoformat()},
             )
-            await cb.message.answer(
-                (
-                    "⚠️ <b>Подтвердите действие</b>\n\n"
-                    f"Выдать пользователю <code>{uid}</code> <b>+{days} дней</b>?"
-                ),
-                parse_mode="HTML",
-                reply_markup=get_admin_add_days_confirm_kb(token),
+            text = (
+                "⚠️ <b>Подтвердите действие</b>\n\n"
+                f"Выдать пользователю <code>{uid}</code> <b>+{days} дней</b>?"
             )
+            await _send_or_edit_admin_message(cb, text, reply_markup=get_admin_add_days_confirm_kb(token))
             await cb.answer("Нужно подтверждение")
             return
         if admin_command_limited(f"admin_add_{days}", cb.from_user.id):
@@ -1769,18 +1768,15 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
         new_until = await issue_subscription(uid, days)
         notified = await notify_user_subscription_granted(cb.bot, uid, days, new_until)
         await write_audit_log(ADMIN_ID, f"admin_add_{days}", f"target={uid}; until={new_until.isoformat()}; notified={int(notified)}")
-        await cb.answer(f"✅ +{days} дней пользователю {uid}")
-        await cb.message.answer(
-            (
-                f"✅ <b>Пользователю выдано +{days} дней</b>\n\n"
-                f"🆔 <code>{uid}</code>\n"
-                f"📅 До: <b>{format_moscow_datetime(new_until)}</b>"
-            ),
-            parse_mode="HTML",
-            reply_markup=_user_manage_result_markup(uid, page, source),
+        await cb.answer(f"+{days} дней пользователю {uid}")
+        text = (
+            f"✅ <b>Пользователю выдано +{days} дней</b>\n\n"
+            f"🆔 <code>{uid}</code>\n"
+            f"📅 До: <b>{format_moscow_datetime(new_until)}</b>"
         )
+        await _send_or_edit_admin_message(cb, text, reply_markup=_user_manage_result_markup(uid, page, source))
         if not notified:
-            await cb.message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.")
+            await cb.message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.", disable_notification=True)
     except Exception as e:
         logger.exception("Ошибка admin_add_days_btn: %s", e)
         await cb.answer("❌ Не удалось продлить доступ", show_alert=True)
@@ -1814,18 +1810,15 @@ async def admin_add_days_confirm(cb: types.CallbackQuery):
     new_until = await issue_subscription(uid, days)
     notified = await notify_user_subscription_granted(cb.bot, uid, days, new_until)
     await write_audit_log(ADMIN_ID, f"admin_add_{days}", f"target={uid}; until={new_until.isoformat()}; notified={int(notified)}")
-    await cb.answer(f"✅ +{days} дней пользователю {uid}")
-    await cb.message.answer(
-        (
-            f"✅ <b>Пользователю выдано +{days} дней</b>\n\n"
-            f"🆔 <code>{uid}</code>\n"
-            f"📅 До: <b>{format_moscow_datetime(new_until)}</b>"
-        ),
-        parse_mode="HTML",
-        reply_markup=_user_manage_result_markup(uid, page, source),
+    await cb.answer(f"+{days} дней пользователю {uid}")
+    text = (
+        f"✅ <b>Пользователю выдано +{days} дней</b>\n\n"
+        f"🆔 <code>{uid}</code>\n"
+        f"📅 До: <b>{format_moscow_datetime(new_until)}</b>"
     )
+    await _send_or_edit_admin_message(cb, text, reply_markup=_user_manage_result_markup(uid, page, source))
     if not notified:
-        await cb.message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.")
+        await cb.message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.", disable_notification=True)
 
 
 @router.callback_query(F.data.startswith(CB_CANCEL_ADD_DAYS))
@@ -1839,7 +1832,7 @@ async def admin_add_days_cancel(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key(ADD_DAYS_CONFIRM_ACTION_KEY, token))
     await cb.answer("Отменено")
     if cb.message:
-        await cb.message.answer("❌ Выдача дней отменена.")
+        await cb.message.answer("❌ Выдача дней отменена.", disable_notification=True)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_RETRY_ACTIVATION_PREFIX))

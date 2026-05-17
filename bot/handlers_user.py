@@ -784,9 +784,12 @@ async def user_reissue_confirm(cb: types.CallbackQuery):
             return
         await write_audit_log(cb.from_user.id, "user_reissue_device", f"device_num={device_num}")
         if cb.message:
-            await cb.message.answer("✅ Перевыпуск выполнен. Старый конфиг отключён, используйте новый в разделе «🔑 Подключение».")
             text, markup = await _render_configs_menu_screen(cb.from_user.id)
-            await _send_or_edit_user_screen(cb, text, reply_markup=markup)
+            await _send_or_edit_user_screen(
+                cb,
+                "✅ Перевыпуск выполнен. Старый конфиг отключён, используйте новый в разделе «🔑 Подключение».",
+                reply_markup=markup,
+            )
     except Exception as error:
         logger.exception("Ошибка user_reissue_confirm: %s", error)
         if cb.message:
