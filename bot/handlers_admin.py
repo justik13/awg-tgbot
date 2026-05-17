@@ -272,10 +272,10 @@ def _problem_activation_age_label(updated_at: str, created_at: str) -> str:
 
 async def _guard_admin_callback(cb: types.CallbackQuery, *, require_message: bool = False) -> bool:
     if cb.from_user.id != ADMIN_ID:
-        await cb.answer("Нет доступа", show_alert=True)
+        await cb.answer("Нет доступа", show_alert=False)
         return False
     if require_message and not cb.message:
-        await cb.answer("Сообщение недоступно", show_alert=True)
+        await cb.answer("Сообщение недоступно", show_alert=False)
         return False
     return True
 
@@ -1276,15 +1276,15 @@ async def admin_back_main(cb: types.CallbackQuery):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     await _send_or_edit_admin_message(cb, "⚙️ <b>Админ-меню</b>", get_admin_inline_kb())
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_NOOP)
 async def admin_noop(cb: types.CallbackQuery):
     if cb.from_user and cb.from_user.id != ADMIN_ID:
-        await cb.answer("Нет доступа", show_alert=True)
+        await cb.answer("Нет доступа", show_alert=False)
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_COMMANDS)
@@ -1298,7 +1298,7 @@ async def admin_manual_commands(cb: types.CallbackQuery):
         build_admin_manual_commands_text(),
         get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN),
     )
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_PAYMENTS)
@@ -1310,7 +1310,7 @@ async def admin_payments_screen(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
     await _send_or_edit_admin_message(cb, "💳 <b>Платежи</b>", get_admin_payments_kb())
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 async def _render_problem_activations_screen(target_message: types.Message, page: int) -> None:
@@ -1365,7 +1365,7 @@ async def admin_problem_activations(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _render_problem_activations_screen(cb.message, 0)
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX))
@@ -1375,10 +1375,10 @@ async def admin_problem_activations_page(cb: types.CallbackQuery):
     try:
         page = int(cb.data.removeprefix(CB_ADMIN_PROBLEM_ACTIVATIONS_PAGE_PREFIX))
     except Exception:
-        await cb.answer("Некорректная страница", show_alert=True)
+        await cb.answer("Некорректная страница", show_alert=False)
         return
     await _render_problem_activations_screen(cb.message, page)
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX))
@@ -1389,9 +1389,9 @@ async def admin_open_user_card_from_problem(cb: types.CallbackQuery):
     try:
         uid_raw, page_raw = raw.split("_", 1)
         await _send_user_manage_card(cb.message, int(uid_raw), int(page_raw), source="problem_activations")
-        await cb.answer("Открыто")
+        await cb.answer("Открыто", show_alert=False)
     except Exception:
-        await cb.answer("Некорректные параметры", show_alert=True)
+        await cb.answer("Некорректные параметры", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX))
@@ -1402,9 +1402,9 @@ async def admin_manage_user_problem(cb: types.CallbackQuery):
     try:
         uid_raw, page_raw = raw.split("_", 1)
         await _send_user_manage_card(cb.message, int(uid_raw), int(page_raw), source="problem_activations")
-        await cb.answer("Открыто")
+        await cb.answer("Открыто", show_alert=False)
     except Exception:
-        await cb.answer("Некорректные параметры", show_alert=True)
+        await cb.answer("Некорректные параметры", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_FIND_CHARGE)
@@ -1414,7 +1414,7 @@ async def admin_payments_find_charge_start(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY, {"action": PAYMENT_CHARGE_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Введите Charge ID платежа", disable_notification=True)
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_LAST_PAYMENT)
@@ -1424,7 +1424,7 @@ async def admin_payments_latest_by_user_start(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, PAYMENT_CHARGE_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PAYMENT_USER_INPUT_ACTION_KEY, {"action": PAYMENT_USER_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Введите user_id", disable_notification=True)
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_PRICES)
@@ -1434,7 +1434,7 @@ async def admin_prices(cb: types.CallbackQuery):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     await _send_or_edit_admin_message(cb, _render_admin_prices_text(), get_admin_prices_kb())
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.in_(set(PRICE_TARGETS.keys())))
@@ -1443,11 +1443,11 @@ async def admin_prices_start_edit(cb: types.CallbackQuery):
         return
     target = PRICE_TARGETS.get(cb.data)
     if not target:
-        await cb.answer("Некорректный тариф", show_alert=True)
+        await cb.answer("Некорректный тариф", show_alert=False)
         return
     maintenance_enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
     if not maintenance_enabled:
-        await cb.answer("Сначала включите /maintenance_on, затем изменяйте цену.", show_alert=True)
+        await cb.answer("Сначала включите /maintenance_on, затем изменяйте цену.", show_alert=False)
         return
     env_key, label = target
     current_value = int(getattr(config, env_key))
@@ -1456,7 +1456,7 @@ async def admin_prices_start_edit(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, PRICE_CONFIRM_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY, {"env_key": env_key, "label": label, "is_stars": is_stars})
     await _send_or_edit_admin_message(cb, f"Введите новую цену для «{label}» в {currency_symbol}. Текущая: {current_value}{currency_symbol}", disable_notification=True)
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.in_(set(PLATEGA_PRICE_TARGETS.keys())))
@@ -1465,18 +1465,18 @@ async def admin_platega_prices_start_edit(cb: types.CallbackQuery):
         return
     target = PLATEGA_PRICE_TARGETS.get(cb.data)
     if not target:
-        await cb.answer("Некорректный тариф", show_alert=True)
+        await cb.answer("Некорректный тариф", show_alert=False)
         return
     maintenance_enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
     if not maintenance_enabled:
-        await cb.answer("Сначала включите /maintenance_on, затем изменяйте цену.", show_alert=True)
+        await cb.answer("Сначала включите /maintenance_on, затем изменяйте цену.", show_alert=False)
         return
     env_key, label = target
     current_value = int(getattr(config, env_key))
     await clear_pending_admin_action(ADMIN_ID, PRICE_CONFIRM_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY, {"env_key": env_key, "label": label, "is_stars": False})
     await _send_or_edit_admin_message(cb, f"Введите новую цену для «{label}» в ₽. Текущая: {current_value}₽", disable_notification=True)
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingPriceInput())
@@ -1515,7 +1515,7 @@ async def admin_prices_save(cb: types.CallbackQuery):
     action = await pop_pending_admin_action(ADMIN_ID, PRICE_CONFIRM_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PRICE_INPUT_ACTION_KEY)
     if not action:
-        await cb.answer("Нет ожидающего действия", show_alert=True)
+        await cb.answer("Нет ожидающего действия", show_alert=False)
         return
     env_key = str(action.get("env_key", ""))
     label = str(action.get("label", ""))
@@ -1538,7 +1538,7 @@ async def admin_prices_save(cb: types.CallbackQuery):
         ),
         get_admin_prices_kb(),
     )
-    await cb.answer("Сохранено")
+    await cb.answer("Сохранено", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_PRICE_CANCEL)
@@ -1553,7 +1553,7 @@ async def admin_prices_cancel(cb: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=get_admin_prices_kb(),
     )
-    await cb.answer("Отменено")
+    await cb.answer("Отменено", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_STATS)
@@ -1567,7 +1567,7 @@ async def admin_stats_cb(cb: types.CallbackQuery):
         await build_stats_text(),
         get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN, refresh_cb=CB_ADMIN_STATS),
     )
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_SYNC)
@@ -1582,10 +1582,10 @@ async def admin_sync_awg(cb: types.CallbackQuery):
             await build_awg_sync_text(),
             get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN, refresh_cb=CB_ADMIN_SYNC),
         )
-        await cb.answer("Синхронизация AWG выполнена")
+        await cb.answer("Синхронизация AWG выполнена", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка admin_sync_awg: %s", e)
-        await cb.answer("❌ Ошибка проверки", show_alert=True)
+        await cb.answer("❌ Ошибка проверки", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_NETWORK_POLICY)
@@ -1595,7 +1595,7 @@ async def admin_network_policy_screen(cb: types.CallbackQuery):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     await _send_or_edit_admin_message(cb, await _render_network_policy_text(), get_admin_network_policy_kb())
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_NET_DENYLIST)
@@ -1603,7 +1603,7 @@ async def admin_network_policy_denylist_screen(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     await _send_or_edit_admin_message(cb, "🛡 <b>Настройки denylist</b>", await _denylist_keyboard())
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_NET_SYNC_NOW)
@@ -1612,7 +1612,7 @@ async def admin_network_policy_sync_now(cb: types.CallbackQuery):
         return
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_network_policy_sync", "manual_sync=1")
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_DENYLIST_TOGGLE)
@@ -1629,7 +1629,7 @@ async def admin_denylist_toggle(cb: types.CallbackQuery):
         f"✅ denylist: {_bool_on_off(int(new_value))}. Синхронизация выполнена.",
         await _denylist_keyboard(),
     )
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.in_({CB_ADMIN_DENYLIST_MODE_SOFT, CB_ADMIN_DENYLIST_MODE_STRICT}))
@@ -1641,7 +1641,7 @@ async def admin_denylist_mode_set(cb: types.CallbackQuery):
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_denylist_mode_set", f"value={mode}")
     await _send_or_edit_admin_message(cb, f"✅ Режим denylist: {mode}.", await _denylist_keyboard())
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_DENYLIST_VIEW_DOMAINS)
@@ -1653,7 +1653,7 @@ async def admin_denylist_view_domains(cb: types.CallbackQuery):
     body = "\n".join(f"• {escape_html(item)}" for item in lines[:100]) if lines else "Список пуст."
     text = f"🧾 <b>Список доменов denylist</b>\n{body}"
     await _send_or_edit_admin_message(cb, text, await _denylist_keyboard())
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_DENYLIST_VIEW_CIDRS)
@@ -1665,7 +1665,7 @@ async def admin_denylist_view_cidrs(cb: types.CallbackQuery):
     body = "\n".join(f"• {escape_html(item)}" for item in lines[:100]) if lines else "Список пуст."
     text = f"🧾 <b>Список CIDR denylist</b>\n{body}"
     await _send_or_edit_admin_message(cb, text, await _denylist_keyboard())
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_DENYLIST_REPLACE_DOMAINS)
@@ -1674,7 +1674,7 @@ async def admin_denylist_replace_domains_start(cb: types.CallbackQuery):
         return
     await set_pending_admin_action(ADMIN_ID, DENYLIST_DOMAINS_INPUT_ACTION_KEY, {"action": DENYLIST_DOMAINS_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Отправьте список доменов: один домен на строку.", disable_notification=True)
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_DENYLIST_REPLACE_CIDRS)
@@ -1683,7 +1683,7 @@ async def admin_denylist_replace_cidrs_start(cb: types.CallbackQuery):
         return
     await set_pending_admin_action(ADMIN_ID, DENYLIST_CIDRS_INPUT_ACTION_KEY, {"action": DENYLIST_CIDRS_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Отправьте CIDR списком: одна сеть на строку.", disable_notification=True)
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_DENYLIST_SYNC)
@@ -1693,7 +1693,7 @@ async def admin_denylist_sync_now(cb: types.CallbackQuery):
     await denylist_sync(run_docker)
     await write_audit_log(ADMIN_ID, "admin_denylist_sync", "manual_sync=1")
     await _send_or_edit_admin_message(cb, "✅ Синхронизация denylist выполнена.", await _denylist_keyboard())
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 @router.callback_query(F.data == CB_ADMIN_LIST)
 async def admin_list_all(cb: types.CallbackQuery):
@@ -1702,7 +1702,7 @@ async def admin_list_all(cb: types.CallbackQuery):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     await _render_users_page(cb.message, 0)
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_USERS_PAGE_PREFIX))
@@ -1712,12 +1712,12 @@ async def admin_users_page(cb: types.CallbackQuery):
     try:
         page = int(cb.data.removeprefix(CB_ADMIN_USERS_PAGE_PREFIX))
         await _render_users_page(cb.message, page)
-        await cb.answer("Открыто")
+        await cb.answer("Открыто", show_alert=False)
     except ValueError:
-        await cb.answer("Некорректный номер страницы", show_alert=True)
+        await cb.answer("Некорректный номер страницы", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка admin_users_page: %s", e)
-        await cb.answer("❌ Не удалось открыть страницу", show_alert=True)
+        await cb.answer("❌ Не удалось открыть страницу", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_MANAGE_USER_PREFIX))
@@ -1729,12 +1729,12 @@ async def admin_manage_user(cb: types.CallbackQuery):
         uid = int(uid_raw)
         page = int(page_raw)
         await _send_user_manage_card(cb.message, uid, page)
-        await cb.answer("Открыто")
+        await cb.answer("Открыто", show_alert=False)
     except ValueError:
-        await cb.answer("Некорректный user_id", show_alert=True)
+        await cb.answer("Некорректный user_id", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка admin_manage_user: %s", e)
-        await cb.answer("❌ Не удалось открыть карточку пользователя", show_alert=True)
+        await cb.answer("❌ Не удалось открыть карточку пользователя", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_ADD_DAYS_PREFIX))
@@ -1760,15 +1760,15 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
                 f"Выдать пользователю <code>{uid}</code> <b>+{days} дней</b>?"
             )
             await _send_or_edit_admin_message(cb, text, get_admin_add_days_confirm_kb(token))
-            await cb.answer("Нужно подтверждение")
+            await cb.answer("Нужно подтверждение", show_alert=False)
             return
         if admin_command_limited(f"admin_add_{days}", cb.from_user.id):
-            await cb.answer("Слишком часто", show_alert=True)
+            await cb.answer("Слишком часто", show_alert=False)
             return
         new_until = await issue_subscription(uid, days)
         notified = await notify_user_subscription_granted(cb.bot, uid, days, new_until)
         await write_audit_log(ADMIN_ID, f"admin_add_{days}", f"target={uid}; until={new_until.isoformat()}; notified={int(notified)}")
-        await cb.answer(f"+{days} дней пользователю {uid}")
+        await cb.answer(f"+{days} дней пользователю {uid}", show_alert=False)
         text = (
             f"✅ <b>Пользователю выдано +{days} дней</b>\n\n"
             f"🆔 <code>{uid}</code>\n"
@@ -1779,7 +1779,7 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
             await _send_or_edit_admin_message(cb, "⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.", disable_notification=True)
     except Exception as e:
         logger.exception("Ошибка admin_add_days_btn: %s", e)
-        await cb.answer("❌ Не удалось продлить доступ", show_alert=True)
+        await cb.answer("❌ Не удалось продлить доступ", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_CONFIRM_ADD_DAYS))
@@ -1788,29 +1788,29 @@ async def admin_add_days_confirm(cb: types.CallbackQuery):
         return
     token = _extract_action_token(cb.data, CB_CONFIRM_ADD_DAYS)
     if not token:
-        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=True)
+        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=False)
         return
     action = await pop_pending_admin_action(ADMIN_ID, _make_token_action_key(ADD_DAYS_CONFIRM_ACTION_KEY, token))
     if not action:
-        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=True)
+        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=False)
         return
     if _is_pending_action_expired(action):
-        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=True)
+        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=False)
         return
     uid = int(action.get("uid", 0))
     days = int(action.get("days", 0))
     page = int(action.get("page", 0))
     source = str(action.get("source") or "users")
     if uid <= 0 or days <= 0:
-        await cb.answer("Некорректные параметры", show_alert=True)
+        await cb.answer("Некорректные параметры", show_alert=False)
         return
     if admin_command_limited(f"admin_add_{days}", cb.from_user.id):
-        await cb.answer("Слишком часто", show_alert=True)
+        await cb.answer("Слишком часто", show_alert=False)
         return
     new_until = await issue_subscription(uid, days)
     notified = await notify_user_subscription_granted(cb.bot, uid, days, new_until)
     await write_audit_log(ADMIN_ID, f"admin_add_{days}", f"target={uid}; until={new_until.isoformat()}; notified={int(notified)}")
-    await cb.answer(f"+{days} дней пользователю {uid}")
+    await cb.answer(f"+{days} дней пользователю {uid}", show_alert=False)
     text = (
         f"✅ <b>Пользователю выдано +{days} дней</b>\n\n"
         f"🆔 <code>{uid}</code>\n"
@@ -1827,10 +1827,10 @@ async def admin_add_days_cancel(cb: types.CallbackQuery):
         return
     token = _extract_action_token(cb.data, CB_CANCEL_ADD_DAYS)
     if not token:
-        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
+        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=False)
         return
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key(ADD_DAYS_CONFIRM_ACTION_KEY, token))
-    await cb.answer("Отменено")
+    await cb.answer("Отменено", show_alert=False)
     if cb.message:
         await _send_or_edit_admin_message(cb, "❌ Выдача дней отменена.", types.InlineKeyboardMarkup(inline_keyboard=[]))
 
@@ -1844,14 +1844,14 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
         uid = int(uid_raw)
         page = int(page_raw)
         if admin_command_limited(f"admin_retry_activation_{uid}", cb.from_user.id):
-            await cb.answer("Слишком часто: подождите перед повтором активации.", show_alert=True)
+            await cb.answer("Слишком часто: подождите перед повтором активации.", show_alert=False)
             return
 
         payment_summary = await get_latest_user_payment_summary(uid)
         if not payment_summary:
             await write_audit_log(ADMIN_ID, "manual_retry_noop", f"target={uid}; reason=no_payment")
             await _send_or_edit_admin_message(cb, "ℹ️ Нет платежей для повтора активации. Нечего запускать повторно.", _user_manage_kb(uid, page))
-            await cb.answer("Нечего повторять")
+            await cb.answer("Нечего повторять", show_alert=False)
             return
 
         payment_id = str(payment_summary["payment_id"])
@@ -1881,13 +1881,13 @@ async def admin_retry_activation_btn(cb: types.CallbackQuery):
             ),
             _user_manage_kb(uid, page),
         )
-        await cb.answer("Повтор обработан")
+        await cb.answer("Повтор обработан", show_alert=False)
     except ValueError:
-        await cb.answer("Некорректные параметры действия", show_alert=True)
+        await cb.answer("Некорректные параметры действия", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка admin_retry_activation_btn: %s", e)
         await write_audit_log(ADMIN_ID, "manual_retry_failed", f"error={str(e)[:300]}")
-        await cb.answer("❌ Не удалось повторить активацию", show_alert=True)
+        await cb.answer("❌ Не удалось повторить активацию", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX))
@@ -1900,11 +1900,11 @@ async def admin_retry_activation_from_problem(cb: types.CallbackQuery):
         uid = int(uid_raw)
         page = int(page_raw)
     except Exception:
-        await cb.answer("Некорректные параметры действия", show_alert=True)
+        await cb.answer("Некорректные параметры действия", show_alert=False)
         return
 
     if admin_command_limited(f"admin_retry_activation_problem_{uid}", cb.from_user.id):
-        await cb.answer("Слишком часто: подождите перед повтором активации.", show_alert=True)
+        await cb.answer("Слишком часто: подождите перед повтором активации.", show_alert=False)
         return
 
     try:
@@ -1912,7 +1912,7 @@ async def admin_retry_activation_from_problem(cb: types.CallbackQuery):
         if not payment_summary:
             await write_audit_log(ADMIN_ID, "manual_retry_noop", f"target={uid}; reason=no_payment; source=problem_activations")
             await _send_or_edit_admin_message(cb, "ℹ️ Нет платежей для повтора активации. Нечего запускать повторно.", _user_manage_kb(uid, page, show_retry_activation=False, source="problem_activations"))
-            await cb.answer("Нечего повторять")
+            await cb.answer("Нечего повторять", show_alert=False)
             return
         payment_id = str(payment_summary["payment_id"])
         await write_audit_log(ADMIN_ID, "manual_retry_requested", f"target={uid}; payment_id={payment_id}; source=problem_activations")
@@ -1952,10 +1952,10 @@ async def admin_retry_activation_from_problem(cb: types.CallbackQuery):
             ),
             _user_manage_kb(uid, page, show_retry_activation=show_retry_activation, source="problem_activations"),
         )
-        await cb.answer("Повтор обработан")
+        await cb.answer("Повтор обработан", show_alert=False)
     except Exception as error:
         logger.exception("Ошибка admin_retry_activation_from_problem: %s", error)
-        await cb.answer("❌ Не удалось повторить активацию", show_alert=True)
+        await cb.answer("❌ Не удалось повторить активацию", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_DEVICE_DELETE_PREFIX))
@@ -1969,7 +1969,7 @@ async def admin_device_delete_btn(cb: types.CallbackQuery):
         page = int(page_raw)
         source = _infer_user_manage_source(cb)
     except ValueError:
-        await cb.answer("Некорректные параметры действия", show_alert=True)
+        await cb.answer("Некорректные параметры действия", show_alert=False)
         return
     token = _generate_admin_action_token()
     await set_pending_admin_action(
@@ -1992,7 +1992,7 @@ async def admin_device_delete_btn(cb: types.CallbackQuery):
             ]
         ),
     )
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_CONFIRM_DEVICE_DELETE))
@@ -2001,14 +2001,14 @@ async def confirm_device_delete(cb: types.CallbackQuery):
         return
     token = _extract_action_token(cb.data, CB_CONFIRM_DEVICE_DELETE)
     if not token:
-        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=True)
+        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=False)
         return
     action = await pop_pending_admin_action(ADMIN_ID, _make_token_action_key("device_delete", token))
     if not action or action.get("action") != "device_delete":
-        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=True)
+        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=False)
         return
     if _is_pending_action_expired(action):
-        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=True)
+        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=False)
         return
     uid = int(action["target"])
     device_num = int(action["device_num"])
@@ -2032,7 +2032,7 @@ async def confirm_device_delete(cb: types.CallbackQuery):
                 parse_mode="HTML",
                 reply_markup=_user_manage_result_markup(uid, page, source),
             )
-            await cb.answer("Нечего удалять")
+            await cb.answer("Нечего удалять", show_alert=False)
             return
         await _send_or_edit_admin_message(cb, 
             (
@@ -2044,11 +2044,11 @@ async def confirm_device_delete(cb: types.CallbackQuery):
             parse_mode="HTML",
             reply_markup=_user_manage_result_markup(uid, page, source),
         )
-        await cb.answer("Готово")
+        await cb.answer("Готово", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка confirm_device_delete: %s", e)
         await write_audit_log(ADMIN_ID, "admin_device_delete_failed", f"target={uid}; device_num={device_num}; error={str(e)[:200]}")
-        await cb.answer("❌ Не удалось удалить устройство", show_alert=True)
+        await cb.answer("❌ Не удалось удалить устройство", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_CANCEL_DEVICE_DELETE))
@@ -2057,11 +2057,11 @@ async def cancel_device_delete(cb: types.CallbackQuery):
         return
     token = _extract_action_token(cb.data, CB_CANCEL_DEVICE_DELETE)
     if not token:
-        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
+        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=False)
         return
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("device_delete", token))
     await _send_or_edit_admin_message(cb, "❌ Удаление устройства отменено", types.InlineKeyboardMarkup(inline_keyboard=[]))
-    await cb.answer("Отменено")
+    await cb.answer("Отменено", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_DEVICE_REISSUE_PREFIX))
@@ -2075,7 +2075,7 @@ async def admin_device_reissue_btn(cb: types.CallbackQuery):
         page = int(page_raw)
         source = _infer_user_manage_source(cb)
     except ValueError:
-        await cb.answer("Некорректные параметры действия", show_alert=True)
+        await cb.answer("Некорректные параметры действия", show_alert=False)
         return
     token = _generate_admin_action_token()
     await set_pending_admin_action(
@@ -2098,7 +2098,7 @@ async def admin_device_reissue_btn(cb: types.CallbackQuery):
             ]
         ),
     )
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_CONFIRM_DEVICE_REISSUE))
@@ -2107,14 +2107,14 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
         return
     token = _extract_action_token(cb.data, CB_CONFIRM_DEVICE_REISSUE)
     if not token:
-        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=True)
+        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=False)
         return
     action = await pop_pending_admin_action(ADMIN_ID, _make_token_action_key("device_reissue", token))
     if not action or action.get("action") != "device_reissue":
-        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=True)
+        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=False)
         return
     if _is_pending_action_expired(action):
-        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=True)
+        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=False)
         return
     uid = int(action["target"])
     device_num = int(action["device_num"])
@@ -2134,7 +2134,7 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
                 parse_mode="HTML",
                 reply_markup=_user_manage_result_markup(uid, page, source),
             )
-            await cb.answer("Нечего перевыпускать")
+            await cb.answer("Нечего перевыпускать", show_alert=False)
             return
         await _send_or_edit_admin_message(cb, 
             (
@@ -2147,11 +2147,11 @@ async def confirm_device_reissue(cb: types.CallbackQuery):
             parse_mode="HTML",
             reply_markup=_user_manage_result_markup(uid, page, source),
         )
-        await cb.answer("Готово")
+        await cb.answer("Готово", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка confirm_device_reissue: %s", e)
         await write_audit_log(ADMIN_ID, "admin_device_reissue_failed", f"target={uid}; device_num={device_num}; error={str(e)[:200]}")
-        await cb.answer("❌ Не удалось перевыпустить устройство", show_alert=True)
+        await cb.answer("❌ Не удалось перевыпустить устройство", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_CANCEL_DEVICE_REISSUE))
@@ -2160,11 +2160,11 @@ async def cancel_device_reissue(cb: types.CallbackQuery):
         return
     token = _extract_action_token(cb.data, CB_CANCEL_DEVICE_REISSUE)
     if not token:
-        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
+        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=False)
         return
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("device_reissue", token))
     await _send_or_edit_admin_message(cb, "❌ Перевыпуск устройства отменён", types.InlineKeyboardMarkup(inline_keyboard=[]))
-    await cb.answer("Отменено")
+    await cb.answer("Отменено", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_REVOKE_PREFIX))
@@ -2177,7 +2177,7 @@ async def admin_revoke_btn(cb: types.CallbackQuery):
         page = int(page_raw)
         source = _infer_user_manage_source(cb)
     except ValueError:
-        await cb.answer("Некорректные параметры действия", show_alert=True)
+        await cb.answer("Некорректные параметры действия", show_alert=False)
         return
     token = _generate_admin_action_token()
     await set_pending_admin_action(
@@ -2193,7 +2193,7 @@ async def admin_revoke_btn(cb: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=get_admin_confirm_kb("revoke", token),
     )
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_CONFIRM_REVOKE))
@@ -2202,14 +2202,14 @@ async def confirm_revoke(cb: types.CallbackQuery):
         return
     token = _extract_action_token(cb.data, CB_CONFIRM_REVOKE)
     if not token:
-        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=True)
+        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=False)
         return
     action = await pop_pending_admin_action(ADMIN_ID, _make_token_action_key("revoke", token))
     if not action or action.get("action") != "revoke":
-        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=True)
+        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=False)
         return
     if _is_pending_action_expired(action):
-        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=True)
+        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=False)
         return
     uid = int(action["target"])
     page = int(action.get("page", 0))
@@ -2233,10 +2233,10 @@ async def confirm_revoke(cb: types.CallbackQuery):
                 inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ К списку", callback_data=back_callback)]]
             ),
         )
-        await cb.answer("Готово")
+        await cb.answer("Готово", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка confirm_revoke: %s", e)
-        await cb.answer("❌ Не удалось отключить пользователя", show_alert=True)
+        await cb.answer("❌ Не удалось отключить пользователя", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_CANCEL_REVOKE))
@@ -2245,11 +2245,11 @@ async def cancel_revoke(cb: types.CallbackQuery):
         return
     token = _extract_action_token(cb.data, CB_CANCEL_REVOKE)
     if not token:
-        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
+        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=False)
         return
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("revoke", token))
     await _send_or_edit_admin_message(cb, "❌ Отключение отменено", types.InlineKeyboardMarkup(inline_keyboard=[]))
-    await cb.answer("Отменено")
+    await cb.answer("Отменено", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_DELETE_PREFIX))
@@ -2262,7 +2262,7 @@ async def admin_del_user(cb: types.CallbackQuery):
         page = int(page_raw)
         source = _infer_user_manage_source(cb)
     except ValueError:
-        await cb.answer("Некорректные параметры действия", show_alert=True)
+        await cb.answer("Некорректные параметры действия", show_alert=False)
         return
     token = _generate_admin_action_token()
     await set_pending_admin_action(
@@ -2278,7 +2278,7 @@ async def admin_del_user(cb: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=get_admin_confirm_kb("delete_user", token),
     )
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_CONFIRM_DELETE_USER))
@@ -2287,14 +2287,14 @@ async def confirm_delete_user(cb: types.CallbackQuery):
         return
     token = _extract_action_token(cb.data, CB_CONFIRM_DELETE_USER)
     if not token:
-        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=True)
+        await cb.answer("Подтверждение устарело. Откройте действие заново.", show_alert=False)
         return
     action = await pop_pending_admin_action(ADMIN_ID, _make_token_action_key("delete_user", token))
     if not action or action.get("action") != "delete_user":
-        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=True)
+        await cb.answer("Подтверждение не найдено или уже использовано.", show_alert=False)
         return
     if _is_pending_action_expired(action):
-        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=True)
+        await cb.answer("Подтверждение истекло. Откройте действие заново.", show_alert=False)
         return
     uid = int(action["target"])
     page = int(action.get("page", 0))
@@ -2318,10 +2318,10 @@ async def confirm_delete_user(cb: types.CallbackQuery):
                 inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ К списку", callback_data=back_callback)]]
             ),
         )
-        await cb.answer("Готово")
+        await cb.answer("Готово", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка confirm_delete_user: %s", e)
-        await cb.answer(f"❌ Не удалось удалить пользователя: {str(e)[:120]}", show_alert=True)
+        await cb.answer(f"❌ Не удалось удалить пользователя: {str(e)[:120]}", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_CANCEL_DELETE_USER))
@@ -2330,18 +2330,18 @@ async def cancel_delete_user(cb: types.CallbackQuery):
         return
     token = _extract_action_token(cb.data, CB_CANCEL_DELETE_USER)
     if not token:
-        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=True)
+        await cb.answer("Отмена устарела. Откройте действие заново.", show_alert=False)
         return
     await clear_pending_admin_action(ADMIN_ID, _make_token_action_key("delete_user", token))
     await _send_or_edit_admin_message(cb, "❌ Удаление отменено", types.InlineKeyboardMarkup(inline_keyboard=[]))
-    await cb.answer("Отменено")
+    await cb.answer("Отменено", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_BROADCAST)
 async def admin_broadcast_btn(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await clear_pending_broadcast(ADMIN_ID)
     await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
     await set_pending_admin_action(
@@ -2366,7 +2366,7 @@ async def broadcast_select_segment(cb: types.CallbackQuery):
         return
     segment = cb.data.removeprefix(CB_BROADCAST_SEGMENT_PREFIX).strip()
     if segment not in BROADCAST_SEGMENT_LABELS:
-        await cb.answer("Неизвестный сегмент", show_alert=True)
+        await cb.answer("Неизвестный сегмент", show_alert=False)
         return
     await clear_pending_admin_action(ADMIN_ID, BROADCAST_SEGMENT_SELECTION_ACTION_KEY)
     await set_pending_admin_action(
@@ -2378,7 +2378,7 @@ async def broadcast_select_segment(cb: types.CallbackQuery):
         recipients_count = await get_broadcast_segment_user_count(segment)
     except InvalidBroadcastSegmentError:
         await clear_pending_admin_action(ADMIN_ID, BROADCAST_INPUT_ACTION_KEY)
-        await cb.answer("Некорректный сегмент рассылки. Выберите сегмент заново.", show_alert=True)
+        await cb.answer("Некорректный сегмент рассылки. Выберите сегмент заново.", show_alert=False)
         return
     await _send_or_edit_admin_message(cb, 
         (
@@ -2390,7 +2390,7 @@ async def broadcast_select_segment(cb: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=get_broadcast_cancel_kb(),
     )
-    await cb.answer("Сегмент выбран")
+    await cb.answer("Сегмент выбран", show_alert=False)
 
 
 @router.callback_query(F.data == CB_BROADCAST_CONFIRM)
@@ -2399,7 +2399,7 @@ async def broadcast_confirm(cb: types.CallbackQuery):
         return
     pending = await get_pending_broadcast(ADMIN_ID)
     if not pending:
-        await cb.answer("Нет ожидающей рассылки", show_alert=True)
+        await cb.answer("Нет ожидающей рассылки", show_alert=False)
         return
     text = pending["text"]
     segment = pending["segment"]
@@ -2408,7 +2408,7 @@ async def broadcast_confirm(cb: types.CallbackQuery):
         job_id = await create_broadcast_job(ADMIN_ID, text, segment=segment)
     except InvalidBroadcastSegmentError:
         await clear_pending_broadcast(ADMIN_ID)
-        await cb.answer("Некорректный сегмент рассылки. Создайте рассылку заново.", show_alert=True)
+        await cb.answer("Некорректный сегмент рассылки. Создайте рассылку заново.", show_alert=False)
         return
     await clear_pending_broadcast(ADMIN_ID)
     await write_audit_log(
@@ -2427,7 +2427,7 @@ async def broadcast_confirm(cb: types.CallbackQuery):
         ),
         parse_mode="HTML",
     )
-    await cb.answer("Поставлено в очередь")
+    await cb.answer("Поставлено в очередь", show_alert=False)
 
 
 @router.callback_query(F.data == CB_BROADCAST_CANCEL)
@@ -2439,7 +2439,7 @@ async def broadcast_cancel(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, BROADCAST_SEGMENT_SELECTION_ACTION_KEY)
     await write_audit_log(ADMIN_ID, "broadcast_cancel", "")
     await _send_or_edit_admin_message(cb, "❌ Рассылка отменена", types.InlineKeyboardMarkup(inline_keyboard=[]))
-    await cb.answer("Отменено")
+    await cb.answer("Отменено", show_alert=False)
 
 
 @router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingBroadcastInput())
@@ -2486,7 +2486,7 @@ async def admin_referrals_summary(cb: types.CallbackQuery):
         await build_ref_stats_text(),
         get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN, CB_ADMIN_REFRESH_REFERRALS),
     )
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_SERVICE_SETTINGS)
@@ -2502,7 +2502,7 @@ async def admin_service_settings_screen(cb: types.CallbackQuery):
         await _render_service_settings_text(),
         get_admin_service_settings_kb(referral_enabled, torrent_enabled),
     )
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_SERVICE_SUPPORT)
@@ -2512,7 +2512,7 @@ async def admin_service_support_start(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_SUPPORT_INPUT_ACTION_KEY, {"action": SERVICE_SUPPORT_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Введите username поддержки (пример: @support).")
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_SERVICE_DOWNLOAD)
@@ -2522,7 +2522,7 @@ async def admin_service_download_start(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_DOWNLOAD_INPUT_ACTION_KEY, {"action": SERVICE_DOWNLOAD_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Введите ссылку на загрузку (не пустую).")
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_SERVICE_REFERRAL_TOGGLE)
@@ -2543,7 +2543,7 @@ async def admin_service_invitee_bonus_start(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_INVITEE_BONUS_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Введите бонус другу в днях (целое > 0).")
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_SERVICE_INVITER_BONUS)
@@ -2553,7 +2553,7 @@ async def admin_service_inviter_bonus_start(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_INVITER_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_INVITER_BONUS_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Введите бонус пригласившему в днях (целое > 0).")
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_SERVICE_REF_RECURRING_BONUS)
@@ -2563,7 +2563,7 @@ async def admin_service_ref_recurring_bonus_start(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY, {"action": SERVICE_REF_RECURRING_BONUS_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Введите recurring-бонус пригласившему в днях (целое > 0).")
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_SERVICE_REF_RECURRING_MIN)
@@ -2573,7 +2573,7 @@ async def admin_service_ref_recurring_min_start(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     await set_pending_admin_action(ADMIN_ID, SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY, {"action": SERVICE_REF_RECURRING_MIN_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Введите минимальную длительность покупки для recurring (целое > 0).")
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_SERVICE_TORRENT_TOGGLE)
@@ -2599,7 +2599,7 @@ async def admin_health_summary(cb: types.CallbackQuery):
         await build_runtime_smokecheck_text(),
         get_admin_simple_back_kb(CB_ADMIN_BACK_MAIN, refresh_cb=CB_ADMIN_REFRESH_HEALTH),
     )
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_TEXT_OVERRIDES)
@@ -2614,7 +2614,7 @@ async def admin_text_overrides_screen(cb: types.CallbackQuery):
         f"📝 <b>Переопределения текстов</b>\nАктивных переопределений: <b>{overrides_count}</b>",
         get_admin_text_overrides_kb(),
     )
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.in_(set(TEXT_OVERRIDE_CALLBACK_KEY_MAP.keys())))
@@ -2623,7 +2623,7 @@ async def admin_text_override_view_key(cb: types.CallbackQuery):
         return
     key = TEXT_OVERRIDE_CALLBACK_KEY_MAP.get(cb.data)
     if not key:
-        await cb.answer("Неизвестный ключ", show_alert=True)
+        await cb.answer("Неизвестный ключ", show_alert=False)
         return
     text = await get_text(key)
     await _send_or_edit_admin_message(cb, 
@@ -2631,7 +2631,7 @@ async def admin_text_override_view_key(cb: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=get_admin_text_override_item_kb(key),
     )
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_TEXT_VIEW_PREFIX))
@@ -2640,7 +2640,7 @@ async def admin_text_override_view_key_prefixed(cb: types.CallbackQuery):
         return
     key = cb.data.removeprefix(CB_ADMIN_TEXT_VIEW_PREFIX).strip()
     if key not in TEXT_OVERRIDE_ALLOWED_KEYS:
-        await cb.answer("Ключ недоступен", show_alert=True)
+        await cb.answer("Ключ недоступен", show_alert=False)
         return
     text = await get_text(key)
     await _send_or_edit_admin_message(cb, 
@@ -2648,7 +2648,7 @@ async def admin_text_override_view_key_prefixed(cb: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=get_admin_text_override_item_kb(key),
     )
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_TEXT_SET_PREFIX))
@@ -2658,11 +2658,11 @@ async def admin_text_override_set_start(cb: types.CallbackQuery):
     await _clear_service_settings_pending()
     key = cb.data.removeprefix(CB_ADMIN_TEXT_SET_PREFIX)
     if key not in TEXT_OVERRIDE_ALLOWED_KEYS:
-        await cb.answer("Ключ недоступен", show_alert=True)
+        await cb.answer("Ключ недоступен", show_alert=False)
         return
     await set_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY, {"action": TEXT_OVERRIDE_INPUT_ACTION_KEY, "key": key})
     await _send_or_edit_admin_message(cb, f"Отправьте новый текст для <b>{key}</b>.")
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_TEXT_RESET_PREFIX))
@@ -2671,7 +2671,7 @@ async def admin_text_override_reset(cb: types.CallbackQuery):
         return
     key = cb.data.removeprefix(CB_ADMIN_TEXT_RESET_PREFIX)
     if key not in TEXT_OVERRIDE_ALLOWED_KEYS:
-        await cb.answer("Ключ недоступен", show_alert=True)
+        await cb.answer("Ключ недоступен", show_alert=False)
         return
     await reset_text_override(key)
     await write_audit_log(ADMIN_ID, "admin_text_override_reset", f"key={key}")
@@ -2680,7 +2680,7 @@ async def admin_text_override_reset(cb: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=get_admin_text_override_item_kb(key),
     )
-    await cb.answer("Сброшено")
+    await cb.answer("Сброшено", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_MAINTENANCE)
@@ -2693,7 +2693,7 @@ async def admin_maintenance_screen(cb: types.CallbackQuery):
     enabled = int(await get_setting("MAINTENANCE_MODE", int) or 0) == 1
     status_line = "🟠 Техработы: ВКЛ" if enabled else "🟢 Техработы: ВЫКЛ"
     await _send_or_edit_admin_message(cb, status_line, get_admin_maintenance_kb(enabled))
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_MAINTENANCE_ON)
@@ -2703,7 +2703,7 @@ async def admin_maintenance_on_cb(cb: types.CallbackQuery):
     await set_app_setting("MAINTENANCE_MODE", "1", updated_by=cb.from_user.id)
     await write_audit_log(cb.from_user.id, "maintenance_enabled", "purchase_flow=frozen")
     await _send_or_edit_admin_message(cb, "🟠 Техработы включены.", get_admin_maintenance_kb(True))
-    await cb.answer("Включено")
+    await cb.answer("Включено", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_MAINTENANCE_OFF)
@@ -2713,7 +2713,7 @@ async def admin_maintenance_off_cb(cb: types.CallbackQuery):
     await set_app_setting("MAINTENANCE_MODE", "0", updated_by=cb.from_user.id)
     await write_audit_log(cb.from_user.id, "maintenance_disabled", "purchase_flow=active")
     await _send_or_edit_admin_message(cb, "🟢 Техработы выключены.", get_admin_maintenance_kb(False))
-    await cb.answer("Выключено")
+    await cb.answer("Выключено", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_PROMOCODES)
@@ -2725,7 +2725,7 @@ async def admin_promocodes_screen(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
     await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
     await _send_or_edit_admin_message(cb, "🎟 <b>Промокоды</b>", get_admin_promocodes_kb())
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_PROMO_LIST)
@@ -2735,7 +2735,7 @@ async def admin_promocodes_list(cb: types.CallbackQuery):
     rows = await list_promo_codes(limit=20)
     if not rows:
         await _send_or_edit_admin_message(cb, "Промокодов пока нет.", get_admin_promocodes_kb())
-        await cb.answer()
+        await cb.answer(show_alert=False)
         return
     lines = [f"🎟 <b>Промокоды ({len(rows)})</b>\n"]
     for code, days, max_activations, used_count, is_active, _created_at in rows:
@@ -2743,7 +2743,7 @@ async def admin_promocodes_list(cb: types.CallbackQuery):
         status = "on" if int(is_active) == 1 else "off"
         lines.append(f"• <code>{code}</code> | +{int(days)}д | {int(used_count)}/{max_text} | {status}")
     await _send_or_edit_admin_message(cb, "\n".join(lines), get_admin_promocodes_kb())
-    await cb.answer("Готово")
+    await cb.answer("Готово", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_PROMO_CREATE)
@@ -2753,7 +2753,7 @@ async def admin_promocodes_create_start(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY, {"action": PROMO_CREATE_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Формат: CODE DAYS [MAX]")
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_PROMO_DISABLE)
@@ -2763,7 +2763,7 @@ async def admin_promocodes_disable_start(cb: types.CallbackQuery):
     await clear_pending_admin_action(ADMIN_ID, PROMO_CREATE_INPUT_ACTION_KEY)
     await set_pending_admin_action(ADMIN_ID, PROMO_DISABLE_INPUT_ACTION_KEY, {"action": PROMO_DISABLE_INPUT_ACTION_KEY})
     await _send_or_edit_admin_message(cb, "Введите CODE для отключения")
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_OPEN_USER_CARD_PREFIX))
@@ -2774,9 +2774,9 @@ async def admin_open_user_card_from_payment(cb: types.CallbackQuery):
     try:
         uid_raw, page_raw = raw.split("_", 1)
         await _send_user_manage_card(cb.message, int(uid_raw), int(page_raw))
-        await cb.answer("Открыто")
+        await cb.answer("Открыто", show_alert=False)
     except Exception:
-        await cb.answer("Некорректные параметры", show_alert=True)
+        await cb.answer("Некорректные параметры", show_alert=False)
 
 
 @router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingPaymentLookupInput())

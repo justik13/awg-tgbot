@@ -264,7 +264,7 @@ async def pay_stars_handler(cb: types.CallbackQuery, bot: Bot):
         await _send_or_edit_payment_screen(cb, "❌ Ошибка\n\nНеизвестный тариф. Попробуйте выбрать другой.")
         return
     
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await clear_pending_invoice_for_user(bot, cb.from_user.id)
     
     invoice_message = await _send_stars_invoice(
@@ -302,7 +302,7 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
         await _send_or_edit_payment_screen(cb, "❌ Ошибка\n\nНеизвестный тариф. Попробуйте выбрать другой.")
         return
     
-    await cb.answer()
+    await cb.answer(show_alert=False)
     
     try:
         # Формируем order_id для передачи в Platega (будет возвращен в callback)
@@ -368,7 +368,7 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
         await _send_or_edit_payment_screen(cb, "❌ Оплата через СБП временно недоступна\n\nПопробуйте позже или выберите другой способ оплаты.")
         return
     
-    await cb.answer()
+    await cb.answer(show_alert=False)
     
     try:
         # Get payment status to retrieve redirect URL
@@ -477,7 +477,7 @@ async def buy_7_days(cb: types.CallbackQuery):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await _show_buy_confirmation(cb, "sub_7", method="stars")
 
 
@@ -486,7 +486,7 @@ async def buy_30_days(cb: types.CallbackQuery):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await _show_buy_confirmation(cb, "sub_30", method="stars")
 
 
@@ -495,7 +495,7 @@ async def buy_90_days(cb: types.CallbackQuery):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await _show_buy_confirmation(cb, "sub_90", method="stars")
 
 
@@ -504,7 +504,7 @@ async def platega_buy_7_days(cb: types.CallbackQuery, bot: Bot):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await _create_platega_payment(cb, bot, "sub_7")
 
 
@@ -513,7 +513,7 @@ async def platega_buy_30_days(cb: types.CallbackQuery, bot: Bot):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await _create_platega_payment(cb, bot, "sub_30")
 
 
@@ -522,7 +522,7 @@ async def platega_buy_90_days(cb: types.CallbackQuery, bot: Bot):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await _create_platega_payment(cb, bot, "sub_90")
 
 
@@ -623,7 +623,7 @@ async def select_payment_method_stars(cb: types.CallbackQuery):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     text = (
         "<b>Выбран способ оплаты: Telegram Stars</b>\n\n"
         "Выберите тариф:\n"
@@ -645,7 +645,7 @@ async def select_payment_method_platega(cb: types.CallbackQuery):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     text = (
         "<b>Выбран способ оплаты: СБП (QR)</b>\n\n"
         "Способ оплаты: <b>Система Быстрых Платежей</b>\n"
@@ -675,7 +675,7 @@ async def _send_invoice_from_confirm(cb: types.CallbackQuery, bot: Bot, *, callb
         wait_seconds = max(mem_wait, persistent_wait, 1)
         await _send_or_edit_payment_screen(cb, f"⏱ Подождите {wait_seconds} сек.\n\nСлишком частые запросы. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await clear_pending_invoice_for_user(bot, cb.from_user.id)
     invoice_message = await _send_stars_invoice(bot, cb.message.chat.id, payload, title, label, amount)
     remember_pending_invoice(cb.from_user.id, cb.message.chat.id, invoice_message.message_id, payload)
@@ -687,7 +687,7 @@ async def buy_pay_7_days(cb: types.CallbackQuery, bot: Bot):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await _send_invoice_from_confirm(
         cb, bot,
         callback_action="buy_pay_7",
@@ -704,7 +704,7 @@ async def buy_pay_30_days(cb: types.CallbackQuery, bot: Bot):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await _send_invoice_from_confirm(
         cb, bot,
         callback_action="buy_pay_30",
@@ -721,7 +721,7 @@ async def buy_pay_90_days(cb: types.CallbackQuery, bot: Bot):
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await _send_invoice_from_confirm(
         cb, bot,
         callback_action="buy_pay_90",
@@ -834,7 +834,7 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
         await _send_or_edit_payment_screen(cb, "❌ Ошибка\n\nНеверный ID транзакции. Попробуйте снова.")
         return
     
-    await cb.answer()
+    await cb.answer(show_alert=False)
     
     # Проверяем статус платежа в Platega
     status_result = await platega_service.check_status(transaction_id)

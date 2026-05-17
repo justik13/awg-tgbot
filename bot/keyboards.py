@@ -115,7 +115,7 @@ def get_payment_method_selection_kb(payload: str) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=f"⭐ Telegram Stars ({info['stars']}⭐)", callback_data=f"{CB_PAY_STARS_PREFIX}{payload}")],
         [InlineKeyboardButton(text=f"💳 СБП ({info['rub']}₽)", callback_data=f"{CB_PAY_PLATEGA_PREFIX}{payload}")],
-        [InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data=CB_OPEN_PROFILE)],
+        [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -128,7 +128,7 @@ def get_platega_payment_kb(transaction_id: str, payload: str, payment_url: str) 
     rows = [
         [InlineKeyboardButton(text=f"💳 Оплатить {label} через СБП", url=payment_url)],
         [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
-        [InlineKeyboardButton(text="⬅️ Назад к тарифам", callback_data=CB_SHOW_BUY_MENU)],
+        [InlineKeyboardButton(text="⬅️ К тарифам", callback_data=CB_SHOW_BUY_MENU)],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -160,7 +160,7 @@ def get_config_result_kb(key_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="📄 Выдать .conf файл (для опытных)", callback_data=f"{CB_CONFIG_CONF_PREFIX}{key_id}")],
             [InlineKeyboardButton(text="♻️ Перевыпустить это устройство", callback_data=f"{CB_USER_REISSUE_DEVICE_PREFIX}{key_id}")],
-            [InlineKeyboardButton(text="⬅️ Назад к устройствам", callback_data=CB_OPEN_CONFIGS)],
+            [InlineKeyboardButton(text="⬅️ К устройствам", callback_data=CB_OPEN_CONFIGS)],
             [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
             [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
             _guide_row(),
@@ -173,7 +173,7 @@ def get_config_post_conf_kb(key_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="📄 Отправить .conf ещё раз", callback_data=f"{CB_CONFIG_CONF_PREFIX}{key_id}")],
             [InlineKeyboardButton(text="♻️ Перевыпустить это устройство", callback_data=f"{CB_USER_REISSUE_DEVICE_PREFIX}{key_id}")],
-            [InlineKeyboardButton(text="⬅️ Назад к устройствам", callback_data=CB_OPEN_CONFIGS)],
+            [InlineKeyboardButton(text="⬅️ К устройствам", callback_data=CB_OPEN_CONFIGS)],
             [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
             [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
             _guide_row(),
@@ -215,7 +215,7 @@ def get_support_back_kb() -> InlineKeyboardMarkup:
 def get_support_subpage_back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад в поддержку", callback_data=CB_OPEN_SUPPORT)],
+            [InlineKeyboardButton(text="⬅️ В поддержку", callback_data=CB_OPEN_SUPPORT)],
         ]
     )
 
@@ -232,7 +232,7 @@ def get_referrals_kb() -> InlineKeyboardMarkup:
 def get_promo_cancel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_PROMO_INPUT_CANCEL)],
+            [InlineKeyboardButton(text="❌ Отменить", callback_data=CB_PROMO_INPUT_CANCEL)],
             [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
         ]
     )
@@ -280,8 +280,8 @@ def get_admin_prices_kb() -> InlineKeyboardMarkup:
 def get_admin_price_confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Сохранить", callback_data=CB_ADMIN_PRICE_SAVE)],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_ADMIN_PRICE_CANCEL)],
+            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=CB_ADMIN_PRICE_SAVE)],
+            [InlineKeyboardButton(text="❌ Отменить", callback_data=CB_ADMIN_PRICE_CANCEL)],
         ]
     )
 
@@ -307,7 +307,7 @@ def get_user_reissue_confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="♻️ Да, перевыпустить", callback_data=CB_USER_REISSUE_CONFIRM)],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_USER_REISSUE_CANCEL)],
+            [InlineKeyboardButton(text="❌ Отменить", callback_data=CB_USER_REISSUE_CANCEL)],
         ]
     )
 
@@ -471,7 +471,7 @@ def get_admin_add_days_confirm_kb(token: str | None = None) -> InlineKeyboardMar
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, выдать +30 дней", callback_data=confirm_cb)],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=cancel_cb)],
+            [InlineKeyboardButton(text="❌ Отменить", callback_data=cancel_cb)],
         ]
     )
 
