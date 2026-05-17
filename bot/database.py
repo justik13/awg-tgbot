@@ -908,7 +908,7 @@ async def get_latest_user_payment_summary(user_id: int) -> dict[str, Any] | None
         return None
     return {
         "user_id": user_id,
-        "payment_id": row[0],
+        "transaction_id": row[0],
         "payload": row[1],
         "status": row[2],
         "amount": row[3],
