@@ -433,14 +433,18 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
             f"<code>{status_result.get('redirect', 'URL недоступен')}</code>\n\n"
             f"Или нажмите кнопку ниже:"
         )
-        reply_markup = types.InlineKeyboardMarkup(
-            inline_keyboard=[[
+        
+        redirect_url = status_result.get("redirect", "") or ""
+        kb_rows = []
+        if redirect_url and redirect_url.strip():
+            kb_rows.append([
                 types.InlineKeyboardButton(
                     text="💳 Открыть страницу оплаты",
-                    url=status_result.get("redirect", ""),
+                    url=redirect_url,
                 )
-            ]]
-        )
+            ])
+        reply_markup = types.InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None
+        
         await _send_or_edit_payment_screen(cb, text, reply_markup=reply_markup)
     except Exception as e:
         logger.exception("Failed to get Platega payment URL: %s", e)
@@ -678,7 +682,7 @@ async def _create_platega_payment(cb: types.CallbackQuery, bot: Bot, sub_type: s
             return
         
         transaction_id = payment_data["transaction_id"]
-        payment_url = payment_data.get("redirect_url", "")
+        payment_url = payment_data.get("payment_url", "")
         
         # Сохраняем платеж в БД
         raw_payload = {
@@ -711,11 +715,14 @@ async def _create_platega_payment(cb: types.CallbackQuery, bot: Bot, sub_type: s
             f"QR-код уже отображается на странице оплаты."
         )
         
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Открыть страницу оплаты", url=payment_url)],
+        # Формируем клавиатуру с проверкой URL
+        kb_rows = [
             [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
-        ])
+        ]
+        if payment_url and payment_url.strip():
+            kb_rows.insert(0, [InlineKeyboardButton(text="💳 Открыть страницу оплаты", url=payment_url)])
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
         
         await _send_or_edit_payment_screen(cb, text, reply_markup=kb)
         

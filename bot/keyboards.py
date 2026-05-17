@@ -138,10 +138,14 @@ def get_platega_payment_kb(transaction_id: str, payload: str, payment_url: str) 
     label = tariff_labels.get(payload, "подписку")
     
     rows = [
-        [InlineKeyboardButton(text=f"💳 Оплатить {label} через СБП", url=payment_url)],
         [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
         [InlineKeyboardButton(text="⬅️ К тарифам", callback_data=CB_SHOW_BUY_MENU)],
     ]
+    
+    # Добавляем кнопку оплаты только если URL корректный
+    if payment_url and payment_url.strip():
+        rows.insert(0, [InlineKeyboardButton(text=f"💳 Оплатить {label} через СБП", url=payment_url)])
+    
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

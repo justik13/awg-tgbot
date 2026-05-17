@@ -1,40 +1,4 @@
 ```
-# Python
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# Environment
-.venv/
-venv/
-.env
-.env.local
-*.env.*
-
-# Logs
-*.log
-
-# Editors
-.vscode/
-.idea/
-
-# Dependencies
-node_modules/
-
-# Build artifacts
-dist/
-build/
-target/
-
-# Testing
-.coverage
-htmlcov/
-.coverage.*
-.pytest_cache/
-.mypy_cache/
-
-# OS
-.DS_Store
-Thumbs.db
 ```
