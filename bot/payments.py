@@ -333,12 +333,23 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
         # Формируем order_id для передачи в Platega (будет возвращен в callback)
         order_id = f"{cb.from_user.id}:{payload}"
         
+        # Формируем URL для webhook callback
+        webhook_domain = config.PLATEGA_WEBHOOK_DOMAIN or config.PUBLIC_HOST
+        if webhook_domain:
+            return_url = f"https://{webhook_domain}/webhook?status=success"
+            failed_url = f"https://{webhook_domain}/webhook?status=failed"
+        else:
+            return_url = None
+            failed_url = None
+        
         # Create Platega payment transaction
         payment_result = await platega_service.create_payment(
             amount=float(info["rub"]),
             currency="RUB",
             description=f"VPN подписка на {info['days']} дней",
             payload=order_id,  # Передаем order_id как payload для callback
+            return_url=return_url,
+            failed_url=failed_url,
             payment_method=PLATEGA_METHOD_SBP_QR,
         )
         
