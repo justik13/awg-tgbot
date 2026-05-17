@@ -206,11 +206,11 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
     async def test_problem_context_user_card_keeps_full_actions_and_context_nav(self):
         kb = _user_manage_kb(uid=4001, page=2, show_retry_activation=True, device_nums=[1, 2], source="problem_activations")
         callbacks = [button.callback_data for row in kb.inline_keyboard for button in row]
-        self.assertIn("admin_add_days_4001_1_2", callbacks)
-        self.assertIn("admin_revoke_4001_2", callbacks)
-        self.assertIn("admin_delete_4001_2", callbacks)
-        self.assertIn("admin_device_delete_4001_1_2", callbacks)
-        self.assertIn("admin_device_reissue_4001_1_2", callbacks)
+        self.assertIn("a:ud:4001_1_2", callbacks)
+        self.assertIn("a:ur:4001_2", callbacks)
+        self.assertIn("a:udel:4001_2", callbacks)
+        self.assertIn("a:udd:4001_1_2", callbacks)
+        self.assertIn("a:udi:4001_1_2", callbacks)
         self.assertIn(f"{CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX}4001_2", callbacks)
         self.assertIn(f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}4001_2", callbacks)
         self.assertIn("a:pm:pa:p:2", callbacks)
@@ -218,8 +218,8 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
     async def test_normal_user_card_flow_not_regressed(self):
         kb = _user_manage_kb(uid=5001, page=1, show_retry_activation=True, device_nums=[1], source="users")
         callbacks = [button.callback_data for row in kb.inline_keyboard for button in row]
-        self.assertIn("admin_add_days_5001_30_1", callbacks)
-        self.assertIn("admin_retry_activation_5001_1", callbacks)
+        self.assertIn("a:ud:5001_30_1", callbacks)
+        self.assertIn("a:ur:5001_1", callbacks)
         self.assertIn(f"{CB_ADMIN_USERS_PAGE_PREFIX}1", callbacks)
         self.assertNotIn(f"{CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX}5001_1", callbacks)
         self.assertNotIn(f"{CB_ADMIN_RETRY_ACTIVATION_PROBLEM_PREFIX}5001_1", callbacks)
@@ -236,7 +236,7 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
 
         cb = DummyCallback()
         await admin_noop(cb)
-        cb.answer.assert_awaited_once_with()
+        cb.answer.assert_awaited_once_with(show_alert=False)
 
     async def test_page_indicator_uses_admin_noop_callback(self):
         kb = get_problem_activations_kb(page=0, total_pages=1, items=[{"user_id": 1, "retry_enabled": False}])
@@ -294,7 +294,7 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
         ):
             await admin_retry_activation_from_problem(cb)
 
-        cb.answer.assert_awaited_once_with("Повтор обработан")
+        cb.answer.assert_awaited_once_with("Повтор обработан", show_alert=False)
         cb.message.answer.assert_awaited_once()
         msg_args = cb.message.answer.await_args.args
         msg_kwargs = cb.message.answer.await_args.kwargs
@@ -388,7 +388,7 @@ class AdminReliabilityImprovementsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Проблемные активации", answer_text)
         self.assertIn("Текущая оценка получателей: <b>17</b>", answer_text)
         self.assertEqual(cb.message.answer.await_args.kwargs["parse_mode"], "HTML")
-        cb.answer.assert_awaited_once_with("Поставлено в очередь")
+        cb.answer.assert_awaited_once_with("Поставлено в очередь", show_alert=False)
         audit_mock.assert_awaited_once_with(
             ADMIN_ID,
             "broadcast_queued",

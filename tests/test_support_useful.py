@@ -41,7 +41,7 @@ class SupportUsefulTests(unittest.TestCase):
         self.assertEqual(len(kb.inline_keyboard), 1)
         self.assertEqual(len(kb.inline_keyboard[0]), 1)
         button = kb.inline_keyboard[0][0]
-        self.assertEqual(button.text, "⬅️ Назад в поддержку")
+        self.assertEqual(button.text, "⬅️ В поддержку")
         self.assertEqual(button.callback_data, CB_OPEN_SUPPORT)
 
     def test_support_subpages_use_support_back_keyboard(self):

@@ -800,11 +800,11 @@ async def _denylist_keyboard():
     return get_admin_denylist_kb(denylist_enabled=enabled, denylist_mode=mode)
 
 
-async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_markup) -> None:
+async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_markup=None, parse_mode=None, **kwargs) -> None:
     message = cb.message
     if message is not None and hasattr(message, "edit_text"):
         try:
-            await message.edit_text(text, reply_markup=reply_markup)
+            await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
             await cb.answer(show_alert=False)
             return
         except TelegramBadRequest as error:
@@ -820,7 +820,7 @@ async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_
             logger.warning("Admin screen edit fallback due to unexpected error: %s", error)
     if message is not None:
         try:
-            await message.answer(text, reply_markup=reply_markup)
+            await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
         except TelegramBadRequest as send_error:
             logger.warning("Failed to send fallback admin message: %s", send_error)
 
@@ -1933,6 +1933,7 @@ async def admin_retry_activation_from_problem(cb: types.CallbackQuery):
                 f"📝 Детали: {escape_html(result_message)}"
             ),
             _user_manage_kb(uid, page, show_retry_activation=show_retry_activation, source="problem_activations"),
+            parse_mode="HTML",
         )
         await cb.answer("Повтор обработан", show_alert=False)
     except Exception as error:
