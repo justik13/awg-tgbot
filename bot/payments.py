@@ -347,7 +347,7 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
         payment_result = await platega_service.create_payment(
             amount=float(info["rub"]),
             currency="RUB",
-            description=f"VPN подписка на {info['days']} дней",
+            description=f"Подписка на {info['days']} дней",
             payload=order_id,  # Передаем order_id как payload для callback
             return_url=return_url,
             failed_url=failed_url,
