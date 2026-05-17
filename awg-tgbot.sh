@@ -1490,6 +1490,17 @@ write_detected_awg_env() {
 
 configure_manual_awg_only() {
   local value default
+  # Запрос Telegram токена и Admin ID перед настройкой AWG
+  api_token=""
+  admin_id=""
+  
+  prompt_api_token api_token
+  set_env_value API_TOKEN "$api_token"
+  
+  prompt_admin_id admin_id
+  set_env_value ADMIN_ID "$admin_id"
+  
+  # Настройка AWG параметров
   default="$(pick_existing_or_default "$(get_env_value DOCKER_CONTAINER)" "$DETECTED_CONTAINER")"
   prompt_with_default 'DOCKER_CONTAINER' "$default" value
   set_env_value DOCKER_CONTAINER "$value"
@@ -2906,7 +2917,103 @@ install_or_reinstall_flow() {
   if [[ "$mode" == "reinstall" && "$choice" == "1" ]]; then
     # Быстрая переустановка: используем текущие значения AWG из .env
     : # Ничего не делаем, оставляем текущие значения
+  elif [[ "$mode" == "reinstall" && "$choice" == "2" ]]; then
+    # Автоматическая переустановка: автоопределение AWG + ручной ввод основных параметров
+    api_token=""
+    admin_id=""
+    
+    prompt_api_token api_token
+    set_env_value API_TOKEN "$api_token"
+    
+    prompt_admin_id admin_id
+    set_env_value ADMIN_ID "$admin_id"
+    
+    write_detected_awg_env
+    if [[ -z "$(get_env_value SERVER_PUBLIC_KEY)" ]]; then
+      warn "Не удалось автоматически определить SERVER_PUBLIC_KEY. Нужен один ручной шаг."
+      prompt_with_default 'SERVER_PUBLIC_KEY' "$DETECTED_PUBLIC_KEY" value
+      set_env_value SERVER_PUBLIC_KEY "$value"
+    fi
+    if [[ -z "$(get_env_value SERVER_IP)" ]]; then
+      warn "Не удалось автоматически определить SERVER_IP. Укажи внешний IP и порт."
+      default="$(pick_existing_or_default "$(get_env_value PUBLIC_HOST)" "$DETECTED_PUBLIC_HOST")"
+      prompt_with_default 'PUBLIC_HOST / внешний IP' "$default" value
+      set_env_value PUBLIC_HOST "$value"
+      if [[ -n "$DETECTED_LISTEN_PORT" && -n "$value" ]]; then
+        set_env_value SERVER_IP "${value}:${DETECTED_LISTEN_PORT}"
+      else
+        prompt_with_default 'SERVER_IP (IP:port)' "$DETECTED_SERVER_IP" value
+        set_env_value SERVER_IP "$value"
+      fi
+    fi
+    
+    # Настройка Platega
+    echo ""
+    echo "--- Настройка Platega (опционально, нажмите Enter для пропуска) ---"
+    
+    platega_merchant_id=""
+    default="$(pick_existing_or_default "$(get_env_value PLATEGA_MERCHANT_ID)" "")"
+    prompt_with_default 'Platega Merchant ID' "$default" platega_merchant_id
+    
+    if [[ -n "$platega_merchant_id" ]]; then
+      set_env_value PLATEGA_MERCHANT_ID "$platega_merchant_id"
+      
+      platega_secret_key=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_SECRET_KEY)" "")"
+      prompt_with_default 'Platega Secret Key' "$default" platega_secret_key
+      set_env_value PLATEGA_SECRET_KEY "$platega_secret_key"
+      
+      # Запрос домена для webhook
+      platega_domain=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_DOMAIN)" "")"
+      prompt_with_default 'Домен для webhook Platega (например: example.com)' "$default" platega_domain
+      
+      if [[ -n "$platega_domain" ]]; then
+        set_env_value PLATEGA_WEBHOOK_DOMAIN "$platega_domain"
+        set_env_value PLATEGA_WEBHOOK_PORT "443"
+        
+        # Автоматическая настройка Nginx и SSL
+        setup_nginx_and_ssl "$platega_domain"
+      else
+        # Если домен не указан, используем старый режим с IP:порт
+        platega_webhook_port=""
+        default="$(pick_existing_or_default "$(get_env_value PLATEGA_WEBHOOK_PORT)" "8081")"
+        prompt_with_default 'Порт webhook Platega' "$default" platega_webhook_port
+        set_env_value PLATEGA_WEBHOOK_PORT "$platega_webhook_port"
+      fi
+      
+      platega_price_7_days=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_7_DAYS)" "100")"
+      prompt_with_default 'Цена 7 дней через Platega (руб)' "$default" platega_price_7_days
+      set_env_value PLATEGA_PRICE_7_DAYS "$platega_price_7_days"
+      
+      platega_price_30_days=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_30_DAYS)" "250")"
+      prompt_with_default 'Цена 30 дней через Platega (руб)' "$default" platega_price_30_days
+      set_env_value PLATEGA_PRICE_30_DAYS "$platega_price_30_days"
+      
+      platega_price_90_days=""
+      default="$(pick_existing_or_default "$(get_env_value PLATEGA_PRICE_90_DAYS)" "700")"
+      prompt_with_default 'Цена 90 дней через Platega (руб)' "$default" platega_price_90_days
+      set_env_value PLATEGA_PRICE_90_DAYS "$platega_price_90_days"
+      
+      echo "[+] Platega настроен."
+    else
+      echo "[*] Platega пропущен."
+      set_env_value PLATEGA_MERCHANT_ID ""
+      set_env_value PLATEGA_SECRET_KEY ""
+    fi
   elif [[ "$choice" == "1" ]]; then
+    # Автоматическая установка (не reinstall): запрос Telegram токена и Admin ID перед настройкой AWG
+    api_token=""
+    admin_id=""
+    
+    prompt_api_token api_token
+    set_env_value API_TOKEN "$api_token"
+    
+    prompt_admin_id admin_id
+    set_env_value ADMIN_ID "$admin_id"
+    
     write_detected_awg_env
     if [[ -z "$(get_env_value SERVER_PUBLIC_KEY)" ]]; then
       warn "Не удалось автоматически определить SERVER_PUBLIC_KEY. Нужен один ручной шаг."
@@ -2983,6 +3090,7 @@ install_or_reinstall_flow() {
       set_env_value PLATEGA_SECRET_KEY ""
     fi
   else
+    # Ручная установка или ручная переустановка (choice=2 при install, choice=3 при reinstall)
     configure_manual_awg_only
     default="$(pick_existing_or_default "$(get_env_value STARS_PRICE_7_DAYS)" "21")"
     prompt_with_default 'Цена 7 дней в Telegram Stars' "$default" value
