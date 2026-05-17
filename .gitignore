@@ -1,4 +1,17 @@
 ```
+# Environment variables
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
 # Python
 __pycache__/
 *.pyc
@@ -8,35 +21,39 @@ __pycache__/
 env/
 venv/
 .venv/
-.eggs/
-.egg-info/
-*.egg-info/
-
-# Logs
-*.log
-
-# Environment variables
-.env
-.env.local
-.env.*
-!.env.example
-
-# Coverage reports
+.venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
 .coverage
-coverage/
-htmlcov/
-.pytest_cache/
-.mypy_cache/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git/modules/
+.DS_Store
+Thumbs.db
 
 # Build artifacts
 dist/
 build/
-*.so
-*.dylib
-*.dll
-*.exe
+*.egg-info/
+.eggs/
 
-# OS generated files
+# Testing
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
 ```
