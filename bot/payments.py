@@ -1015,7 +1015,9 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
                         "<b>✅ Оплата уже подтверждена!</b>\n\n"
                         "Подписка активирована, ключ был отправлен ранее."
                     )
-                    kb = None
+                    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+                        [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data=CB_SHOW_BUY_MENU)]
+                    ])
                 else:
                     # Активируем подписку
                     success = await activate_subscription(user_id, sub_type, "platega", transaction_id, bot=cb.bot)
@@ -1025,7 +1027,9 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
                             "<b>✅ Оплата подтверждена!</b>\n\n"
                             "Ключ будет отправлен вам в ближайшее время."
                         )
-                        kb = None
+                        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+                            [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data=CB_SHOW_BUY_MENU)]
+                        ])
                     else:
                         text = (
                             "<b>⚠️ Произошла ошибка при активации</b>\n\n"
@@ -1041,7 +1045,8 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
                     "Обратитесь к поддержке."
                 )
                 kb = types.InlineKeyboardMarkup(inline_keyboard=[
-                    [types.InlineKeyboardButton(text="📞 Поддержка", url=f"https://t.me/{config.get_support_username()}")]
+                    [types.InlineKeyboardButton(text="📞 Поддержка", url=f"https://t.me/{config.get_support_username()}")],
+                    [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data=CB_SHOW_BUY_MENU)]
                 ])
         else:
             text = (
@@ -1050,7 +1055,8 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
                 "Возможно, вы создали платеж в другом боте."
             )
             kb = types.InlineKeyboardMarkup(inline_keyboard=[
-                [types.InlineKeyboardButton(text="📞 Поддержка", url=f"https://t.me/{config.get_support_username()}")]
+                [types.InlineKeyboardButton(text="📞 Поддержка", url=f"https://t.me/{config.get_support_username()}")],
+                [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data=CB_SHOW_BUY_MENU)]
             ])
     
     elif status == "PENDING":
