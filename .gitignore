@@ -1,43 +1,40 @@
-```python
+```
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-venv/
+
+# Environment
 .venv/
+venv/
 .env
 .env.local
 *.env.*
-.env.*
 
 # Logs
 *.log
 
-# Coverage
-.coverage
-htmlcov/
-coverage/
-
-# IDE
+# Editors
 .vscode/
 .idea/
-*.swp
-*.swo
-*.tmp
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Testing
+.coverage
+htmlcov/
+.coverage.*
+.pytest_cache/
+.mypy_cache/
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Build
-build/
-dist/
-*.egg-info/
-
-# Testing
-.pytest_cache/
-.mypy_cache/
 ```
