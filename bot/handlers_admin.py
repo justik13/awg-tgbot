@@ -1725,7 +1725,8 @@ async def admin_manage_user(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     try:
-        _, _, _, uid_raw, page_raw = cb.data.split("_", 4)
+        raw = cb.data.removeprefix(CB_ADMIN_MANAGE_USER_PREFIX)
+        uid_raw, page_raw = raw.split("_", 1)
         uid = int(uid_raw)
         page = int(page_raw)
         await _send_user_manage_card(cb.message, uid, page)
