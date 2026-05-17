@@ -433,38 +433,29 @@ async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
         payload = str(row[1])
         
         if platega_service.is_success_status(status):
-            # Payment successful - provision subscription
+            # Payment successful - update status but don't issue key yet
+            await update_payment_status(transaction_id, "received")
+            
+            # Show success message with connect button
             tariff = get_tariffs().get(payload)
             if not tariff:
                 await cb.message.answer("Неизвестный тариф")
                 return
             
-            # Update payment status
-            await update_payment_status(transaction_id, "received")
+            success_text = await get_text("payment_success")
+            next_step_text = await get_text("payment_next_step", configs_per_user=CONFIGS_PER_USER)
             
-            # Process provisioning
-            applied = await process_payment_provisioning(
-                payment_id=transaction_id,
-                user_id=user_id,
-                payload=payload,
-                days=tariff["days"],
-                bot=bot,
+            await cb.message.edit_text(
+                f"{success_text}\n{next_step_text}",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="🔑 Подключиться", callback_data=CB_OPEN_CONFIGS)],
+                        [InlineKeyboardButton(text="⏱ Проверить статус активации", callback_data=CB_CHECK_ACTIVATION_STATUS)],
+                        [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
+                    ]
+                ),
             )
-            
-            if applied:
-                result_status = await _finalize_post_payment_delivery(
-                    payment_id=transaction_id,
-                    user_id=user_id,
-                    deliver_ready=lambda: _send_user_active_config(cb.message, user_id),
-                )
-                final_text = await get_payment_result_text(result_status)
-                await cb.message.edit_text(
-                    final_text,
-                    parse_mode="HTML",
-                    reply_markup=get_post_payment_kb(),
-                )
-            else:
-                await cb.message.answer("Оплата подтверждена. Подписка активируется в ближайшее время.")
         
         elif platega_service.is_pending_status(status):
             await cb.message.answer("⏳ Платёж ещё в обработке. Ожидайте подтверждения от банка.")
