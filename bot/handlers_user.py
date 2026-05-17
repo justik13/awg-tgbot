@@ -75,6 +75,7 @@ from ui_constants import (
     BTN_PROFILE,
     BTN_SUPPORT,
     CB_CHECK_ACTIVATION_STATUS,
+    CB_CHECK_PAYMENT_STATUS,
     CB_CONFIG_CONF_PREFIX,
     CB_CONFIG_DEVICE_PREFIX,
     CB_OPEN_CONFIGS,
@@ -864,6 +865,39 @@ async def check_activation_status(cb: types.CallbackQuery):
         f"{await get_activation_status_text(status, has_config=has_config)}\n\n{await get_support_short_text()}",
         reply_markup=reply_markup,
     )
+
+
+@router.callback_query(F.data == CB_CHECK_PAYMENT_STATUS)
+async def check_payment_status_callback(cb: types.CallbackQuery):
+    """Обработчик кнопки проверки статуса платежа из экрана ожидания."""
+    await _clear_promo_input_pending(cb.from_user.id)
+    await cb.answer(show_alert=False)
+    
+    # Получаем последний активный платёж пользователя
+    payment_summary = await get_latest_user_payment_summary(cb.from_user.id)
+    
+    if not payment_summary:
+        await _send_or_edit_user_screen(cb, "Нет активных платежей.", reply_markup=get_buy_inline_kb())
+        return
+    
+    status = payment_summary.get("status")
+    transaction_id = payment_summary.get("transaction_id")
+    
+    # Проверяем статус через Platega
+    if transaction_id:
+        # Переиспользуем логику проверки статуса из payments.py
+        from bot.payments import platega_check_status_by_id
+        await platega_check_status_by_id(cb, transaction_id=transaction_id)
+    else:
+        # Если нет transaction_id, показываем общий статус
+        is_active = subscription_is_active(await get_user_subscription(cb.from_user.id))
+        has_config = bool(await get_user_keys(cb.from_user.id))
+        reply_markup = get_profile_inline_kb(subscription_active=is_active)
+        await _send_or_edit_user_screen(
+            cb,
+            f"{await get_activation_status_text(status, has_config=has_config)}\n\n{await get_support_short_text()}",
+            reply_markup=reply_markup,
+        )
 
 
 @router.callback_query(F.data == CB_OPEN_SUPPORT)
