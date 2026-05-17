@@ -1434,6 +1434,16 @@ prompt_admin_id() {
   done
 }
 
+prompt_server_name() {
+  local __resultvar="$1" __name_input="" __default=""
+  __default="$(get_env_value SERVER_NAME)"
+  if [[ -z "$__default" ]]; then
+    __default="My VPN"
+  fi
+  prompt_with_default 'Введите имя сервера (отображается в конфиге)' "$__default" __name_input
+  printf -v "$__resultvar" '%s' "$__name_input"
+}
+
 write_common_env() {
   local api_token="$1" admin_id="$2" server_name="$3" secret="$4"
   local db_path=""
@@ -1511,12 +1521,17 @@ configure_manual_awg_only() {
   # Запрос Telegram токена и Admin ID перед настройкой AWG
   api_token=""
   admin_id=""
+  server_name=""
   
   prompt_api_token api_token
   set_env_value API_TOKEN "$api_token"
   
   prompt_admin_id admin_id
   set_env_value ADMIN_ID "$admin_id"
+  
+  # Запрос имени сервера
+  prompt_server_name server_name
+  set_env_value SERVER_NAME "$server_name"
   
   # Настройка AWG параметров
   default="$(pick_existing_or_default "$(get_env_value DOCKER_CONTAINER)" "$DETECTED_CONTAINER")"
@@ -2901,6 +2916,11 @@ install_or_reinstall_flow() {
       server_name="My VPN"
     fi
     
+    # Предоставляем возможность изменить имя сервера при быстрой переустановке
+    echo ""
+    echo "--- Настройка имени сервера ---"
+    prompt_server_name server_name
+    
     secret="$(ensure_secret)"
     
     ensure_packages || die "Не удалось установить системные зависимости."
@@ -2956,12 +2976,17 @@ install_or_reinstall_flow() {
     # Автоматическая переустановка: автоопределение AWG + ручной ввод основных параметров
     api_token=""
     admin_id=""
+    server_name=""
     
     prompt_api_token api_token
     set_env_value API_TOKEN "$api_token"
     
     prompt_admin_id admin_id
     set_env_value ADMIN_ID "$admin_id"
+    
+    # Запрос имени сервера
+    prompt_server_name server_name
+    set_env_value SERVER_NAME "$server_name"
     
     write_detected_awg_env
     if [[ -z "$(get_env_value SERVER_PUBLIC_KEY)" ]]; then
@@ -3042,12 +3067,17 @@ install_or_reinstall_flow() {
     # Автоматическая установка (не reinstall): запрос Telegram токена и Admin ID перед настройкой AWG
     api_token=""
     admin_id=""
+    server_name=""
     
     prompt_api_token api_token
     set_env_value API_TOKEN "$api_token"
     
     prompt_admin_id admin_id
     set_env_value ADMIN_ID "$admin_id"
+    
+    # Запрос имени сервера
+    prompt_server_name server_name
+    set_env_value SERVER_NAME "$server_name"
     
     write_detected_awg_env
     if [[ -z "$(get_env_value SERVER_PUBLIC_KEY)" ]]; then
