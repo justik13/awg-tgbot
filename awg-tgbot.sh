@@ -43,7 +43,7 @@ VERSION_FILE="${STATE_DIR}/release_sha"
 INSTALL_LOG="/var/log/awg-tgbot-install.log"
 APP_LOG_DIR="/var/log/awg-tgbot"
 APP_LOG_FILE="${APP_LOG_DIR}/bot.log"
-PYTHON_BIN="/usr/bin/python3"
+PYTHON_BIN="$(command -v python3 || echo "/usr/bin/python3")"
 AWG_HELPER_TARGET="/usr/local/libexec/awg-bot-helper"
 AWG_HELPER_SUDOERS="/etc/sudoers.d/awg-bot-helper"
 AWG_HELPER_POLICY="/etc/awg-bot-helper.json"
@@ -610,7 +610,7 @@ ensure_packages() {
   py_major_minor="${py_version%%.*}"
   
   apt_get_safe install -y --no-install-recommends \
-    ca-certificates curl tar gzip openssl sudo python3 python3-pip iproute2 psmisc nftables nginx certbot python3-certbot-nginx
+    ca-certificates curl tar gzip openssl sudo iproute2 psmisc nftables nginx certbot python3-certbot-nginx
   
   # Устанавливаем venv для конкретной версии Python
   local venv_pkg="python3-${py_version}-venv"
@@ -1554,6 +1554,23 @@ ensure_bot_not_in_docker_group() {
 ensure_venv_and_requirements() {
   info "Настраиваю Python окружение..."
   ensure_python_compatible || die "Требуется Python >= 3.10."
+  
+  # Проверяем, доступен ли модуль venv в текущем Python
+  if ! "$PYTHON_BIN" -c 'import venv' 2>/dev/null; then
+    # Модуль venv недоступен, пытаемся установить пакет
+    local py_version
+    py_version=$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "3.12")
+    
+    local venv_pkg="python3-${py_version}-venv"
+    if ! apt_get_safe install -y --no-install-recommends "$venv_pkg" 2>/dev/null; then
+      warn "Не удалось установить $venv_pkg, пробую python3-venv..."
+      apt_get_safe install -y --no-install-recommends python3-venv || {
+        error "Не удалось установить python3-venv. Установите вручную: apt install ${venv_pkg} или apt install python3-venv"
+        return 1
+      }
+    fi
+  fi
+  
   [[ -d "$VENV_DIR" ]] || "$PYTHON_BIN" -m venv "$VENV_DIR" || return 1
   "$VENV_DIR/bin/pip" install --upgrade pip wheel || return 1
   "$VENV_DIR/bin/pip" install -r "$BOT_DIR/requirements.txt" || return 1
