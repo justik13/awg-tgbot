@@ -61,7 +61,13 @@ from referrals import (
     notify_inviter_about_referral_reward,
 )
 from texts import get_payment_result_text
-from ui_constants import CB_BUY_30, CB_BUY_7, CB_BUY_90, CB_BUY_PAY_30, CB_BUY_PAY_7, CB_BUY_PAY_90, CB_PLATEGA_BUY_30, CB_PLATEGA_BUY_7, CB_PLATEGA_BUY_90, CB_SHOW_BUY_MENU, CB_PAY_STARS_PREFIX, CB_PAY_PLATEGA_PREFIX, CB_PLATEGA_PAY_PREFIX, CB_PLATEGA_CHECK_PREFIX
+from ui_constants import (
+    CB_BUY_30, CB_BUY_7, CB_BUY_90, CB_BUY_PAY_30, CB_BUY_PAY_7, CB_BUY_PAY_90,
+    CB_PLATEGA_BUY_30, CB_PLATEGA_BUY_7, CB_PLATEGA_BUY_90,
+    CB_SHOW_BUY_MENU, CB_PAY_STARS_PREFIX, CB_PAY_PLATEGA_PREFIX,
+    CB_PLATEGA_PAY_PREFIX, CB_PLATEGA_CHECK_PREFIX,
+    CB_TARIFF_7, CB_TARIFF_30, CB_TARIFF_90,
+)
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 from platega_service import platega_service
 from platega_integration import PlategaPaymentService
@@ -513,6 +519,55 @@ async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
     except Exception as e:
         logger.exception("Failed to check Platega payment status: %s", e)
         await _send_or_edit_payment_screen(cb, "Не удалось проверить статус платежа. Попробуйте позже.")
+
+
+@router.callback_query(F.data == CB_TARIFF_7)
+async def tariff_7_days(cb: types.CallbackQuery):
+    """Выбор тарифа 7 дней -> показ способов оплаты."""
+    if await is_purchase_maintenance_enabled():
+        await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
+        return
+    await cb.answer(show_alert=False)
+    await _show_payment_method_selection(cb, "sub_7")
+
+
+@router.callback_query(F.data == CB_TARIFF_30)
+async def tariff_30_days(cb: types.CallbackQuery):
+    """Выбор тарифа 30 дней -> показ способов оплаты."""
+    if await is_purchase_maintenance_enabled():
+        await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
+        return
+    await cb.answer(show_alert=False)
+    await _show_payment_method_selection(cb, "sub_30")
+
+
+@router.callback_query(F.data == CB_TARIFF_90)
+async def tariff_90_days(cb: types.CallbackQuery):
+    """Выбор тарифа 90 дней -> показ способов оплаты."""
+    if await is_purchase_maintenance_enabled():
+        await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
+        return
+    await cb.answer(show_alert=False)
+    await _show_payment_method_selection(cb, "sub_90")
+
+
+async def _show_payment_method_selection(cb: types.CallbackQuery, payload: str) -> None:
+    """Показать выбор способа оплаты для выбранного тарифа."""
+    tariff_info = {
+        "sub_7": {"days": 7, "stars": config.STARS_PRICE_7_DAYS, "rub": config.PLATEGA_PRICE_7_DAYS},
+        "sub_30": {"days": 30, "stars": config.STARS_PRICE_30_DAYS, "rub": config.PLATEGA_PRICE_30_DAYS},
+        "sub_90": {"days": 90, "stars": config.STARS_PRICE_90_DAYS, "rub": config.PLATEGA_PRICE_90_DAYS},
+    }
+    info = tariff_info.get(payload, tariff_info["sub_30"])
+    
+    text = (
+        f"<b>📦 Тариф: {info['days']} дней</b>\n\n"
+        f"💳 <b>Способы оплаты:</b>\n"
+        f"• Telegram Stars — {info['stars']}⭐\n"
+        f"• СБП (QR) — {info['rub']}₽\n\n"
+        f"Выберите удобный способ оплаты:"
+    )
+    await _send_or_edit_payment_screen(cb, text, reply_markup=get_payment_method_selection_kb(payload))
 
 
 @router.callback_query(F.data == CB_BUY_7)

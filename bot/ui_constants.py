@@ -16,6 +16,12 @@ CB_BUY_PAY_90 = "buy_pay_90"
 CB_PLATEGA_BUY_7 = "platega_buy_7"
 CB_PLATEGA_BUY_30 = "platega_buy_30"
 CB_PLATEGA_BUY_90 = "platega_buy_90"
+
+# Выбор тарифа (новый поток: сначала тариф, потом способ оплаты)
+CB_TARIFF_7 = "tariff_sub_7"
+CB_TARIFF_30 = "tariff_sub_30"
+CB_TARIFF_90 = "tariff_sub_90"
+
 CB_SHOW_INSTRUCTION = "show_instruction"
 CB_SHOW_BUY_MENU = "show_buy_menu"
 CB_CHECK_ACTIVATION_STATUS = "check_activation_status"

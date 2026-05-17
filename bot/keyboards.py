@@ -53,9 +53,20 @@ def get_main_menu(user_id: int, admin_id: int) -> ReplyKeyboardMarkup:
 
 
 def get_buy_inline_kb() -> InlineKeyboardMarkup:
+    """Клавиатура с выбором тарифов (7, 30, 90 дней)."""
     rows = [
-        [InlineKeyboardButton(text="💳 Telegram Stars", callback_data=CB_PAY_STARS_PREFIX + "sub_30")],
-        [InlineKeyboardButton(text="🏦 СБП (QR)", callback_data=CB_PAY_PLATEGA_PREFIX + "sub_30")],
+        [InlineKeyboardButton(
+            text=f"⏳ 7 дней — {config.STARS_PRICE_7_DAYS}⭐ | {config.PLATEGA_PRICE_7_DAYS}₽",
+            callback_data="tariff_sub_7"
+        )],
+        [InlineKeyboardButton(
+            text=f"⏳ 30 дней — {config.STARS_PRICE_30_DAYS}⭐ | {config.PLATEGA_PRICE_30_DAYS}₽",
+            callback_data="tariff_sub_30"
+        )],
+        [InlineKeyboardButton(
+            text=f"⏳ 90 дней — {config.STARS_PRICE_90_DAYS}⭐ | {config.PLATEGA_PRICE_90_DAYS}₽",
+            callback_data="tariff_sub_90"
+        )],
         [InlineKeyboardButton(text="📖 Как подключиться", callback_data=CB_SHOW_INSTRUCTION)],
         [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
     ]
@@ -115,6 +126,7 @@ def get_payment_method_selection_kb(payload: str) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=f"⭐ Telegram Stars ({info['stars']}⭐)", callback_data=f"{CB_PAY_STARS_PREFIX}{payload}")],
         [InlineKeyboardButton(text=f"💳 СБП ({info['rub']}₽)", callback_data=f"{CB_PAY_PLATEGA_PREFIX}{payload}")],
+        [InlineKeyboardButton(text="⬅️ Назад к тарифам", callback_data=CB_SHOW_BUY_MENU)],
         [InlineKeyboardButton(text="⬅️ В профиль", callback_data=CB_OPEN_PROFILE)],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
