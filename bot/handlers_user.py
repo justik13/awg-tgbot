@@ -424,19 +424,21 @@ async def _apply_promo_code(message: types.Message, code: str) -> None:
         status = activation["status"]
         if status == "not_found":
             await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=not_found")
-            await message.answer("❌ Промокод не найден.")
+            await message.answer(
+                "❌ Промокод не найден.\n\nПроверьте правильность ввода кода или обратитесь в поддержку."
+            )
             return
         if status == "inactive":
             await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=inactive")
-            await message.answer("❌ Промокод выключен.")
+            await message.answer("❌ Промокод выключен.\n\nСрок действия этого промокода истёк.")
             return
         if status == "exhausted":
             await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=exhausted")
-            await message.answer("❌ Лимит активаций исчерпан.")
+            await message.answer("❌ Лимит активаций исчерпан.\n\nЭтот промокод больше нельзя использовать.")
             return
         if status == "already_used":
             await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=already_used")
-            await message.answer("❌ Этот промокод уже нельзя применить.")
+            await message.answer("❌ Этот промокод уже нельзя применить.\n\nВы уже использовали этот код ранее.")
             return
 
         bonus_days = int(activation["bonus_days"])
@@ -455,7 +457,7 @@ async def _apply_promo_code(message: types.Message, code: str) -> None:
         logger.exception("Ошибка promo apply: %s", e)
         await rollback_promo_activation_reservation(message.from_user.id, code)
         await write_audit_log(message.from_user.id, "promo_activation_failed", f"code={code}; reason=internal_error")
-        await message.answer("❌ Не удалось применить промокод. Попробуйте позже.")
+        await message.answer("❌ Не удалось применить промокод. Попробуйте позже или обратитесь в поддержку.")
 
 
 async def _handle_promo_input_message(message: types.Message) -> bool:
@@ -478,12 +480,15 @@ async def _handle_promo_input_message(message: types.Message) -> bool:
 async def _start_user_reissue_flow(target, user: types.User, *, key_id: int | None = None) -> None:
     sub_until = await get_user_subscription(user.id)
     if not subscription_is_active(sub_until):
-        await target.answer("Сейчас активной подписки нет. Сначала оформите или продлите доступ.")
+        await target.answer(
+            "⚠️ Перевыпуск недоступен\n\nСейчас активной подписки нет. Сначала оформите или продлите доступ.",
+            reply_markup=get_buy_inline_kb(),
+        )
         return
     configs = await get_user_keys(user.id)
     if not configs:
         await target.answer(
-            "Не найден активный конфиг для перевыпуска. Откройте «🔑 Подключение» или напишите в поддержку.",
+            "⚠️ Нечего перевыпускать\n\nНе найден активный конфиг. Откройте «🔑 Подключение» или напишите в поддержку.",
             reply_markup=get_support_back_kb(),
         )
         return
@@ -500,8 +505,8 @@ async def _start_user_reissue_flow(target, user: types.User, *, key_id: int | No
     await target.answer(
         (
             "⚠️ <b>Перевыпуск доступа</b>\n\n"
-            "Текущий конфиг устройства будет отключён.\n"
-            "Старый ключ:// и .conf перестанут работать.\n\n"
+            "❗️ <b>Внимание:</b> текущий конфиг устройства будет отключён.\n"
+            "Старый ключ:// и .conf перестанут работать — потребуется заново настроить подключение.\n\n"
             "Продолжить перевыпуск?"
         ),
         parse_mode="HTML",
@@ -521,7 +526,7 @@ def _help_clients_kb() -> types.InlineKeyboardMarkup:
 
 @router.callback_query(F.data == "noop")
 async def noop_callback(cb: types.CallbackQuery):
-    await cb.answer()
+    await cb.answer(show_alert=False)
 
 
 @router.message(Command("start"))
@@ -616,7 +621,7 @@ async def my_keys(message: types.Message):
 @router.callback_query(F.data.startswith(CB_CONFIG_DEVICE_PREFIX))
 async def show_selected_device_config(cb: types.CallbackQuery):
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     try:
         key_id = int(cb.data.removeprefix(CB_CONFIG_DEVICE_PREFIX))
     except ValueError:
@@ -650,7 +655,7 @@ async def show_selected_device_config(cb: types.CallbackQuery):
 @router.callback_query(F.data.startswith(CB_CONFIG_CONF_PREFIX))
 async def send_selected_device_conf(cb: types.CallbackQuery):
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     try:
         key_id = int(cb.data.removeprefix(CB_CONFIG_CONF_PREFIX))
     except ValueError:
@@ -692,7 +697,7 @@ async def open_configs_from_profile(cb: types.CallbackQuery):
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     if cb.from_user.id == ADMIN_ID:
         maybe_set_support_username(cb.from_user.username)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     if not cb.message:
         try:
             await cb.message.answer(await get_text("callback_message_unavailable"))
@@ -708,7 +713,7 @@ async def open_profile_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     text, markup = await _render_profile_screen(cb.from_user)
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
@@ -718,7 +723,7 @@ async def open_traffic_devices_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     text, markup = await _render_traffic_devices_screen(cb.from_user.id)
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
 
@@ -741,7 +746,7 @@ async def reset_device_cmd(message: types.Message):
 
 @router.callback_query(F.data.startswith(CB_USER_REISSUE_DEVICE_PREFIX))
 async def user_reissue_from_button(cb: types.CallbackQuery):
-    await cb.answer()
+    await cb.answer(show_alert=False)
     key_id: int | None = None
     if cb.data != f"{CB_USER_REISSUE_DEVICE_PREFIX}0":
         try:
@@ -754,7 +759,7 @@ async def user_reissue_from_button(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_USER_REISSUE_CANCEL)
 async def user_reissue_cancel(cb: types.CallbackQuery):
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await clear_pending_admin_action(cb.from_user.id, "user_reissue_device")
     if cb.message:
         await _send_or_edit_user_screen(cb, "❌ Перевыпуск отменён.")
@@ -762,7 +767,7 @@ async def user_reissue_cancel(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_USER_REISSUE_CONFIRM)
 async def user_reissue_confirm(cb: types.CallbackQuery):
-    await cb.answer()
+    await cb.answer(show_alert=False)
     action = await get_pending_admin_action(cb.from_user.id, "user_reissue_device")
     if not action or action.get("action") != "user_reissue_device":
         if cb.message:
@@ -802,7 +807,7 @@ async def user_reissue_confirm(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_CHECK_ACTIVATION_STATUS)
 async def check_activation_status(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     sub_until = await get_user_subscription(cb.from_user.id)
     is_active = subscription_is_active(sub_until)
     payment_summary = await get_latest_user_payment_summary(cb.from_user.id)
@@ -826,7 +831,7 @@ async def check_activation_status(cb: types.CallbackQuery):
 async def open_support_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     if cb.message:
         await _send_or_edit_user_screen(
             cb,
@@ -838,7 +843,7 @@ async def open_support_callback(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_SUPPORT_PAYMENT)
 async def support_payment_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     if cb.message:
         await _send_or_edit_user_screen(cb, _payment_support_text(), reply_markup=get_support_subpage_back_kb())
 
@@ -846,7 +851,7 @@ async def support_payment_callback(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_SUPPORT_CONNECTION)
 async def support_connection_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     if cb.message:
         await _send_or_edit_user_screen(
             cb,
@@ -859,7 +864,7 @@ async def support_connection_callback(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_SUPPORT_TERMS)
 async def support_terms_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     if cb.message:
         await _send_or_edit_user_screen(cb, _terms_text(), reply_markup=get_support_subpage_back_kb())
 
@@ -867,7 +872,7 @@ async def support_terms_callback(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_SUPPORT_USEFUL)
 async def support_useful_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     if cb.message:
         await _send_or_edit_user_screen(
             cb,
@@ -893,11 +898,11 @@ async def referrals_from_profile(cb: types.CallbackQuery):
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     if int(await get_setting("REFERRAL_ENABLED", int) or 0) != 1:
-        await cb.answer()
+        await cb.answer(show_alert=False)
         if cb.message:
             await _send_or_edit_user_screen(cb, await get_text("referral_unavailable"))
         return
-    await cb.answer()
+    await cb.answer(show_alert=False)
     me = await cb.bot.get_me()
     bot_username = getattr(me, "username", "") or "bot"
     data = await get_referral_screen_data(cb.from_user.id, bot_username)
@@ -929,7 +934,7 @@ async def show_buy_menu_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     if not cb.message:
         await cb.message.answer(await get_text("callback_message_unavailable"))
         return
@@ -942,7 +947,7 @@ async def show_buy_menu_callback(cb: types.CallbackQuery):
 @router.callback_query(F.data == CB_SHOW_INSTRUCTION)
 async def show_instruction_callback(cb: types.CallbackQuery):
     await _clear_promo_input_pending(cb.from_user.id)
-    await cb.answer()
+    await cb.answer(show_alert=False)
     if cb.message:
         await _send_or_edit_user_screen(
             cb,
@@ -954,14 +959,14 @@ async def show_instruction_callback(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == CB_PROMO_INPUT_START)
 async def promo_input_start_callback(cb: types.CallbackQuery):
-    await cb.answer()
+    await cb.answer(show_alert=False)
     if cb.message:
         await _start_promo_input_flow(cb.message, cb.from_user)
 
 
 @router.callback_query(F.data == CB_PROMO_INPUT_CANCEL)
 async def promo_input_cancel_callback(cb: types.CallbackQuery):
-    await cb.answer()
+    await cb.answer(show_alert=False)
     await _clear_promo_input_pending(cb.from_user.id)
     if cb.message:
         await _send_or_edit_user_screen(cb, "❌ Ввод промокода отменён.")
