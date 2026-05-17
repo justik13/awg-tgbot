@@ -603,8 +603,26 @@ ensure_packages() {
   info "Проверяю и обновляю системные зависимости..."
   export DEBIAN_FRONTEND=noninteractive
   apt_get_safe update -y
+  
+  # Определяем версию Python для установки правильного python3-venv
+  local py_version py_major_minor
+  py_version=$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "3.12")
+  py_major_minor="${py_version%%.*}"
+  
   apt_get_safe install -y --no-install-recommends \
-    ca-certificates curl tar gzip openssl sudo python3 python3-venv python3-pip iproute2 psmisc nftables nginx certbot python3-certbot-nginx
+    ca-certificates curl tar gzip openssl sudo python3 python3-pip iproute2 psmisc nftables nginx certbot python3-certbot-nginx
+  
+  # Устанавливаем venv для конкретной версии Python
+  local venv_pkg="python3-${py_version}-venv"
+  if ! apt_get_safe install -y --no-install-recommends "$venv_pkg" 2>/dev/null; then
+    # Fallback: пробуем общий пакет python3-venv
+    warn "Не удалось установить $venv_pkg, пробую python3-venv..."
+    apt_get_safe install -y --no-install-recommends python3-venv || {
+      error "Не удалось установить python3-venv. Установите вручную: apt install ${venv_pkg} или apt install python3-venv"
+      return 1
+    }
+  fi
+  
   if ! require_command docker; then
     warn "Docker не найден. Устанавливаю docker.io..."
     apt_get_safe install -y --no-install-recommends docker.io
