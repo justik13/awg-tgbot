@@ -620,7 +620,7 @@ async def show_selected_device_config(cb: types.CallbackQuery):
     try:
         key_id = int(cb.data.removeprefix(CB_CONFIG_DEVICE_PREFIX))
     except ValueError:
-        await cb.answer(await get_text("config_invalid_device"), show_alert=True)
+        await _send_or_edit_user_screen(cb, await get_text("config_invalid_device"), reply_markup=get_instruction_inline_kb())
         return
 
     selected = await _find_user_config_by_key_id(cb.from_user.id, key_id)
@@ -654,7 +654,7 @@ async def send_selected_device_conf(cb: types.CallbackQuery):
     try:
         key_id = int(cb.data.removeprefix(CB_CONFIG_CONF_PREFIX))
     except ValueError:
-        await cb.answer(await get_text("config_invalid_conf_request"), show_alert=True)
+        await _send_or_edit_user_screen(cb, await get_text("config_invalid_conf_request"), reply_markup=get_instruction_inline_kb())
         return
 
     selected = await _find_user_config_by_key_id(cb.from_user.id, key_id)
@@ -694,7 +694,7 @@ async def open_configs_from_profile(cb: types.CallbackQuery):
         maybe_set_support_username(cb.from_user.username)
     await cb.answer()
     if not cb.message:
-        await cb.answer(await get_text("callback_message_unavailable"), show_alert=True)
+        await cb.message.answer(await get_text("callback_message_unavailable"))
         return
     text, markup = await _render_configs_menu_screen(cb.from_user.id)
     await _send_or_edit_user_screen(cb, text, reply_markup=markup)
@@ -926,7 +926,7 @@ async def show_buy_menu_callback(cb: types.CallbackQuery):
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer()
     if not cb.message:
-        await cb.answer(await get_text("callback_message_unavailable"), show_alert=True)
+        await cb.message.answer(await get_text("callback_message_unavailable"))
         return
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_user_screen(cb, await get_purchase_maintenance_text())
