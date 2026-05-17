@@ -1596,15 +1596,12 @@ configure_manual_awg_only() {
   server_name=""
   
   prompt_api_token api_token
-  set_env_value API_TOKEN "$api_token"
-  
   prompt_admin_id admin_id
-  set_env_value ADMIN_ID "$admin_id"
   
   # Запрос имени сервера
   prompt_server_name server_name
-  if [[ -n "$server_name" ]]; then
-    set_env_value SERVER_NAME "$server_name"
+  if [[ -z "$server_name" ]]; then
+    server_name="My VPN"
   fi
   
   # Настройка AWG параметров
@@ -1624,6 +1621,11 @@ configure_manual_awg_only() {
   default="$(pick_existing_or_default "$(get_env_value SERVER_IP)" "$DETECTED_SERVER_IP")"
   prompt_with_default 'SERVER_IP (IP:port)' "$default" value
   set_env_value SERVER_IP "$value"
+  
+  # Запись основных параметров после сбора всех данных
+  local secret
+  secret="$(ensure_secret)"
+  write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
   return 0
 }
 
@@ -3082,15 +3084,12 @@ install_or_reinstall_flow() {
     server_name=""
     
     prompt_api_token api_token
-    set_env_value API_TOKEN "$api_token"
-    
     prompt_admin_id admin_id
-    set_env_value ADMIN_ID "$admin_id"
     
     # Запрос имени сервера
     prompt_server_name server_name
-    if [[ -n "$server_name" ]]; then
-      set_env_value SERVER_NAME "$server_name"
+    if [[ -z "$server_name" ]]; then
+      server_name="My VPN"
     fi
     
     write_detected_awg_env
@@ -3111,6 +3110,10 @@ install_or_reinstall_flow() {
         set_env_value SERVER_IP "$value"
       fi
     fi
+    
+    # Запись основных параметров после сбора всех данных
+    secret="$(ensure_secret)"
+    write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
     
     # Настройка Platega
     echo ""
@@ -3175,15 +3178,12 @@ install_or_reinstall_flow() {
     server_name=""
     
     prompt_api_token api_token
-    set_env_value API_TOKEN "$api_token"
-    
     prompt_admin_id admin_id
-    set_env_value ADMIN_ID "$admin_id"
     
     # Запрос имени сервера
     prompt_server_name server_name
-    if [[ -n "$server_name" ]]; then
-      set_env_value SERVER_NAME "$server_name"
+    if [[ -z "$server_name" ]]; then
+      server_name="My VPN"
     fi
     
     write_detected_awg_env
@@ -3204,6 +3204,10 @@ install_or_reinstall_flow() {
         set_env_value SERVER_IP "$value"
       fi
     fi
+    
+    # Запись основных параметров после сбора всех данных
+    secret="$(ensure_secret)"
+    write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
     
     # Настройка Platega даже в автоматическом режиме
     echo ""
