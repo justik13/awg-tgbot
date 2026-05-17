@@ -1314,6 +1314,40 @@ ensure_env_file() {
   return 0
 }
 
+# Сохраняет все текущие значения из .env файла перед перезаписью
+preserve_existing_env_values() {
+  local backup_file="$ENV_FILE.preserve.$$"
+  if [[ ! -f "$ENV_FILE" ]]; then
+    return 0
+  fi
+  
+  # Копируем текущий .env для сохранения значений
+  cp "$ENV_FILE" "$backup_file" || return 0
+  
+  # Читаем все переменные из backup и восстанавливаем те, которые не были перезаписаны
+  while IFS='=' read -r key value || [[ -n "$key" ]]; do
+    # Пропускаем пустые строки и комментарии
+    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+    
+    # Извлекаем ключ (убираем пробелы)
+    key="${key%%=*}"
+    key="$(echo "$key" | xargs)"
+    
+    # Если эта переменная ещё не установлена в env, восстанавливаем её
+    if [[ -n "$key" && -z "$(get_env_value "$key")" ]]; then
+      # Убираем кавычки из значения если есть
+      value="${value#\"}"
+      value="${value%\"}"
+      value="${value#\'}"
+      value="${value%\'}"
+      set_env_value "$key" "$value"
+    fi
+  done < "$backup_file"
+  
+  rm -f "$backup_file" || true
+  return 0
+}
+
 migrate_legacy_tariff_defaults() {
   local current=""
   current="$(get_env_value STARS_PRICE_7_DAYS)"
@@ -2785,29 +2819,49 @@ install_or_reinstall_flow() {
     echo "0) Отмена"
   else
     info "Переустановка AWG Telegram Bot"
-    echo "1) Автоматическая переустановка"
-    echo "   Быстрый вариант: использовать автоопределение и обновить сервис."
-    echo "2) Ручная переустановка"
+    echo "1) Быстрая переустановка"
+    echo "   Использует текущие значения из .env (токен, admin_id, цены и т.д.)."
+    echo "2) Автоматическая переустановка"
+    echo "   Автоопределение AWG + ручной ввод основных параметров."
+    echo "3) Ручная переустановка"
     echo "   Расширенный вариант: вручную проверить параметры перед запуском."
     echo "0) Отмена"
   fi
   prompt_raw "Выбор: " choice
   case "$choice" in
-    1|2) ;;
+    1|2|3) ;;
     *) warn "Действие отменено."; return 0 ;;
   esac
 
-  prompt_api_token api_token
-  prompt_admin_id admin_id
-  default="$(pick_existing_or_default "$(get_env_value SERVER_NAME)" "My VPN")"
-  prompt_with_default 'Введите название сервера' "$default" server_name
-  secret="$(ensure_secret)"
+  # Быстрая переустановка: используем текущие env значения
+  if [[ "$mode" == "reinstall" && "$choice" == "1" ]]; then
+    # Проверяем, что .env существует и содержит необходимые значения
+    if [[ ! -f "$ENV_FILE" ]]; then
+      die ".env файл не найден. Быстрая переустановка невозможна."
+    fi
+    
+    api_token="$(get_env_value API_TOKEN)"
+    admin_id="$(get_env_value ADMIN_ID)"
+    server_name="$(get_env_value SERVER_NAME)"
+    
+    if [[ -z "$api_token" || -z "$admin_id" ]]; then
+      die "Не найдены API_TOKEN или ADMIN_ID в .env. Быстрая переустановка невозможна."
+    fi
+    
+    # Если SERVER_NAME не задан, используем значение по умолчанию
+    if [[ -z "$server_name" ]]; then
+      server_name="My VPN"
+    fi
+    
+    secret="$(ensure_secret)"
+    
+    ensure_packages || die "Не удалось установить системные зависимости."
+    ensure_docker_ready || die "Docker недоступен."
+    detect_awg_environment
+    print_detected_awg_summary
+  fi
 
-  ensure_packages || die "Не удалось установить системные зависимости."
-  ensure_docker_ready || die "Docker недоступен."
-  detect_awg_environment
-  print_detected_awg_summary
-
+  # Общий код для всех режимов переустановки/установки
   if [[ "$mode" == "reinstall" ]]; then
     pre_reinstall_repo_snapshot="$(create_repo_snapshot_before_reinstall)"
     ok "Создан snapshot файлов приложения перед переустановкой: ${pre_reinstall_repo_snapshot}"
@@ -2833,11 +2887,24 @@ install_or_reinstall_flow() {
   migrate_legacy_tariff_defaults
   migrate_legacy_default_db_path || die "Не удалось подготовить путь БД для runtime."
 
-  write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
+  # Для быстрой переустановки (choice=1) сохраняем текущие env значения
+  if [[ "$mode" == "reinstall" && "$choice" == "1" ]]; then
+    # Быстрая переустановка: сохраняем все текущие значения из .env
+    # write_common_env перезаписывает только основные поля, остальные сохраняются
+    write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
+    # Сохраняем все остальные env переменные из текущего .env файла
+    preserve_existing_env_values
+  else
+    write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
+  fi
   ensure_selfhost_network_defaults
   ensure_fernet_key
 
-  if [[ "$choice" == "1" ]]; then
+  # Обработка выбора режима для AWG и других настроек
+  if [[ "$mode" == "reinstall" && "$choice" == "1" ]]; then
+    # Быстрая переустановка: используем текущие значения AWG из .env
+    : # Ничего не делаем, оставляем текущие значения
+  elif [[ "$choice" == "1" ]]; then
     write_detected_awg_env
     if [[ -z "$(get_env_value SERVER_PUBLIC_KEY)" ]]; then
       warn "Не удалось автоматически определить SERVER_PUBLIC_KEY. Нужен один ручной шаг."
