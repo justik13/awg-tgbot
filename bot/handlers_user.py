@@ -2,7 +2,7 @@ import re
 
 from aiogram import F, Router, types
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import BaseFilter, Command, CommandObject
+from aiogram.filters import Command, CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
@@ -15,6 +15,7 @@ from config import (
     get_support_username,
     maybe_set_support_username,
 )
+from filters import UserHasPendingPromoInput, USER_PROMO_INPUT_ACTION_KEY
 from awg_backend import get_awg_peers
 from awg_backend import issue_subscription
 from awg_backend import reissue_user_device
@@ -99,13 +100,6 @@ from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_e
 from payments import clear_pending_invoice_for_user
 
 router = Router()
-USER_PROMO_INPUT_ACTION_KEY = "user_promo_input"
-
-
-class HasPendingPromoInput(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        pending_action = await get_pending_admin_action(message.from_user.id, USER_PROMO_INPUT_ACTION_KEY)
-        return bool(pending_action)
 
 
 def _config_filename_prefix() -> str:
@@ -1027,7 +1021,7 @@ async def promo_input_cancel_callback(cb: types.CallbackQuery):
         await _send_or_edit_user_screen(cb, "❌ Ввод промокода отменён.")
 
 
-@router.message(HasPendingPromoInput())
+@router.message(UserHasPendingPromoInput())
 async def promo_input_pending_message(message: types.Message):
     await _handle_promo_input_message(message)
 
