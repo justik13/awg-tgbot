@@ -1596,15 +1596,12 @@ configure_manual_awg_only() {
   server_name=""
   
   prompt_api_token api_token
-  set_env_value API_TOKEN "$api_token"
-  
   prompt_admin_id admin_id
-  set_env_value ADMIN_ID "$admin_id"
   
   # Запрос имени сервера
   prompt_server_name server_name
-  if [[ -n "$server_name" ]]; then
-    set_env_value SERVER_NAME "$server_name"
+  if [[ -z "$server_name" ]]; then
+    server_name="My VPN"
   fi
   
   # Настройка AWG параметров
@@ -1624,6 +1621,11 @@ configure_manual_awg_only() {
   default="$(pick_existing_or_default "$(get_env_value SERVER_IP)" "$DETECTED_SERVER_IP")"
   prompt_with_default 'SERVER_IP (IP:port)' "$default" value
   set_env_value SERVER_IP "$value"
+  
+  # Запись основных параметров после сбора всех данных
+  local secret
+  secret="$(ensure_secret)"
+  write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
   return 0
 }
 
@@ -3071,9 +3073,6 @@ install_or_reinstall_flow() {
   ensure_selfhost_network_defaults
   ensure_fernet_key
   
-  # Валидация критических переменных после обновления .env
-  validate_critical_env || die "Валидация критических переменных не пройдена. Проверьте .env файл."
-
   # Обработка выбора режима для AWG и других настроек
   if [[ "$mode" == "reinstall" && "$choice" == "1" ]]; then
     # Быстрая переустановка: используем текущие значения AWG из .env
@@ -3085,15 +3084,12 @@ install_or_reinstall_flow() {
     server_name=""
     
     prompt_api_token api_token
-    set_env_value API_TOKEN "$api_token"
-    
     prompt_admin_id admin_id
-    set_env_value ADMIN_ID "$admin_id"
     
     # Запрос имени сервера
     prompt_server_name server_name
-    if [[ -n "$server_name" ]]; then
-      set_env_value SERVER_NAME "$server_name"
+    if [[ -z "$server_name" ]]; then
+      server_name="My VPN"
     fi
     
     write_detected_awg_env
@@ -3114,6 +3110,10 @@ install_or_reinstall_flow() {
         set_env_value SERVER_IP "$value"
       fi
     fi
+    
+    # Запись основных параметров после сбора всех данных
+    secret="$(ensure_secret)"
+    write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
     
     # Настройка Platega
     echo ""
@@ -3178,15 +3178,12 @@ install_or_reinstall_flow() {
     server_name=""
     
     prompt_api_token api_token
-    set_env_value API_TOKEN "$api_token"
-    
     prompt_admin_id admin_id
-    set_env_value ADMIN_ID "$admin_id"
     
     # Запрос имени сервера
     prompt_server_name server_name
-    if [[ -n "$server_name" ]]; then
-      set_env_value SERVER_NAME "$server_name"
+    if [[ -z "$server_name" ]]; then
+      server_name="My VPN"
     fi
     
     write_detected_awg_env
@@ -3207,6 +3204,10 @@ install_or_reinstall_flow() {
         set_env_value SERVER_IP "$value"
       fi
     fi
+    
+    # Запись основных параметров после сбора всех данных
+    secret="$(ensure_secret)"
+    write_common_env "$api_token" "$admin_id" "$server_name" "$secret"
     
     # Настройка Platega даже в автоматическом режиме
     echo ""
@@ -3352,6 +3353,9 @@ install_or_reinstall_flow() {
     prompt_with_default 'Сколько autobackup хранить (шт)' "$default" value
     set_env_value AUTO_BACKUP_KEEP_COUNT "$value"
   fi
+
+  # Валидация критических переменных после заполнения всех полей .env
+  validate_critical_env || die "Валидация критических переменных не пройдена. Проверьте .env файл."
 
   ensure_venv_and_requirements || die "Не удалось установить Python зависимости."
   ensure_bot_user || die "Не удалось подготовить service пользователя."
