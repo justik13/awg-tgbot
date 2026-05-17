@@ -845,7 +845,7 @@ async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_
     message = cb.message
     if message is not None and hasattr(message, "edit_text"):
         try:
-            await message.edit_text(text, reply_markup)
+            await message.edit_text(text, reply_markup=reply_markup)
             return
         except TelegramBadRequest as error:
             if "message is not modified" in str(error).lower():
@@ -854,7 +854,7 @@ async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_
         except Exception as error:
             logger.warning("Admin screen edit fallback due to unexpected error: %s", error)
     if message is not None:
-        await message.answer(text, reply_markup)
+        await message.answer(text, reply_markup=reply_markup)
 
 
 async def _render_network_policy_text() -> str:
