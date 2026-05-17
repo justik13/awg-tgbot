@@ -132,21 +132,10 @@ class RateLimitMiddleware(BaseMiddleware):
 
         key = (chat_id, user_id, scope)
         if self._is_limited(key, monotonic()):
-            logger.warning("Rate limit: dropped %s from user=%s chat=%s", scope, user_id, chat_id)
+            logger.debug("Rate limit: dropped %s from user=%s chat=%s", scope, user_id, chat_id)
             await self._record_rate_limit_drop(scope)
-            if isinstance(event, types.CallbackQuery):
-                await event.answer("Слишком часто. Подождите секунду.")
-            elif isinstance(event, types.Message):
-                now = monotonic()
-                last_notice = self._last_notice.get(key, 0.0)
-                if (now - last_notice) >= 1.5:
-                    self._last_notice[key] = now
-                    if len(self._last_notice) > self.max_entries:
-                        self._last_notice.popitem(last=False)
-                    try:
-                        await event.answer("Слишком часто. Подождите секунду.")
-                    except Exception:
-                        pass
+            # Не отвечаем пользователю - это создаёт лишний спам
+            # Telegram сам обработает flood wait
             return None
 
         return await handler(event, data)

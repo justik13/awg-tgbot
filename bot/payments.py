@@ -184,15 +184,24 @@ async def _send_or_edit_payment_screen(cb: types.CallbackQuery, text: str, *, re
     if message is not None and hasattr(message, "edit_text"):
         try:
             await message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
+            await cb.answer(show_alert=False)
             return
         except TelegramBadRequest as error:
-            if "message is not modified" in str(error).lower():
+            error_str = str(error).lower()
+            if "message is not modified" in error_str:
+                await cb.answer(show_alert=False)
                 return
-            logger.debug("Payment screen edit fallback due to TelegramBadRequest: %s", error)
+            if "message to edit not found" in error_str or "have no rights" in error_str:
+                pass  # Сообщение удалено - отправим новое
+            else:
+                logger.debug("Payment screen edit fallback: %s", error)
         except Exception as error:
-            logger.warning("Payment screen edit fallback due to unexpected error: %s", error)
+            logger.warning("Payment screen edit unexpected error: %s", error)
     if message is not None:
-        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+        try:
+            await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+        except TelegramBadRequest as send_error:
+            logger.warning("Payment screen send fallback failed: %s", send_error)
 
 
 async def _show_buy_confirmation(cb: types.CallbackQuery, payload: str, method: str = "stars") -> None:

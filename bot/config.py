@@ -27,6 +27,38 @@ from config_validate import validate_awg_obfuscation_settings, validate_client_a
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 logger = logging.getLogger(__name__)
 
+# Настройка логирования с файлом и консолью
+import logging.handlers
+from pathlib import Path
+
+LOG_DIR = Path(__file__).parent.resolve() / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "bot.log"
+
+# Создаём formatter
+formatter = logging.Formatter(
+    '%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# File handler для всех логов
+file_handler = logging.handlers.RotatingFileHandler(
+    LOG_FILE, maxBytes=10*1024*1024, backupCount=3, encoding='utf-8'
+)
+file_handler.setFormatter(formatter)
+file_handler.setLevel(logging.DEBUG)
+
+# Console handler только для WARNING+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+console_handler.setLevel(logging.WARNING)
+
+# Root logger
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.addHandler(file_handler)
+root_logger.addHandler(console_handler)
+
 
 def save_env_value(name: str, value: str | int) -> None:
     save_env_value_raw(name, str(value))
