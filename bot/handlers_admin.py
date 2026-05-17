@@ -1155,9 +1155,11 @@ async def _send_user_manage_card(
     *,
     source: str = "users",
 ) -> None:
+    logger.debug("_send_user_manage_card: uid=%s, page=%s, source=%s", uid, page, source)
     row = await fetchone("SELECT sub_until FROM users WHERE user_id = ?", (uid,))
     if not row:
-        await target_message.answer("Пользователь не найден.")
+        logger.warning("_send_user_manage_card: пользователь с uid=%s не найден в БД", uid)
+        await target_message.answer(f"Пользователь {uid} не найден.")
         return
     sub_until = row[0]
     status_text, until_text = get_status_text(sub_until)
@@ -1361,12 +1363,25 @@ async def admin_open_user_card_from_problem(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     raw = cb.data.removeprefix(CB_ADMIN_OPEN_USER_CARD_PROBLEM_PREFIX)
+    logger.debug("admin_open_user_card_from_problem: raw callback data = %s", raw)
     try:
-        uid_raw, page_raw = raw.split("_", 1)
-        await _send_user_manage_card(cb.message, int(uid_raw), int(page_raw), source="problem_activations")
+        parts = raw.split("_", 1)
+        if len(parts) != 2:
+            logger.warning("admin_open_user_card_from_problem: invalid callback format, expected 'uid_page', got: %s", raw)
+            await cb.answer("Некорректный формат данных", show_alert=False)
+            return
+        uid_raw, page_raw = parts
+        uid = int(uid_raw)
+        page = int(page_raw)
+        logger.debug("admin_open_user_card_from_problem: uid=%s, page=%s", uid, page)
+        await _send_user_manage_card(cb.message, uid, page, source="problem_activations")
         await cb.answer("Открыто", show_alert=False)
-    except Exception:
-        await cb.answer("Некорректные параметры", show_alert=False)
+    except ValueError as e:
+        logger.warning("admin_open_user_card_from_problem: ValueError при парсинге uid/page: %s, raw=%s", e, cb.data)
+        await cb.answer(f"Некорректные параметры: {cb.data}", show_alert=False)
+    except Exception as e:
+        logger.exception("Ошибка admin_open_user_card_from_problem: %s", e)
+        await cb.answer("❌ Не удалось открыть карточку пользователя", show_alert=False)
 
 
 @router.callback_query(F.data.startswith(CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX))
@@ -1374,12 +1389,25 @@ async def admin_manage_user_problem(cb: types.CallbackQuery):
     if not await _guard_admin_callback(cb):
         return
     raw = cb.data.removeprefix(CB_ADMIN_MANAGE_USER_PROBLEM_PREFIX)
+    logger.debug("admin_manage_user_problem: raw callback data = %s", raw)
     try:
-        uid_raw, page_raw = raw.split("_", 1)
-        await _send_user_manage_card(cb.message, int(uid_raw), int(page_raw), source="problem_activations")
+        parts = raw.split("_", 1)
+        if len(parts) != 2:
+            logger.warning("admin_manage_user_problem: invalid callback format, expected 'uid_page', got: %s", raw)
+            await cb.answer("Некорректный формат данных", show_alert=False)
+            return
+        uid_raw, page_raw = parts
+        uid = int(uid_raw)
+        page = int(page_raw)
+        logger.debug("admin_manage_user_problem: uid=%s, page=%s", uid, page)
+        await _send_user_manage_card(cb.message, uid, page, source="problem_activations")
         await cb.answer("Открыто", show_alert=False)
-    except Exception:
-        await cb.answer("Некорректные параметры", show_alert=False)
+    except ValueError as e:
+        logger.warning("admin_manage_user_problem: ValueError при парсинге uid/page: %s, raw=%s", e, cb.data)
+        await cb.answer(f"Некорректные параметры: {cb.data}", show_alert=False)
+    except Exception as e:
+        logger.exception("Ошибка admin_manage_user_problem: %s", e)
+        await cb.answer("❌ Не удалось открыть карточку пользователя", show_alert=False)
 
 
 @router.callback_query(F.data == CB_ADMIN_FIND_CHARGE)
@@ -1701,13 +1729,21 @@ async def admin_manage_user(cb: types.CallbackQuery):
         return
     try:
         raw = cb.data.removeprefix(CB_ADMIN_MANAGE_USER_PREFIX)
-        uid_raw, page_raw = raw.split("_", 1)
+        logger.debug("admin_manage_user: raw callback data = %s", raw)
+        parts = raw.split("_", 1)
+        if len(parts) != 2:
+            logger.warning("admin_manage_user: invalid callback format, expected 'uid_page', got: %s", raw)
+            await cb.answer("Некорректный формат данных", show_alert=False)
+            return
+        uid_raw, page_raw = parts
         uid = int(uid_raw)
         page = int(page_raw)
+        logger.debug("admin_manage_user: uid=%s, page=%s", uid, page)
         await _send_user_manage_card(cb.message, uid, page)
         await cb.answer("Открыто", show_alert=False)
-    except ValueError:
-        await cb.answer("Некорректный user_id", show_alert=False)
+    except ValueError as e:
+        logger.warning("admin_manage_user: ValueError при парсинге uid/page: %s, raw=%s", e, cb.data)
+        await cb.answer(f"Некорректный user_id или страница: {cb.data}", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка admin_manage_user: %s", e)
         await cb.answer("❌ Не удалось открыть карточку пользователя", show_alert=False)
