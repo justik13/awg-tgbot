@@ -3071,9 +3071,6 @@ install_or_reinstall_flow() {
   ensure_selfhost_network_defaults
   ensure_fernet_key
   
-  # Валидация критических переменных после обновления .env
-  validate_critical_env || die "Валидация критических переменных не пройдена. Проверьте .env файл."
-
   # Обработка выбора режима для AWG и других настроек
   if [[ "$mode" == "reinstall" && "$choice" == "1" ]]; then
     # Быстрая переустановка: используем текущие значения AWG из .env
@@ -3352,6 +3349,9 @@ install_or_reinstall_flow() {
     prompt_with_default 'Сколько autobackup хранить (шт)' "$default" value
     set_env_value AUTO_BACKUP_KEEP_COUNT "$value"
   fi
+
+  # Валидация критических переменных после заполнения всех полей .env
+  validate_critical_env || die "Валидация критических переменных не пройдена. Проверьте .env файл."
 
   ensure_venv_and_requirements || die "Не удалось установить Python зависимости."
   ensure_bot_user || die "Не удалось подготовить service пользователя."
