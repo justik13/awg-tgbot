@@ -1,1 +1,43 @@
-Nothing needs to be added to .gitignore since only a shell script file (`awg-tgbot.sh`) was modified and no build artifacts, dependencies, or temporary files were detected in the changes.
+```python
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.env
+.env.local
+*.env.*
+.env.*
+
+# Logs
+*.log
+
+# Coverage
+.coverage
+htmlcov/
+coverage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+```
