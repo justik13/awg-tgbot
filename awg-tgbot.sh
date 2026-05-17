@@ -3015,10 +3015,8 @@ install_or_reinstall_flow() {
       server_name="My VPN"
     fi
     
-    # Предоставляем возможность изменить имя сервера при быстрой переустановке
-    echo ""
-    echo "--- Настройка имени сервера ---"
-    prompt_server_name server_name
+    # В быстрой переустановке НЕ спрашиваем имя сервера, используем текущее из .env
+    info "Используем текущее имя сервера: ${server_name}"
     
     secret="$(ensure_secret)"
     
