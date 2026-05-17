@@ -347,7 +347,7 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
         payment_result = await platega_service.create_payment(
             amount=float(info["rub"]),
             currency="RUB",
-            description=f"VPN подписка на {info['days']} дней",
+            description=f"Подписка на {info['days']} дней",
             payload=order_id,  # Передаем order_id как payload для callback
             return_url=return_url,
             failed_url=failed_url,
@@ -532,23 +532,47 @@ async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: s
                 )
         
         elif platega_service.is_pending_status(status):
+            sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
             await _send_or_edit_payment_screen(
                 cb, 
-                "⏳ Платёж ещё в обработке. Ожидайте подтверждения от банка.",
+                f"⏳ Платёж ещё в обработке. Ожидайте подтверждения от банка.\nСсылка на оплату: <a href='{sbp_url}'>оплатить через СБП</a>",
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text="⏱ Проверить статус", callback_data=CB_CHECK_PAYMENT_STATUS)],
-                        [InlineKeyboardButton(text="🆘 Помощь и поддержка", callback_data=CB_OPEN_SUPPORT)],
+                        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
+                        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
+                        [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
                     ]
                 )
             )
         
         elif platega_service.is_failed_status(status):
             await update_payment_status(transaction_id, "failed")
-            await _send_or_edit_payment_screen(cb, "❌ Платёж отменён или не удался. Попробуйте снова.")
+            sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+            await _send_or_edit_payment_screen(
+                cb, 
+                f"❌ Платёж отменён или не удался. Попробуйте снова.\nСсылка на оплату: <a href='{sbp_url}'>оплатить через СБП</a>",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
+                        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
+                        [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
+                    ]
+                )
+            )
         
         else:
-            await _send_or_edit_payment_screen(cb, f"Статус платежа: {status}")
+            sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+            await _send_or_edit_payment_screen(
+                cb, 
+                f"Статус платежа: {status}\nСсылка на оплату: <a href='{sbp_url}'>оплатить через СБП</a>",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
+                        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
+                        [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_SHOW_BUY_MENU)]
+                    ]
+                )
+            )
             
     except Exception as e:
         logger.exception("Failed to check Platega payment status: %s", e)
@@ -1080,13 +1104,14 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             ])
     
     elif status == "PENDING":
+        sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         text = (
             "<b>⏳ Платеж еще не подтвержден</b>\n\n"
             "Пожалуйста, дождитесь подтверждения или попробуйте снова позже.\n"
+            f"Ссылка на оплату: <a href='{sbp_url}'>оплатить через СБП</a>\n"
             "Не закрывайте это сообщение — кнопки оплаты остаются активными."
         )
         # Сохраняем все оригинальные кнопки для защиты от дурака
-        sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
             [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
@@ -1101,12 +1126,13 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data=CB_SHOW_BUY_MENU)]
         ])
     else:
+        sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         text = (
             f"<b>⚠️ Статус платежа: {status or 'Неизвестен'}</b>\n\n"
-            "Попробуйте проверить позже."
+            "Попробуйте проверить позже.\n"
+            f"Ссылка на оплату: <a href='{sbp_url}'>оплатить через СБП</a>"
         )
         # Сохраняем все оригинальные кнопки для защиты от дурака
-        sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="💳 Оплатить через СБП", url=sbp_url)],
             [types.InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"{CB_PLATEGA_CHECK_PREFIX}{transaction_id}")],
