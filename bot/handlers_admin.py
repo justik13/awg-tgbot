@@ -1374,11 +1374,19 @@ async def admin_open_user_card_from_problem(cb: types.CallbackQuery):
         uid = int(uid_raw)
         page = int(page_raw)
         logger.debug("admin_open_user_card_from_problem: uid=%s, page=%s", uid, page)
+        
+        # Проверяем существование пользователя
+        row = await fetchone("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+        if not row:
+            logger.warning("admin_open_user_card_from_problem: пользователь с uid=%s не найден в БД", uid)
+            await cb.answer(f"❌ Пользователь {uid} не найден в базе данных", show_alert=True)
+            return
+        
         await _send_user_manage_card(cb.message, uid, page, source="problem_activations")
         await cb.answer("Открыто", show_alert=False)
     except ValueError as e:
         logger.warning("admin_open_user_card_from_problem: ValueError при парсинге uid/page: %s, raw=%s", e, cb.data)
-        await cb.answer(f"Некорректные параметры: {cb.data}", show_alert=False)
+        await cb.answer(f"❌ Некорректные параметры: {cb.data}", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка admin_open_user_card_from_problem: %s", e)
         await cb.answer("❌ Не удалось открыть карточку пользователя", show_alert=False)
@@ -1400,11 +1408,19 @@ async def admin_manage_user_problem(cb: types.CallbackQuery):
         uid = int(uid_raw)
         page = int(page_raw)
         logger.debug("admin_manage_user_problem: uid=%s, page=%s", uid, page)
+        
+        # Проверяем существование пользователя
+        row = await fetchone("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+        if not row:
+            logger.warning("admin_manage_user_problem: пользователь с uid=%s не найден в БД", uid)
+            await cb.answer(f"❌ Пользователь {uid} не найден в базе данных", show_alert=True)
+            return
+        
         await _send_user_manage_card(cb.message, uid, page, source="problem_activations")
         await cb.answer("Открыто", show_alert=False)
     except ValueError as e:
         logger.warning("admin_manage_user_problem: ValueError при парсинге uid/page: %s, raw=%s", e, cb.data)
-        await cb.answer(f"Некорректные параметры: {cb.data}", show_alert=False)
+        await cb.answer(f"❌ Некорректные параметры: {cb.data}", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка admin_manage_user_problem: %s", e)
         await cb.answer("❌ Не удалось открыть карточку пользователя", show_alert=False)
@@ -1751,7 +1767,7 @@ async def admin_manage_user(cb: types.CallbackQuery):
         await cb.answer("Открыто", show_alert=False)
     except ValueError as e:
         logger.warning("admin_manage_user: ValueError при парсинге uid/page: %s, raw=%s", e, cb.data)
-        await cb.answer(f"Некорректный user_id или страница: {cb.data}", show_alert=False)
+        await cb.answer(f"❌ Некорректный user_id или страница: {cb.data}", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка admin_manage_user: %s", e)
         await cb.answer("❌ Не удалось открыть карточку пользователя", show_alert=False)
@@ -1768,6 +1784,14 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
         days = int(days_raw)
         page = int(page_raw)
         source = _infer_user_manage_source(cb)
+        
+        # Проверяем существование пользователя
+        row = await fetchone("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+        if not row:
+            logger.warning("admin_add_days_btn: пользователь с uid=%s не найден в БД", uid)
+            await cb.answer(f"❌ Пользователь {uid} не найден в базе данных", show_alert=True)
+            return
+        
         if days >= 30:
             token = _generate_admin_action_token()
             token_action_key = _make_token_action_key(ADD_DAYS_CONFIRM_ACTION_KEY, token)
@@ -1996,6 +2020,13 @@ async def admin_device_delete_btn(cb: types.CallbackQuery):
         device_num = int(device_num_raw)
         page = int(page_raw)
         source = _infer_user_manage_source(cb)
+        
+        # Проверяем существование пользователя
+        row = await fetchone("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+        if not row:
+            logger.warning("admin_device_delete_btn: пользователь с uid=%s не найден в БД", uid)
+            await cb.answer(f"❌ Пользователь {uid} не найден в базе данных", show_alert=True)
+            return
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=False)
         return
@@ -2103,6 +2134,13 @@ async def admin_device_reissue_btn(cb: types.CallbackQuery):
         device_num = int(device_num_raw)
         page = int(page_raw)
         source = _infer_user_manage_source(cb)
+        
+        # Проверяем существование пользователя
+        row = await fetchone("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+        if not row:
+            logger.warning("admin_device_reissue_btn: пользователь с uid=%s не найден в БД", uid)
+            await cb.answer(f"❌ Пользователь {uid} не найден в базе данных", show_alert=True)
+            return
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=False)
         return
@@ -2206,6 +2244,13 @@ async def admin_revoke_btn(cb: types.CallbackQuery):
         uid = int(uid_raw)
         page = int(page_raw)
         source = _infer_user_manage_source(cb)
+        
+        # Проверяем существование пользователя
+        row = await fetchone("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+        if not row:
+            logger.warning("admin_revoke_btn: пользователь с uid=%s не найден в БД", uid)
+            await cb.answer(f"❌ Пользователь {uid} не найден в базе данных", show_alert=True)
+            return
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=False)
         return
@@ -2292,6 +2337,13 @@ async def admin_del_user(cb: types.CallbackQuery):
         uid = int(uid_raw)
         page = int(page_raw)
         source = _infer_user_manage_source(cb)
+        
+        # Проверяем существование пользователя
+        row = await fetchone("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+        if not row:
+            logger.warning("admin_del_user: пользователь с uid=%s не найден в БД", uid)
+            await cb.answer(f"❌ Пользователь {uid} не найден в базе данных", show_alert=True)
+            return
     except ValueError:
         await cb.answer("Некорректные параметры действия", show_alert=False)
         return
@@ -2804,10 +2856,24 @@ async def admin_open_user_card_from_payment(cb: types.CallbackQuery):
     raw = cb.data.removeprefix(CB_ADMIN_OPEN_USER_CARD_PREFIX)
     try:
         uid_raw, page_raw = raw.split("_", 1)
-        await _send_user_manage_card(cb.message, int(uid_raw), int(page_raw))
+        uid = int(uid_raw)
+        page = int(page_raw)
+        
+        # Проверяем существование пользователя
+        row = await fetchone("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+        if not row:
+            logger.warning("admin_open_user_card_from_payment: пользователь с uid=%s не найден в БД", uid)
+            await cb.answer(f"❌ Пользователь {uid} не найден в базе данных", show_alert=True)
+            return
+        
+        await _send_user_manage_card(cb.message, uid, page)
         await cb.answer("Открыто", show_alert=False)
-    except Exception:
-        await cb.answer("Некорректные параметры", show_alert=False)
+    except ValueError as e:
+        logger.warning("admin_open_user_card_from_payment: ValueError при парсинге uid/page: %s, raw=%s", e, cb.data)
+        await cb.answer(f"❌ Некорректные параметры: {cb.data}", show_alert=False)
+    except Exception as e:
+        logger.exception("Ошибка admin_open_user_card_from_payment: %s", e)
+        await cb.answer("❌ Не удалось открыть карточку пользователя", show_alert=False)
 
 
 @router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingPaymentLookupInput())
