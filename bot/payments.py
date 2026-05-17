@@ -1036,7 +1036,8 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
                             "Пожалуйста, обратитесь к поддержке."
                         )
                         kb = types.InlineKeyboardMarkup(inline_keyboard=[
-                            [types.InlineKeyboardButton(text="📞 Поддержка", url=f"https://t.me/{config.get_support_username()}")]
+                            [types.InlineKeyboardButton(text="📞 Поддержка", url=f"https://t.me/{config.get_support_username()}")],
+                            [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data=CB_SHOW_BUY_MENU)]
                         ])
             else:
                 text = (
