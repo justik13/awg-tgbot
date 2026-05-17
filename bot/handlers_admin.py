@@ -800,7 +800,7 @@ async def _denylist_keyboard():
     return get_admin_denylist_kb(denylist_enabled=enabled, denylist_mode=mode)
 
 
-async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_markup=None, parse_mode=None, **kwargs) -> None:
+async def _send_or_edit_admin_message(cb: types.CallbackQuery, text: str, reply_markup=None, parse_mode="HTML", **kwargs) -> None:
     message = cb.message
     if message is not None and hasattr(message, "edit_text"):
         try:
@@ -2938,7 +2938,7 @@ async def admin_promo_capture_input(message: types.Message):
                 await message.answer("⚠️ Такой промокод уже существует.", get_admin_promocodes_kb())
                 return
             await write_audit_log(message.from_user.id, "promo_created", f"code={code}; days={days}; max={max_activations or 0}")
-            await message.answer(f"✅ Промокод <code>{code}</code> создан.", get_admin_promocodes_kb())
+            await message.answer(f"✅ Промокод <code>{code}</code> создан.", get_admin_promocodes_kb(), parse_mode="HTML")
         except ValueError:
             await message.answer("Ошибка формата. Формат: CODE DAYS [MAX]")
         return
@@ -2954,7 +2954,7 @@ async def admin_promo_capture_input(message: types.Message):
             await message.answer("⚠️ Промокод не найден или уже выключен.", get_admin_promocodes_kb())
             return
         await write_audit_log(message.from_user.id, "promo_disabled", f"code={code}")
-        await message.answer(f"✅ Промокод <code>{code}</code> отключён.", get_admin_promocodes_kb())
+        await message.answer(f"✅ Промокод <code>{code}</code> отключён.", get_admin_promocodes_kb(), parse_mode="HTML")
 
 
 @router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingServiceSettingsInput())
@@ -3027,7 +3027,7 @@ async def admin_text_override_capture_input(message: types.Message):
     await set_text_override(key, value, updated_by=ADMIN_ID)
     await clear_pending_admin_action(ADMIN_ID, TEXT_OVERRIDE_INPUT_ACTION_KEY)
     await write_audit_log(ADMIN_ID, "admin_text_override_set", f"key={key}")
-    await message.answer(f"✅ Сохранено: <b>{key}</b>", get_admin_text_override_item_kb(key))
+    await message.answer(f"✅ Сохранено: <b>{key}</b>", get_admin_text_override_item_kb(key), parse_mode="HTML")
 
 
 @router.message(IsAdmin(), F.text, ~F.text.startswith("/"), HasPendingNetworkPolicyInput())
@@ -3069,7 +3069,7 @@ async def give_manual(message: types.Message, command: CommandObject):
         await message.answer("⏳ Слишком частый вызов /give")
         return
     if not command.args:
-        await message.answer("Формат: <code>/give ID [ДНИ]</code>\nПо умолчанию: 30 дней")
+        await message.answer("Формат: <code>/give ID [ДНИ]</code>\nПо умолчанию: 30 дней", parse_mode="HTML")
         return
     try:
         parts = command.args.split()
@@ -3091,7 +3091,7 @@ async def give_manual(message: types.Message, command: CommandObject):
         if not notified:
             await message.answer("⚠️ Доступ выдан, но уведомление пользователю отправить не удалось.")
     except ValueError:
-        await message.answer("Ошибка формата. Пример: <code>/give 123456789 30</code> или <code>/give 123456789</code>")
+        await message.answer("Ошибка формата. Пример: <code>/give 123456789 30</code> или <code>/give 123456789</code>", parse_mode="HTML")
     except Exception as e:
         logger.exception("Ошибка /give: %s", e)
         await message.answer("❌ Не удалось выдать доступ.")
@@ -3102,7 +3102,7 @@ async def promo_create_cmd(message: types.Message, command: CommandObject):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     if not command.args:
-        await message.answer("Формат: <code>/promo_create CODE DAYS [MAX]</code>")
+        await message.answer("Формат: <code>/promo_create CODE DAYS [MAX]</code>", parse_mode="HTML")
         return
     try:
         parts = command.args.split()
@@ -3119,9 +3119,9 @@ async def promo_create_cmd(message: types.Message, command: CommandObject):
             return
         await write_audit_log(message.from_user.id, "promo_created", f"code={code}; days={days}; max={max_activations or 0}")
         max_text = str(max_activations) if max_activations is not None else "∞"
-        await message.answer(f"✅ Промокод <code>{code}</code> создан: +{days} дней, лимит: {max_text}.")
+        await message.answer(f"✅ Промокод <code>{code}</code> создан: +{days} дней, лимит: {max_text}.", parse_mode="HTML")
     except ValueError:
-        await message.answer("Ошибка формата. Пример: <code>/promo_create SPRING10 10 50</code>")
+        await message.answer("Ошибка формата. Пример: <code>/promo_create SPRING10 10 50</code>", parse_mode="HTML")
     except Exception as e:
         logger.exception("Ошибка /promo_create: %s", e)
         await message.answer("❌ Не удалось создать промокод.")
@@ -3155,7 +3155,7 @@ async def promo_disable_cmd(message: types.Message, command: CommandObject):
     await _clear_service_settings_pending()
     code = normalize_promo_code(command.args or "")
     if not code:
-        await message.answer("Формат: <code>/promo_disable CODE</code>")
+        await message.answer("Формат: <code>/promo_disable CODE</code>", parse_mode="HTML")
         return
     try:
         disabled = await disable_promo_code(code)
@@ -3163,7 +3163,7 @@ async def promo_disable_cmd(message: types.Message, command: CommandObject):
             await message.answer("⚠️ Промокод не найден или уже выключен.")
             return
         await write_audit_log(message.from_user.id, "promo_disabled", f"code={code}")
-        await message.answer(f"✅ Промокод <code>{code}</code> отключён.")
+        await message.answer(f"✅ Промокод <code>{code}</code> отключён.", parse_mode="HTML")
     except Exception as e:
         logger.exception("Ошибка /promo_disable: %s", e)
         await message.answer("❌ Не удалось отключить промокод.")
@@ -3174,7 +3174,7 @@ async def revoke_user_cmd(message: types.Message, command: CommandObject):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     if not command.args:
-        await message.answer("Формат: <code>/revoke ID</code>")
+        await message.answer("Формат: <code>/revoke ID</code>", parse_mode="HTML")
         return
     try:
         uid = int(command.args)
@@ -3216,7 +3216,7 @@ async def find_user_cmd(message: types.Message, command: CommandObject):
     await _clear_service_settings_pending()
     query = (command.args or "").strip()
     if not query:
-        await message.answer("Формат: <code>/finduser QUERY</code>\nQUERY: user_id или username/@username")
+        await message.answer("Формат: <code>/finduser QUERY</code>\nQUERY: user_id или username/@username", parse_mode="HTML")
         return
     if query.isdigit():
         uid = int(query)
@@ -3276,7 +3276,7 @@ async def payinfo_cmd(message: types.Message, command: CommandObject):
     await _clear_network_policy_pending()
     await _clear_service_settings_pending()
     if not command.args or not command.args.strip().isdigit():
-        await message.answer("Формат: <code>/payinfo USER_ID</code>")
+        await message.answer("Формат: <code>/payinfo USER_ID</code>", parse_mode="HTML")
         return
     uid = int(command.args.strip())
     payment_summary = await get_latest_user_payment_summary(uid)
@@ -3292,7 +3292,7 @@ async def findpay_cmd(message: types.Message, command: CommandObject):
     await _clear_service_settings_pending()
     charge_id = (command.args or "").strip()
     if not charge_id:
-        await message.answer("Формат: <code>/findpay CHARGE_ID</code>")
+        await message.answer("Формат: <code>/findpay CHARGE_ID</code>", parse_mode="HTML")
         return
     payment_summary = await get_payment_summary_by_charge_id(charge_id)
     if not payment_summary:
@@ -3369,7 +3369,7 @@ async def broadcast_prepare(message: types.Message, command: CommandObject):
         return
     text = command.args.strip()
     if not text:
-        await message.answer("Текст пустой. Отправьте сообщение после <code>/send</code>.")
+        await message.answer("Текст пустой. Отправьте сообщение после <code>/send</code>.", parse_mode="HTML")
         return
     segment = "all"
     await set_pending_broadcast(ADMIN_ID, text, segment=segment)
