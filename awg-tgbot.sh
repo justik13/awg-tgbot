@@ -4811,6 +4811,8 @@ print_menu_awg_yes_bot_no() {
   echo "1) Установить"
   echo "2) Диагностика"
   echo "3) Повторить проверку"
+  echo "4) Бэкап"
+  echo "5) Восстановить из бэкапа"
   echo "0) Выход"
   print_line
 }
@@ -4902,6 +4904,8 @@ main_menu() {
           1) install_or_reinstall_flow install ;;
           2) print_detailed_startup_summary ;;
           3) should_pause=0 ;;
+          4) create_local_backup ;;
+          5) restore_from_backup ;;
           0) cleanup_transient_install_state; clear_if_tty; print_exit_hint; exit 0 ;;
           *) warn "Неизвестный пункт меню." ;;
         esac
