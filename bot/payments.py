@@ -6,7 +6,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from aiogram import Bot, F, Router, types, FSMContext
+from aiogram import Bot, F, Router, types
+from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, PreCheckoutQuery
 
