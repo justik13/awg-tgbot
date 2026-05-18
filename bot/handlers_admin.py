@@ -72,7 +72,6 @@ from helpers import (
 from device_activity import render_device_activity_line
 from traffic import format_bytes_compact, render_device_traffic_line
 from keyboards import (
-    get_admin_backup_kb, get_admin_backup_list_kb, get_admin_backup_view_kb, get_admin_restore_confirm_kb,
     get_admin_confirm_kb, get_admin_inline_kb, get_admin_maintenance_kb, get_admin_payments_kb, get_admin_price_confirm_kb, get_admin_prices_kb, get_admin_promocodes_kb,
     get_admin_simple_back_kb, get_broadcast_cancel_kb, get_broadcast_confirm_kb, get_broadcast_segment_kb, get_open_user_card_kb, get_problem_activations_kb,
     get_admin_network_policy_kb, get_admin_denylist_kb,
@@ -104,9 +103,6 @@ from ui_constants import (
     CB_CANCEL_DEVICE_DELETE, CB_CONFIRM_DEVICE_REISSUE, CB_CANCEL_DEVICE_REISSUE,
     CB_CONFIRM_ADD_DAYS, CB_CANCEL_ADD_DAYS,
     CB_ADMIN_PLATEGA_PRICE_EDIT_7, CB_ADMIN_PLATEGA_PRICE_EDIT_30, CB_ADMIN_PLATEGA_PRICE_EDIT_90,
-    CB_ADMIN_BACKUP, CB_ADMIN_BACKUP_FULL, CB_ADMIN_BACKUP_USERS, CB_ADMIN_BACKUP_LIST,
-    CB_ADMIN_BACKUP_VIEW_PREFIX, CB_ADMIN_BACKUP_DELETE_PREFIX,
-    CB_ADMIN_RESTORE, CB_ADMIN_RESTORE_SELECT_PREFIX, CB_ADMIN_RESTORE_CONFIRM_PREFIX,
 )
 from config_validate import read_helper_policy
 from network_policy import denylist_sync, parse_cidrs, policy_metrics
