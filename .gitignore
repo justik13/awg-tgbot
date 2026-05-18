@@ -1,1 +1,1 @@
-Nothing should be ignored in this case, as only a Python source file (`bot/handlers_user.py`) was modified and there are no build artifacts, dependencies, or temporary files in the changes.
+Nothing should be ignored since the changes only include Python source files (.py) which are not build artifacts, dependencies, or temporary files.

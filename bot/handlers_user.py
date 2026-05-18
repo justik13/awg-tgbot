@@ -556,13 +556,13 @@ async def noop_callback(cb: types.CallbackQuery):
 
 @guarded_callback(operation_id_prefix="start")
 @router.message(Command("start"))
-async def start(message: types.Message, command: CommandObject):
+async def start(message: types.Message, state: FSMContext, command: CommandObject):
     """
     Entry point for /start command.
     Uses FlowEntryPoint for consistent navigation state management.
     """
     # Reset any dangling states on /start
-    await recover_from_dangling_state(message.from_user.id, message.bot)
+    await recover_from_dangling_state(message.from_user.id, state)
     
     await _clear_promo_input_pending(message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)

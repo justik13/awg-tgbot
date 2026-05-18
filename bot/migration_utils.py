@@ -351,14 +351,20 @@ class FlowEntryPoint:
 # ============================================================================
 
 async def recover_from_dangling_state(
-    cb: CallbackQuery,
-    state: FSMContext
+    user_id: int,
+    state: FSMContext,
+    callback_data: str | None = None
 ) -> bool:
     """
     Recovers from dangling/inconsistent state.
     
     Call this at the beginning of handlers to detect and fix
     inconsistent state situations.
+    
+    Args:
+        user_id: The user's ID
+        state: FSMContext instance
+        callback_data: Optional callback data for navigation checks
     
     Returns:
         True if recovery was performed, False if state was consistent
@@ -368,7 +374,6 @@ async def recover_from_dangling_state(
     if not current_state:
         return False  # No state to recover from
     
-    user_id = cb.from_user.id
     logger.warning(
         "Detected potentially dangling state: user=%s state=%s",
         user_id, current_state
@@ -376,7 +381,7 @@ async def recover_from_dangling_state(
     
     # Strategy: Always reset on navigation callbacks
     nav_callbacks = ['nav:home', 'nav:profile', 'nav:support', 'nav:catalog']
-    if cb.data in nav_callbacks or cb.data == 'open_profile':
+    if callback_data in nav_callbacks or callback_data == 'open_profile':
         await safe_reset_state(state, "recovery_navigation")
         return True
     
