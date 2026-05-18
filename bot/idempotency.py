@@ -14,7 +14,11 @@ import hashlib
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aiogram.types import CallbackQuery
+    from aiogram.fsm.context import FSMContext
 
 from config import logger
 

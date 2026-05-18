@@ -6,7 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from aiogram import Bot, F, Router, types
+from aiogram import Bot, F, Router, types, FSMContext
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, PreCheckoutQuery
 
@@ -60,6 +60,8 @@ from migration_utils import (
     enter_payment_state_sbp,
     exit_payment_state_success,
     exit_payment_state_failed,
+    reset_fsm_state_safe,
+    update_payment_fsm_state,
 )
 from fsm_states import (
     CatalogStates,
