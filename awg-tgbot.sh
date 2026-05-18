@@ -48,10 +48,7 @@ AWG_HELPER_TARGET="/usr/local/libexec/awg-bot-helper"
 AWG_HELPER_SUDOERS="/etc/sudoers.d/awg-bot-helper"
 AWG_HELPER_POLICY="/etc/awg-bot-helper.json"
 TTY_DEVICE="/dev/tty"
-# Открываем /dev/tty на fd 3 для надёжного чтения ввода при запуске через curl | bash
-if [[ -e "$TTY_DEVICE" ]]; then
-  exec 3<>"$TTY_DEVICE"
-fi
+# FD 3 и FD 4 будут открыты позже в setup_tty_fd после require_root
 SELF_SYMLINK="/usr/local/bin/awg-tgbot"
 SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT="1"
 SELFHOST_EGRESS_DENYLIST_MODE_DEFAULT="soft"
@@ -186,10 +183,17 @@ setup_logging() {
   touch "$INSTALL_LOG" "$APP_LOG_FILE"
   chmod 640 "$INSTALL_LOG" "$APP_LOG_FILE" || true
   # Sanitize logs to prevent leaking sensitive data
-  exec > >(tee -a "$INSTALL_LOG" | sed -e 's/BOT_TOKEN=[^ ]*/BOT_TOKEN=***REDACTED***/g' -e 's/PLATEGA_MERCHANT_ID=[^ ]*/PLATEGA_MERCHANT_ID=***REDACTED***/g' -e 's/PLATEGA_SECRET_KEY=[^ ]*/PLATEGA_SECRET_KEY=***REDACTED***/g') 2>&1
+  # Use process substitution with explicit error handling
+  if ! exec > >(tee -a "$INSTALL_LOG" | sed -e 's/BOT_TOKEN=[^ ]*/BOT_TOKEN=***REDACTED***/g' -e 's/PLATEGA_MERCHANT_ID=[^ ]*/PLATEGA_MERCHANT_ID=***REDACTED***/g' -e 's/PLATEGA_SECRET_KEY=[^ ]*/PLATEGA_SECRET_KEY=***REDACTED***/g') 2>&1; then
+    warn "Не удалось настроить перенаправление логов, продолжаем без логирования в файл."
+  fi
 }
 
 setup_tty_fd() {
+  # Закрываем любые существующие FD 3 и FD 4 перед открытием новых
+  exec 3>&- 2>/dev/null || true
+  exec 4>&- 2>/dev/null || true
+  
   if [[ -c "$TTY_DEVICE" ]]; then
     exec 3<>"$TTY_DEVICE"
     return 0
@@ -262,21 +266,25 @@ prompt_raw() {
   # Это единственный способ получить интерактивный ввод пользователя
   if [[ -e "/dev/tty" ]]; then
     if ! read -r __input < /dev/tty; then
+      warn "Не удалось прочитать ввод с /dev/tty."
       __input=""
     fi
   elif [[ -t 0 ]]; then
     # Fallback: stdin является терминалом (редкий случай)
     if ! read -r __input; then
+      warn "Не удалось прочитать ввод со stdin."
       __input=""
     fi
   elif [[ -t 3 ]]; then
     # Fallback: fd 3 является терминалом
     if ! read -r __input <&3; then
+      warn "Не удалось прочитать ввод из fd 3."
       __input=""
     fi
   else
     # Последний шанс: читаем из stdin (не интерактивно)
     if ! read -r __input; then
+      warn "Не удалось прочитать ввод (fallback)."
       __input=""
     fi
   fi
