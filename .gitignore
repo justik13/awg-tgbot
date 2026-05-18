@@ -1,1 +1,1 @@
-Nothing should be ignored in this case, as the changes only include Python source files (.py) which are legitimate code files to track in version control.
+Nothing should be ignored since only a shell script file (`awg-tgbot.sh`) was modified and no build artifacts, dependencies, or temporary files were included in the changes.
