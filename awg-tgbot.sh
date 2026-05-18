@@ -2794,18 +2794,20 @@ start_service() {
   if [[ -d "$BOT_DIR" && -f "$BOT_DIR/app.py" && -f "$BOT_DIR/database.py" ]]; then
     # Вызываем асинхронную функцию init_db напрямую через asyncio.run
     # Это гарантирует создание БД до запуска основного сервиса
-    # Используем timeout для предотвращения зависания
     local init_output
     local init_rc=0
-    init_output=$(timeout 30 su -s /bin/bash "$BOT_USER" -c "cd $BOT_DIR && $VENV_DIR/bin/python -c \"import asyncio; from database import init_db; asyncio.run(init_db())\"" 2>&1) || init_rc=$?
     
+    # Обёртываем весь вызов su в timeout для предотвращения зависания
+    init_output=$(timeout 60 bash -c "su -s /bin/bash \"$BOT_USER\" -c \"cd '$BOT_DIR' && '$VENV_DIR'/bin/python -c 'import asyncio; from database import init_db; asyncio.run(init_db())'\"" 2>&1) || init_rc=$?
+
     if [[ $init_rc -eq 124 ]]; then
-      warn "Инициализация БД превысила таймаут (30 сек). Продолжаем..."
+      warn "Инициализация БД превысила таймаут (60 сек). Продолжаем..."
+      warn "Вывод: $init_output"
     elif [[ $init_rc -ne 0 ]]; then
       warn "Не удалось инициализировать базу данных (код: $init_rc). Вывод: $init_output"
       warn "Попытка продолжения работы..."
     else
-      debug "База данных успешно инициализирована."
+      ok "База данных успешно инициализирована."
     fi
     
     # Проверка и исправление прав на созданный файл БД
