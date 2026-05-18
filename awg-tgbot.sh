@@ -3948,26 +3948,129 @@ restore_from_backup() {
 
   # archive_env_file уже извлечён выше, используем его для переопределения параметров
 
+  # Сначала детектируем AWG параметры с текущего сервера (если возможно)
+  local detected_container="" detected_interface="" detected_public_key="" detected_server_ip=""
+  
+  # Пробуем найти AWG контейнер и интерфейс через docker
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    # Ищем контейнер AmneziaWG
+    detected_container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -iE 'amnezia|awg|wg' | head -n1 || true)"
+    
+    if [[ -n "$detected_container" ]]; then
+      # Получаем public key из контейнера
+      detected_public_key="$(docker exec "$detected_container" awg show 2>/dev/null | grep -i 'public key' | awk -F: '{print $2}' | tr -d ' ' || true)"
+      
+      # Получаем интерфейс
+      detected_interface="$(docker exec "$detected_container" awg show 2>/dev/null | grep -i '^interface:' | awk -F: '{print $2}' | tr -d ' ' || true)"
+      [[ -z "$detected_interface" ]] && detected_interface="awg0"
+      
+      # Получаем порт и вычисляем SERVER_IP
+      local listen_port
+      listen_port="$(docker exec "$detected_container" awg show 2>/dev/null | grep -i 'listening port' | awk -F: '{print $2}' | tr -d ' ' || true)"
+      if [[ -n "$listen_port" ]]; then
+        # Пытаемся получить внешний IP
+        local public_host
+        public_host="$(curl -sS https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}' || true)"
+        if [[ -n "$public_host" ]]; then
+          detected_server_ip="${public_host}:${listen_port}"
+        fi
+      fi
+    fi
+  fi
+  
+  # Если не удалось получить через docker, пробуем из текущей .env если она есть
+  if [[ -z "$detected_server_ip" && -f "$ENV_FILE" ]]; then
+    detected_server_ip="$(get_env_value SERVER_IP)"
+  fi
+  if [[ -z "$detected_public_key" && -f "$ENV_FILE" ]]; then
+    detected_public_key="$(get_env_value SERVER_PUBLIC_KEY)"
+  fi
+  if [[ -z "$detected_interface" && -f "$ENV_FILE" ]]; then
+    detected_interface="$(get_env_value WG_INTERFACE)"
+  fi
+  if [[ -z "$detected_container" && -f "$ENV_FILE" ]]; then
+    detected_container="$(get_env_value DOCKER_CONTAINER)"
+  fi
+
   # Показываем текущие значения и предлагаем переопределить критические параметры
   echo ""
   echo "=== Переопределение параметров для нового сервера ==="
   echo "Текущие значения из бэкапа:"
   
   local env_override="" new_value=""
-  local -a override_vars=("SERVER_IP" "PUBLIC_HOST" "SERVER_PUBLIC_KEY" "WG_INTERFACE" "DOCKER_CONTAINER")
   
-  for var in "${override_vars[@]}"; do
+  # Параметры которые нужно ввести вручную (TG бот, платежи)
+  local -a manual_vars=("BOT_TOKEN" "PLATEGA_MERCHANT_ID" "PLATEGA_SECRET_KEY")
+  
+  for var in "${manual_vars[@]}"; do
     local current_value
     current_value="$(get_env_value_from_file "$archive_env_file" "$var")"
     if [[ -n "$current_value" ]]; then
+      if [[ "$var" == "BOT_TOKEN" ]]; then
+        echo "  $var = ${current_value:0:10}...***REDACTED***"
+      else
+        echo "  $var = ***REDACTED***"
+      fi
+    else
+      echo "  $var = (не задано)"
+    fi
+    prompt_raw "Переопределить $var (оставить пустым для сохранения текущего): " new_value
+    if [[ -n "$new_value" ]]; then
+      local escaped_new
+      escaped_new="$(printf '%s\n' "$new_value" | sed 's/[&/\]/\\&/g')"
+      if [[ -n "$current_value" ]]; then
+        sed -i "s/^${var}=.*/${var}=${escaped_new}/" "$archive_env_file"
+      else
+        echo "${var}=${escaped_new}" >> "$archive_env_file"
+      fi
+      env_override=1
+    fi
+  done
+
+  # Параметры которые можно подставить автоматически с текущего сервера
+  local -a auto_vars=("SERVER_IP" "PUBLIC_HOST" "SERVER_PUBLIC_KEY" "WG_INTERFACE" "DOCKER_CONTAINER")
+  
+  for var in "${auto_vars[@]}"; do
+    local current_value auto_value
+    current_value="$(get_env_value_from_file "$archive_env_file" "$var")"
+    
+    # Определяем авто-значение для текущего сервера
+    case "$var" in
+      SERVER_IP) auto_value="$detected_server_ip" ;;
+      SERVER_PUBLIC_KEY) auto_value="$detected_public_key" ;;
+      WG_INTERFACE) auto_value="$detected_interface" ;;
+      DOCKER_CONTAINER) auto_value="$detected_container" ;;
+      PUBLIC_HOST) auto_value="" ;; # Нет авто-значения
+    esac
+    
+    if [[ -n "$current_value" ]]; then
       echo "  $var = $current_value"
-      prompt_raw "Переопределить $var (оставить пустым для сохранения текущего): " new_value
+      if [[ -n "$auto_value" ]]; then
+        prompt_raw "Переопределить $var (Enter для авто: $auto_value): " new_value
+        if [[ -z "$new_value" ]]; then
+          new_value="$auto_value"
+        fi
+      else
+        prompt_raw "Переопределить $var (оставить пустым для сохранения текущего): " new_value
+      fi
       if [[ -n "$new_value" ]]; then
-        # Экранируем спецсимволы для sed
         local escaped_current escaped_new
         escaped_current="$(printf '%s\n' "$current_value" | sed 's/[&/\]/\\&/g')"
         escaped_new="$(printf '%s\n' "$new_value" | sed 's/[&/\]/\\&/g')"
         sed -i "s/^${var}=.*/${var}=${escaped_new}/" "$archive_env_file"
+        env_override=1
+      fi
+    elif [[ -n "$auto_value" ]]; then
+      # Значения нет в бэкапе, но есть авто-значение
+      echo "  $var = (не задано в бэкапе)"
+      prompt_raw "Установить $var (Enter для авто: $auto_value): " new_value
+      if [[ -z "$new_value" ]]; then
+        new_value="$auto_value"
+      fi
+      if [[ -n "$new_value" ]]; then
+        local escaped_new
+        escaped_new="$(printf '%s\n' "$new_value" | sed 's/[&/\]/\\&/g')"
+        echo "${var}=${escaped_new}" >> "$archive_env_file"
         env_override=1
       fi
     fi
@@ -4009,11 +4112,15 @@ restore_from_backup() {
   if [[ -n "$env_override" ]]; then
     echo ""
     echo "Обновлённые значения в .env:"
-    for var in "${override_vars[@]}" "${price_vars[@]}"; do
+    for var in "${manual_vars[@]}" "${auto_vars[@]}" "${price_vars[@]}"; do
       local updated_value
       updated_value="$(get_env_value_from_file "$archive_env_file" "$var")"
       if [[ -n "$updated_value" ]]; then
-        echo "  $var = $updated_value"
+        if [[ "$var" == "BOT_TOKEN" || "$var" == "PLATEGA_MERCHANT_ID" || "$var" == "PLATEGA_SECRET_KEY" ]]; then
+          echo "  $var = ***REDACTED***"
+        else
+          echo "  $var = $updated_value"
+        fi
       fi
     done
     echo ""
