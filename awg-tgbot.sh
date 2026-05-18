@@ -4040,6 +4040,77 @@ restore_from_backup() {
     ok "$var обновлён"
   done
   
+  # ============================================
+  # ШАГ 1.5: ENCRYPTION_SECRET (новый + старый для миграции)
+  # ============================================
+  echo ""
+  echo "--- Ключ шифрования данных (ENCRYPTION_SECRET) ---"
+  local old_encryption_secret
+  old_encryption_secret="$(get_env_value_from_file "$archive_env_file" "ENCRYPTION_SECRET")"
+  
+  if [[ -n "$old_encryption_secret" ]]; then
+    echo "  Старый ENCRYPTION_SECRET = ${old_encryption_secret:0:8}...***REDACTED*** (${#old_encryption_secret} символов)"
+    echo ""
+    echo "Выберите действие:"
+    echo "  1) Сгенерировать новый ENCRYPTION_SECRET (рекомендуется для нового сервера)"
+    echo "     Старый ключ будет сохранён в ENCRYPTION_OLD_SECRETS для расшифровки существующих данных"
+    echo "  2) Оставить старый ENCRYPTION_SECRET (если переносите бота на другой сервер с теми же данными)"
+    echo ""
+    local enc_choice=""
+    prompt_raw "Ваш выбор (1 или 2): " enc_choice
+    
+    if [[ "$enc_choice" == "1" ]]; then
+      # Генерируем новый ENCRYPTION_SECRET
+      local new_encryption_secret
+      new_encryption_secret="$(openssl rand -hex 32 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(32))' || dd if=/dev/urandom bs=32 count=1 2>/dev/null | xxd -p)"
+      
+      if [[ -n "$new_encryption_secret" && ${#new_encryption_secret} -ge 64 ]]; then
+        # Сохраняем старый в ENCRYPTION_OLD_SECRETS
+        local existing_old_secrets
+        existing_old_secrets="$(get_env_value_from_file "$archive_env_file" "ENCRYPTION_OLD_SECRETS")"
+        
+        if [[ -n "$existing_old_secrets" ]]; then
+          # Добавляем к существующим
+          if [[ "$existing_old_secrets" != *"$old_encryption_secret"* ]]; then
+            local combined_old_secrets="${existing_old_secrets},${old_encryption_secret}"
+            local escaped_combined
+            escaped_combined="$(printf '%s\n' "$combined_old_secrets" | sed 's/[&/\]/\\&/g')"
+            sed -i "s/^ENCRYPTION_OLD_SECRETS=.*/ENCRYPTION_OLD_SECRETS=${escaped_combined}/" "$archive_env_file"
+          fi
+        else
+          # Создаём новую запись
+          local escaped_old
+          escaped_old="$(printf '%s\n' "$old_encryption_secret" | sed 's/[&/\]/\\&/g')"
+          echo "ENCRYPTION_OLD_SECRETS=${escaped_old}" >> "$archive_env_file"
+        fi
+        
+        # Устанавливаем новый ENCRYPTION_SECRET
+        local escaped_new_enc
+        escaped_new_enc="$(printf '%s\n' "$new_encryption_secret" | sed 's/[&/\]/\\&/g')"
+        sed -i "s/^ENCRYPTION_SECRET=.*/ENCRYPTION_SECRET=${escaped_new_enc}/" "$archive_env_file"
+        
+        ok "ENCRYPTION_SECRET обновлён (старый сохранён в ENCRYPTION_OLD_SECRETS)"
+        env_override=1
+      else
+        warn "Не удалось сгенерировать новый ENCRYPTION_SECRET. Оставляем старый."
+      fi
+    else
+      echo "  Оставляем старый ENCRYPTION_SECRET без изменений"
+    fi
+  else
+    echo "  ENCRYPTION_SECRET не найден в бэкапе. Будет сгенерирован новый."
+    local new_encryption_secret
+    new_encryption_secret="$(openssl rand -hex 32 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(32))' || dd if=/dev/urandom bs=32 count=1 2>/dev/null | xxd -p)"
+    
+    if [[ -n "$new_encryption_secret" && ${#new_encryption_secret} -ge 64 ]]; then
+      echo "ENCRYPTION_SECRET=${new_encryption_secret}" >> "$archive_env_file"
+      ok "ENCRYPTION_SECRET сгенерирован"
+      env_override=1
+    else
+      warn "Не удалось сгенерировать ENCRYPTION_SECRET!"
+    fi
+  fi
+
   echo ""
   echo "--- Параметры AmneziaWG (авто-подстановка с текущего сервера) ---"
   echo "Следующие параметры будут автоматически взяты с текущего сервера:"
