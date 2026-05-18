@@ -2770,6 +2770,14 @@ PY
 start_service() {
   info "Запускаю сервис..."
   
+  # Проверка наличия systemctl
+  if ! require_command systemctl; then
+    warn "systemctl не найден. Пропускаю управление сервисом через systemd."
+    warn "Если вы в контейнере или среде без systemd, запустите бота вручную:"
+    warn "  su -s /bin/bash \"$BOT_USER\" -c \"cd $BOT_DIR && $VENV_DIR/bin/python app.py\""
+    return 0
+  fi
+  
   # Принудительная инициализация базы данных перед запуском сервиса
   # Это необходимо, чтобы БД создалась с правильными правами от имени пользователя awg-bot
   info "Инициализирую базу данных..."
