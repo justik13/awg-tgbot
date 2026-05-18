@@ -104,9 +104,73 @@ async def ensure_column(db: aiosqlite.Connection, table_name: str, column_name: 
         await db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
 
 
+async def get_db_version(db: aiosqlite.Connection) -> int:
+    """Получить текущую версию схемы БД."""
+    try:
+        result = await fetchval("SELECT value FROM app_settings WHERE key = 'db_schema_version'", default=None)
+        if result is not None:
+            return int(result)
+    except Exception:
+        pass
+    return 0
+
+
+async def set_db_version(db: aiosqlite.Connection, version: int) -> None:
+    """Установить версию схемы БД."""
+    from helpers import utc_now_naive
+    
+    await db.execute("""
+        INSERT OR REPLACE INTO app_settings (key, value, updated_at, updated_by)
+        VALUES ('db_schema_version', ?, ?, NULL)
+    """, (str(version), utc_now_naive().isoformat()))
+
+
+async def check_db_integrity(db_path: Path) -> tuple[bool, str]:
+    """Проверить целостность SQLite базы данных.
+    
+    Returns:
+        Tuple[bool, str]: (is_integrity_ok, message)
+    """
+    try:
+        temp_db = await aiosqlite.connect(db_path)
+        try:
+            await temp_db.execute("PRAGMA integrity_check;")
+            result = await temp_db.execute("PRAGMA integrity_check;")
+            rows = await result.fetchall()
+            
+            if len(rows) == 1 and rows[0][0] == "ok":
+                return True, "Database integrity check passed"
+            else:
+                issues = "; ".join(str(row[0]) for row in rows[:5])
+                return False, f"Database integrity issues found: {issues}"
+        finally:
+            await temp_db.close()
+    except Exception as e:
+        return False, f"Database integrity check failed: {str(e)}"
+
+
 async def init_db() -> None:
     db = await open_db()
     try:
+        # Проверка целостности БД перед инициализацией
+        integrity_ok, integrity_msg = await check_db_integrity(Path(DB_PATH))
+        if not integrity_ok:
+            logger.warning(f"DB integrity check warning: {integrity_msg}")
+        
+        # Создаём таблицу версионирования, если её нет
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by INTEGER
+            )
+        """)
+        
+        # Получаем текущую версию схемы
+        current_version = await get_db_version(db)
+        logger.info(f"Current DB schema version: {current_version}")
+        
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -325,16 +389,9 @@ async def init_db() -> None:
             )
             """
         )
-        await db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                updated_by INTEGER
-            )
-            """
-        )
+        # Таблица app_settings уже создана в начале init_db() для версионирования
+        # Оставляем только для обратной совместимости, если вызывается отдельно
+        
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS text_overrides (
@@ -437,6 +494,11 @@ async def init_db() -> None:
         await db.execute("CREATE INDEX IF NOT EXISTS idx_promo_activations_user ON promo_activations(user_id, activated_at DESC)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_broadcast_jobs_status ON broadcast_jobs(status, created_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_broadcast_targets_job ON broadcast_job_targets(job_id, user_id)")
+
+        # Обновляем версию схемы БД после успешной инициализации всех таблиц
+        DB_SCHEMA_VERSION = 1
+        await set_db_version(db, DB_SCHEMA_VERSION)
+        logger.info(f"DB schema version set to: {DB_SCHEMA_VERSION}")
 
         await db.commit()
     finally:
