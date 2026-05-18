@@ -31,6 +31,15 @@ _active_secret = ENCRYPTION_SECRET or os.getenv("ENCRYPTION_SECRET_FALLBACK", ""
 if not _active_secret:
     raise RuntimeError("ENCRYPTION_SECRET не задан. Без него нельзя безопасно работать с конфигами.")
 _OLD_SECRETS = [item.strip() for item in os.getenv("ENCRYPTION_OLD_SECRETS", "").split(",") if item.strip()]
+
+# Добавляем логирование для отладки проблем с расшифровкой
+logger.debug(
+    "Encryption initialized: active_secret_len=%d, old_secrets_count=%d, old_secrets_lengths=[%s]",
+    len(_active_secret),
+    len(_OLD_SECRETS),
+    ", ".join(str(len(s)) for s in _OLD_SECRETS)
+)
+
 _V1_ACTIVE_FERNET = Fernet(_derive_key_v1(_active_secret))
 _V1_OLD_FERNETS = [Fernet(_derive_key_v1(secret)) for secret in _OLD_SECRETS]
 
@@ -47,21 +56,31 @@ def _decrypt_v1(token: str) -> str:
     try:
         return _V1_ACTIVE_FERNET.decrypt(token.encode("utf-8")).decode("utf-8")
     except InvalidToken:
-        for fallback in _V1_OLD_FERNETS:
+        logger.debug("Decrypt v1 attempt failed: active secret (len=%d)", len(_active_secret))
+        for idx, fallback in enumerate(_V1_OLD_FERNETS):
             try:
-                return fallback.decrypt(token.encode("utf-8")).decode("utf-8")
+                result = fallback.decrypt(token.encode("utf-8")).decode("utf-8")
+                logger.debug("Decrypt v1 succeeded with old secret index=%d (len=%d)", idx, len(_OLD_SECRETS[idx]))
+                return result
             except InvalidToken:
+                logger.debug("Decrypt v1 attempt failed: old secret index=%d (len=%d)", idx, len(_OLD_SECRETS[idx]))
                 continue
     raise RuntimeError("invalid_v1_token")
 
 
 def _decrypt_v2(salt_b64: str, token: str) -> str:
     salt = base64.urlsafe_b64decode(salt_b64.encode("ascii"))
-    for secret in [_active_secret, *_OLD_SECRETS]:
+    for idx, secret in enumerate([_active_secret, *_OLD_SECRETS]):
         try:
             fernet = Fernet(_derive_key_v2(secret, salt))
             return fernet.decrypt(token.encode("utf-8")).decode("utf-8")
         except InvalidToken:
+            logger.debug(
+                "Decrypt v2 attempt failed: secret_index=%d (is_active=%s), secret_len=%d",
+                idx,
+                idx == 0,
+                len(secret)
+            )
             continue
     raise RuntimeError("invalid_v2_token")
 
@@ -82,5 +101,12 @@ def decrypt_text(value: str | None) -> str:
         return _decrypt_v1(token)
     except Exception as e:
         err_type = type(e).__name__
-        logger.error("Не удалось расшифровать значение: invalid token (error_type=%s)", err_type)
+        # Добавляем отладочную информацию для диагностики
+        logger.error(
+            "Не удалось расшифровать значение: invalid token (error_type=%s, value_prefix=%s, active_secret_len=%d, old_secrets_count=%d)",
+            err_type,
+            value[:20] if value else None,
+            len(_active_secret),
+            len(_OLD_SECRETS)
+        )
         raise RuntimeError("Ошибка расшифровки конфигурации. Требуется проверка ENCRYPTION_SECRET/ENCRYPTION_OLD_SECRETS.")

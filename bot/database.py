@@ -44,10 +44,11 @@ def _problematic_payment_predicate(payment_alias: str = "p") -> str:
 
 
 async def _apply_pragmas(db: aiosqlite.Connection) -> None:
+    # Устанавливаем busy_timeout ДО включения WAL режима для избежания блокировок
+    await db.execute("PRAGMA busy_timeout=5000;")
     await db.execute("PRAGMA journal_mode=WAL;")
     await db.execute("PRAGMA synchronous=NORMAL;")
     await db.execute("PRAGMA foreign_keys=ON;")
-    await db.execute("PRAGMA busy_timeout=5000;")
 
 
 async def get_shared_db() -> aiosqlite.Connection:
@@ -158,7 +159,16 @@ async def init_db() -> None:
             logger.warning(f"DB integrity check warning: {integrity_msg}")
 
         # Явно завершаем любые незавершённые транзакции перед началом инициализации
-        await db.execute("ROLLBACK;")
+        # SQLite автоматически завершает транзакции при DDL операциях (CREATE TABLE),
+        # поэтому этот блок нужен только для логирования и отладки
+        # Используем COMMIT вместо ROLLBACK, чтобы избежать ошибки "no transaction is active"
+        try:
+            # Проверяем, есть ли активная транзакция, через попытку COMMIT
+            # Если транзакции нет, COMMIT будет no-op и не вызовет ошибку
+            await db.execute("COMMIT;")
+        except Exception as e:
+            # Игнорируем ошибки - это нормально если нет активной транзакции
+            logger.debug(f"No active transaction to commit during init_db: {e}")
         
         # Создаём таблицу версионирования, если её нет
         await db.execute("""
