@@ -2775,7 +2775,17 @@ start_service() {
     warn "systemctl не найден. Пропускаю управление сервисом через systemd."
     warn "Если вы в контейнере или среде без systemd, запустите бота вручную:"
     warn "  su -s /bin/bash \"$BOT_USER\" -c \"cd $BOT_DIR && $VENV_DIR/bin/python app.py\""
+    warn ""
+    warn "ПРЕДУПРЕЖДЕНИЕ: База данных НЕ будет инициализирована автоматически без systemd."
+    warn "Убедитесь, что пользователь $BOT_USER существует перед ручным запуском."
     return 0
+  fi
+  
+  # Проверка существования пользователя BOT_USER перед инициализацией БД
+  if ! id "$BOT_USER" &>/dev/null; then
+    error "Пользователь $BOT_USER не найден. Невозможно инициализировать БД или запустить сервис."
+    error "Сначала создайте пользователя: useradd -r -s /bin/false $BOT_USER"
+    return 1
   fi
   
   # Принудительная инициализация базы данных перед запуском сервиса
@@ -2784,7 +2794,9 @@ start_service() {
   if [[ -d "$BOT_DIR" && -f "$BOT_DIR/app.py" && -f "$BOT_DIR/database.py" ]]; then
     # Вызываем асинхронную функцию init_db напрямую через asyncio.run
     # Это гарантирует создание БД до запуска основного сервиса
-    su -s /bin/bash "$BOT_USER" -c "cd $BOT_DIR && $VENV_DIR/bin/python -c \"import asyncio; from database import init_db; asyncio.run(init_db())\"" >/dev/null 2>&1 || true
+    if ! su -s /bin/bash "$BOT_USER" -c "cd $BOT_DIR && $VENV_DIR/bin/python -c \"import asyncio; from database import init_db; asyncio.run(init_db())\"" >/dev/null 2>&1; then
+      warn "Не удалось инициализировать базу данных. Попытка продолжения..."
+    fi
     
     # Проверка и исправление прав на созданный файл БД
     local db_file
