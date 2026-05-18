@@ -37,7 +37,6 @@ from ui_constants import (
     CB_CONFIRM_ADD_DAYS, CB_CANCEL_ADD_DAYS,
     CB_BROADCAST_SEGMENT_PREFIX, CB_ADMIN_TEXT_VIEW_PREFIX,
     CB_ADMIN_PLATEGA_PRICE_EDIT_7, CB_ADMIN_PLATEGA_PRICE_EDIT_30, CB_ADMIN_PLATEGA_PRICE_EDIT_90,
-    CB_ADMIN_BACKUP, CB_ADMIN_RESTORE,
 )
 
 
@@ -277,7 +276,6 @@ def get_admin_inline_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💸 Цены", callback_data=CB_ADMIN_PRICES), InlineKeyboardButton(text="🎟 Промокоды", callback_data=CB_ADMIN_PROMOCODES)],
             [InlineKeyboardButton(text="🎁 Рефералы", callback_data=CB_ADMIN_REFERRALS), InlineKeyboardButton(text="📢 Рассылка", callback_data=CB_ADMIN_BROADCAST)],
             [InlineKeyboardButton(text="📝 Тексты", callback_data=CB_ADMIN_TEXT_OVERRIDES)],
-            [InlineKeyboardButton(text="💾 Бэкап/Восстановление", callback_data=CB_ADMIN_BACKUP)],
             [InlineKeyboardButton(text="⌨️ Команды", callback_data=CB_ADMIN_COMMANDS)],
         ]
     )
@@ -532,82 +530,4 @@ def get_admin_text_override_item_kb(key: str) -> InlineKeyboardMarkup:
         ]
     )
 
-
-def get_admin_backup_kb() -> InlineKeyboardMarkup:
-    """Клавиатура для управления бэкапами."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="💾 Полный бэкап", callback_data=CB_ADMIN_BACKUP_FULL)],
-            [InlineKeyboardButton(text="👥 Бэкап пользователей", callback_data=CB_ADMIN_BACKUP_USERS)],
-            [InlineKeyboardButton(text="📋 Список бэкапов", callback_data=CB_ADMIN_BACKUP_LIST)],
-            [InlineKeyboardButton(text="↩️ Восстановить", callback_data=CB_ADMIN_RESTORE)],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACK_MAIN)],
-        ]
-    )
-
-
-def get_admin_backup_list_kb(backups: list[dict]) -> InlineKeyboardMarkup:
-    """Клавиатура со списком бэкапов."""
-    rows = []
-    
-    for backup in backups[:10]:  # Показываем максимум 10 последних
-        filename = backup.get("filename", "unknown")
-        backup_type = backup.get("type", "unknown")
-        size_bytes = backup.get("size_bytes", 0)
-        created_at = backup.get("created_at", "")
-        
-        # Форматируем размер
-        if size_bytes < 1024:
-            size_str = f"{size_bytes} Б"
-        elif size_bytes < 1024 * 1024:
-            size_str = f"{size_bytes / 1024:.1f} КБ"
-        else:
-            size_str = f"{size_bytes / (1024 * 1024):.1f} МБ"
-        
-        # Форматируем дату
-        if created_at:
-            try:
-                dt = datetime.fromisoformat(created_at)
-                date_str = dt.strftime("%d.%m.%Y %H:%M")
-            except Exception:
-                date_str = created_at[:16].replace("T", " ")
-        else:
-            date_str = "—"
-        
-        type_label = "📦 Полный" if backup_type == "full" else "👥 Пользователи"
-        
-        button_text = f"{type_label} | {filename[:30]} | {size_str} | {date_str}"
-        
-        rows.append([
-            InlineKeyboardButton(text=button_text, callback_data=f"{CB_ADMIN_BACKUP_VIEW_PREFIX}{filename}")
-        ])
-    
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACKUP)])
-    
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def get_admin_backup_view_kb(backup_info: dict) -> InlineKeyboardMarkup:
-    """Клавиатура для просмотра конкретного бэкапа."""
-    filename = backup_info.get("filename", "")
-    backup_type = backup_info.get("type", "unknown")
-    
-    rows = [
-        [InlineKeyboardButton(text="↩️ Восстановить из этого бэкапа", callback_data=f"{CB_ADMIN_RESTORE_SELECT_PREFIX}{filename}")],
-        [InlineKeyboardButton(text="🗑 Удалить бэкап", callback_data=f"{CB_ADMIN_BACKUP_DELETE_PREFIX}{filename}")],
-        [InlineKeyboardButton(text="⬅️ К списку", callback_data=CB_ADMIN_BACKUP_LIST)],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ADMIN_BACKUP)],
-    ]
-    
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def get_admin_restore_confirm_kb(backup_filename: str) -> InlineKeyboardMarkup:
-    """Клавиатура подтверждения восстановления."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, восстановить", callback_data=f"{CB_ADMIN_RESTORE_CONFIRM_PREFIX}{backup_filename}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_ADMIN_RESTORE)],
-        ]
-    )
 
