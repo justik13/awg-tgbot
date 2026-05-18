@@ -1,0 +1,7 @@
+2026-05-18 11:38:22 | WARNING  | config:143 | SERVER_IP задан некорректно: '127.0.0.1'
+2026-05-18 11:38:28 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 11:38:35 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 11:38:41 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 11:38:41 | WARNING  | platega_service:40 | Platega credentials not configured in .env
+2026-05-18 11:39:10 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 11:39:10 | WARNING  | platega_service:40 | Platega credentials not configured in .env
