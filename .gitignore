@@ -1,1 +1,14 @@
-Nothing should be ignored based on the provided file changes. The only modified file is `awg-tgbot.sh`, which appears to be a shell script source file and should not be ignored.
+```
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Logs
+*.log
+bot/logs/
+
+# Environment files
+.env
+.env.local
+*.env.*
+```
