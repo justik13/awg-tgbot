@@ -2800,6 +2800,21 @@ start_service() {
     # Обёртываем весь вызов su в timeout для предотвращения зависания
     # Используем увеличенный таймаут (120 сек) и добавляем диагностику через strace при зависании
     local init_cmd="cd '$BOT_DIR' && '$VENV_DIR'/bin/python -c 'import asyncio; from database import init_db; asyncio.run(init_db())'"
+    
+    # Перед инициализацией проверяем наличие заблокированных WAL файлов от предыдущих запусков
+    local db_file_pre
+    db_file_pre="$(get_bot_db_file)"
+    if [[ -f "${db_file_pre}-wal" ]]; then
+      warn "Обнаружен остаточный WAL файл перед инициализацией: ${db_file_pre}-wal"
+      # Пытаемся корректно закрыть WAL через checkpoint, если возможно
+      if command -v sqlite3 &>/dev/null; then
+        sqlite3 "$db_file_pre" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || true
+      fi
+      # Удаляем WAL и SHM файлы если они есть (это безопасно, т.к. БД не активна)
+      rm -f "${db_file_pre}-wal" "${db_file_pre}-shm" 2>/dev/null || true
+      info "WAL/SHM файлы удалены перед инициализацией."
+    fi
+    
     init_output=$(timeout 120 bash -c "su -s /bin/bash \"$BOT_USER\" -c \"$init_cmd\"" 2>&1) || init_rc=$?
 
     if [[ $init_rc -eq 124 ]]; then
@@ -2817,6 +2832,11 @@ start_service() {
       fi
       if command -v fuser &>/dev/null; then
         fuser -v "$db_file_diag"* 2>/dev/null || true
+      fi
+      # Принудительная очистка WAL при таймауте
+      if [[ -f "${db_file_diag}-wal" ]]; then
+        warn "Принудительная очистка WAL/SHM файлов после таймаута..."
+        rm -f "${db_file_diag}-wal" "${db_file_diag}-shm" 2>/dev/null || true
       fi
     elif [[ $init_rc -ne 0 ]]; then
       warn "Не удалось инициализировать базу данных (код: $init_rc). Вывод: $init_output"
@@ -4167,7 +4187,7 @@ restore_from_backup() {
     echo "  1) Сгенерировать новый ENCRYPTION_SECRET (рекомендуется для нового сервера)"
     echo "     Старый ключ будет сохранён в ENCRYPTION_OLD_SECRETS для расшифровки существующих данных"
     echo "  2) Оставить старый ENCRYPTION_SECRET (если переносите бота на другой сервер с теми же данными)"
-    echo "     Старый ключ ВСЕГДА добавляется в ENCRYPTION_OLD_SECRETS для совместимости"
+    echo "     Ключ шифрования не изменится, все данные расшифруются текущим ключом"
     echo ""
     local enc_choice=""
     prompt_raw "Ваш выбор (1 или 2): " enc_choice
@@ -4183,18 +4203,22 @@ restore_from_backup() {
         existing_old_secrets="$(get_env_value_from_file "$archive_env_file" "ENCRYPTION_OLD_SECRETS")"
         
         if [[ -n "$existing_old_secrets" ]]; then
-          # Добавляем к существующим
+          # Добавляем к существующим, если ещё не добавлен
           if [[ "$existing_old_secrets" != *"$old_encryption_secret"* ]]; then
             local combined_old_secrets="${existing_old_secrets},${old_encryption_secret}"
             local escaped_combined
             escaped_combined="$(printf '%s\n' "$combined_old_secrets" | sed 's/[&/\]/\\&/g')"
             sed -i "s/^ENCRYPTION_OLD_SECRETS=.*/ENCRYPTION_OLD_SECRETS=${escaped_combined}/" "$archive_env_file"
+            ok "Старый ключ добавлен к существующим ENCRYPTION_OLD_SECRETS"
+          else
+            echo "  Старый ключ уже присутствует в ENCRYPTION_OLD_SECRETS"
           fi
         else
           # Создаём новую запись
           local escaped_old
           escaped_old="$(printf '%s\n' "$old_encryption_secret" | sed 's/[&/\]/\\&/g')"
           echo "ENCRYPTION_OLD_SECRETS=${escaped_old}" >> "$archive_env_file"
+          ok "ENCRYPTION_OLD_SECRETS создан со старым ключом"
         fi
         
         # Устанавливаем новый ENCRYPTION_SECRET
@@ -4208,32 +4232,19 @@ restore_from_backup() {
         warn "Не удалось сгенерировать новый ENCRYPTION_SECRET. Оставляем старый."
       fi
     else
-      # Опция 2: Оставляем старый ENCRYPTION_SECRET, но ВСЕГДА добавляем его в ENCRYPTION_OLD_SECRETS
+      # Опция 2: Оставляем старый ENCRYPTION_SECRET
+      # НЕ добавляем его в ENCRYPTION_OLD_SECRETS, так как он уже является активным
       echo "  Оставляем старый ENCRYPTION_SECRET без изменений"
-      echo "  Добавляем старый ключ в ENCRYPTION_OLD_SECRETS для совместимости..."
+      echo "  Ключ шифрования не изменён, существующие данные будут расшифрованы текущим ключом"
       
+      # Проверяем, есть ли уже ENCRYPTION_OLD_SECRETS (от предыдущих миграций)
       local existing_old_secrets
       existing_old_secrets="$(get_env_value_from_file "$archive_env_file" "ENCRYPTION_OLD_SECRETS")"
       
       if [[ -n "$existing_old_secrets" ]]; then
-        # Добавляем к существующим, если ещё не добавлен
-        if [[ "$existing_old_secrets" != *"$old_encryption_secret"* ]]; then
-          local combined_old_secrets="${existing_old_secrets},${old_encryption_secret}"
-          local escaped_combined
-          escaped_combined="$(printf '%s\n' "$combined_old_secrets" | sed 's/[&/\]/\\&/g')"
-          sed -i "s/^ENCRYPTION_OLD_SECRETS=.*/ENCRYPTION_OLD_SECRETS=${escaped_combined}/" "$archive_env_file"
-          ok "Старый ENCRYPTION_SECRET добавлен в ENCRYPTION_OLD_SECRETS"
-          env_override=1
-        else
-          echo "  Старый ключ уже присутствует в ENCRYPTION_OLD_SECRETS"
-        fi
+        echo "  ENCRYPTION_OLD_SECRETS содержит старые ключи от предыдущих миграций (не изменяется)"
       else
-        # Создаём новую запись ENCRYPTION_OLD_SECRETS
-        local escaped_old
-        escaped_old="$(printf '%s\n' "$old_encryption_secret" | sed 's/[&/\]/\\&/g')"
-        echo "ENCRYPTION_OLD_SECRETS=${escaped_old}" >> "$archive_env_file"
-        ok "ENCRYPTION_OLD_SECRETS создан со старым ключом"
-        env_override=1
+        echo "  ENCRYPTION_OLD_SECRETS не установлен (будет создан при следующей смене ключа)"
       fi
     fi
   else
@@ -4249,6 +4260,26 @@ restore_from_backup() {
       warn "Не удалось сгенерировать ENCRYPTION_SECRET!"
     fi
   fi
+  
+  # Выводим итоговые значения для проверки
+  echo ""
+  echo "Итоговые значения:"
+  local final_encryption_preview final_old_secrets_preview
+  final_encryption_preview="$(get_env_value_from_file "$archive_env_file" "ENCRYPTION_SECRET")"
+  final_old_secrets_preview="$(get_env_value_from_file "$archive_env_file" "ENCRYPTION_OLD_SECRETS")"
+  echo "  ENCRYPTION_SECRET: ${final_encryption_preview:0:8}...***REDACTED*** (${#final_encryption_preview} символов)"
+  if [[ -n "$final_old_secrets_preview" ]]; then
+    # Показываем количество старых ключей
+    local old_count
+    old_count="$(echo "$final_old_secrets_preview" | tr ',' '\n' | grep -c . || echo 0)"
+    echo "  ENCRYPTION_OLD_SECRETS: содержит $old_count ключ(ей) для миграции старых данных"
+  else
+    echo "  ENCRYPTION_OLD_SECRETS: не установлен (все данные шифруются текущим ключом)"
+  fi
+  echo ""
+  echo "Важно: Если в базе данных есть зашифрованные ключи, убедитесь что ENCRYPTION_SECRET"
+  echo "         соответствует ключу, которым они были зашифрованы, либо добавьте старый ключ"
+  echo "         в ENCRYPTION_OLD_SECRETS через опцию 1 при следующей переустановке."
 
   # ============================================
   # ШАГ 1.6: Валидация ENCRYPTION_SECRET после модификации
