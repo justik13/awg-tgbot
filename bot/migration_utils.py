@@ -127,7 +127,7 @@ def payment_idempotent_handler(operation_name: str):
     return idempotent(operation_name)
 
 
-def guarded_callback(ttl_seconds: float = 2.0):
+def guarded_callback(ttl_seconds: float = 2.0, operation_id_prefix: str | None = None):
     """
     Decorator to guard against rapid duplicate clicks.
     
@@ -136,6 +136,11 @@ def guarded_callback(ttl_seconds: float = 2.0):
         @guarded_callback(ttl_seconds=3.0)
         async def handle_click(cb: CallbackQuery):
             ...
+    
+    Args:
+        ttl_seconds: Time-to-live for the guard key
+        operation_id_prefix: Optional prefix for operation ID. If provided,
+            will be combined with callback data to form the guard key.
     """
     def decorator(func):
         async def wrapper(*args, **kwargs):
@@ -146,16 +151,22 @@ def guarded_callback(ttl_seconds: float = 2.0):
             user_id = cb.from_user.id
             callback_data = getattr(cb, 'data', '') or ''
             
+            # Build operation ID with optional prefix
+            if operation_id_prefix:
+                op_id = f"{operation_id_prefix}:{callback_data}"
+            else:
+                op_id = callback_data
+            
             # Use payment guard for payment callbacks, global for others
-            if any(prefix in callback_data for prefix in ['pay_', 'platega_', 'payment:']):
+            if any(prefix in op_id for prefix in ['pay_', 'platega_', 'payment:']):
                 guard = payment_click_guard
             else:
                 guard = global_click_guard
             
-            if guard.is_duplicate(user_id, callback_data):
+            if guard.is_duplicate(user_id, op_id):
                 logger.debug(
-                    "Duplicate click guarded: user=%s callback=%s",
-                    user_id, callback_data
+                    "Duplicate click guarded: user=%s operation=%s",
+                    user_id, op_id
                 )
                 await cb.answer(show_alert=False)
                 return None
