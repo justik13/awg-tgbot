@@ -1,14 +1,1 @@
-```
-# Compiled Python files
-*.pyc
-__pycache__/
-
-# Logs
-*.log
-bot/logs/
-
-# Environment files
-.env
-.env.local
-*.env.*
-```
+Nothing should be ignored based on the provided file changes. The changes include only source/config files (.sh, .py) and a markdown documentation file, with no build artifacts, dependencies, or temporary files present.

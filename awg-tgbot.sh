@@ -1766,12 +1766,25 @@ snapshot_sqlite_runtime_bundle() {
   local src_db="$1" snapshot_dir="$2" snapshot_name="$3"
   local snapshot_db="${snapshot_dir}/${snapshot_name}"
   [[ -f "$src_db" ]] || return 1
+  
+  # Проверка целостности перед созданием snapshot
+  if ! sqlite_full_integrity_check "$src_db"; then
+    log "WARN" "БД ($src_db) имеет проблемы целостности. Snapshot создаётся с предупреждением."
+  fi
+  
   copy_sqlite_runtime_bundle "$src_db" "$snapshot_db"
 }
 
 restore_sqlite_runtime_bundle() {
   local snapshot_db="$1" target_db="$2"
   [[ -f "$snapshot_db" ]] || return 1
+  
+  # Проверка целостности snapshot перед восстановлением
+  if ! sqlite_full_integrity_check "$snapshot_db"; then
+    log "ERROR" "Snapshot ($snapshot_db) имеет проблемы целостности. Восстановление отменено."
+    return 1
+  fi
+  
   copy_sqlite_runtime_bundle "$snapshot_db" "$target_db"
 }
 
@@ -1786,6 +1799,24 @@ path = sys.argv[1]
 conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
 try:
     row = conn.execute("PRAGMA quick_check;").fetchone()
+    value = (row[0] if row else "").strip().lower()
+    raise SystemExit(0 if value == "ok" else 1)
+finally:
+    conn.close()
+PY
+}
+
+sqlite_full_integrity_check() {
+  local db_file="$1"
+  [[ -f "$db_file" ]] || return 1
+  "$PYTHON_BIN" - "$db_file" <<'PY'
+import sqlite3
+import sys
+
+path = sys.argv[1]
+conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+try:
+    row = conn.execute("PRAGMA integrity_check;").fetchone()
     value = (row[0] if row else "").strip().lower()
     raise SystemExit(0 if value == "ok" else 1)
 finally:
@@ -1856,7 +1887,20 @@ migrate_legacy_default_db_path() {
   if [[ "$old_db_file" != "$DEFAULT_DB_PATH" ]]; then
     mkdir -p "$RUNTIME_DIR"
     if [[ -f "$old_db_file" ]]; then
+      # Проверка целостности старой БД перед копированием
+      log "INFO" "Проверка целостности старой БД перед миграцией..."
+      if ! sqlite_full_integrity_check "$old_db_file"; then
+        log "WARN" "Старая БД ($old_db_file) имеет проблемы целостности. Создание бэкапа перед миграцией..."
+        local backup_on_error="${old_db_file}.corrupt.backup.$(date +%Y%m%d%H%M%S)"
+        cp -p "$old_db_file" "$backup_on_error" || true
+        for suffix in "-wal" "-shm"; do
+          [[ -f "${old_db_file}${suffix}" ]] && cp -p "${old_db_file}${suffix}" "${backup_on_error}${suffix}" || true
+        done
+        log "INFO" "Бэкап повреждённой БД сохранён: $backup_on_error"
+      fi
+      
       copy_sqlite_runtime_bundle "$old_db_file" "$DEFAULT_DB_PATH" || return 1
+      log "INFO" "БД успешно мигрирована в: $DEFAULT_DB_PATH"
     fi
   fi
 
