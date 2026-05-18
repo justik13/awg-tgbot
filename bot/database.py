@@ -156,6 +156,9 @@ async def init_db() -> None:
         integrity_ok, integrity_msg = await check_db_integrity(Path(DB_PATH))
         if not integrity_ok:
             logger.warning(f"DB integrity check warning: {integrity_msg}")
+
+        # Явно завершаем любые незавершённые транзакции перед началом инициализации
+        await db.execute("ROLLBACK;")
         
         # Создаём таблицу версионирования, если её нет
         await db.execute("""
@@ -166,6 +169,7 @@ async def init_db() -> None:
                 updated_by INTEGER
             )
         """)
+        await db.commit()
         
         # Получаем текущую версию схемы
         current_version = await get_db_version(db)

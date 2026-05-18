@@ -2798,11 +2798,26 @@ start_service() {
     local init_rc=0
     
     # Обёртываем весь вызов su в timeout для предотвращения зависания
-    init_output=$(timeout 60 bash -c "su -s /bin/bash \"$BOT_USER\" -c \"cd '$BOT_DIR' && '$VENV_DIR'/bin/python -c 'import asyncio; from database import init_db; asyncio.run(init_db())'\"" 2>&1) || init_rc=$?
+    # Используем увеличенный таймаут (120 сек) и добавляем диагностику через strace при зависании
+    local init_cmd="cd '$BOT_DIR' && '$VENV_DIR'/bin/python -c 'import asyncio; from database import init_db; asyncio.run(init_db())'"
+    init_output=$(timeout 120 bash -c "su -s /bin/bash \"$BOT_USER\" -c \"$init_cmd\"" 2>&1) || init_rc=$?
 
     if [[ $init_rc -eq 124 ]]; then
-      warn "Инициализация БД превысила таймаут (60 сек). Продолжаем..."
+      warn "Инициализация БД превысила таймаут (120 сек). Это может быть связано с блокировкой SQLite."
       warn "Вывод: $init_output"
+      warn "Попытка диагностики: проверяем наличие WAL/SHM файлов и процессов..."
+      local db_file_diag
+      db_file_diag="$(get_bot_db_file)"
+      if [[ -f "${db_file_diag}-wal" ]]; then
+        warn "Обнаружен WAL файл: ${db_file_diag}-wal"
+        ls -la "${db_file_diag}"* 2>/dev/null || true
+      fi
+      if command -v lsof &>/dev/null; then
+        lsof -n "$db_file_diag"* 2>/dev/null || true
+      fi
+      if command -v fuser &>/dev/null; then
+        fuser -v "$db_file_diag"* 2>/dev/null || true
+      fi
     elif [[ $init_rc -ne 0 ]]; then
       warn "Не удалось инициализировать базу данных (код: $init_rc). Вывод: $init_output"
       warn "Попытка продолжения работы..."
