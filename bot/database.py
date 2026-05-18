@@ -171,6 +171,9 @@ async def init_db() -> None:
         await ensure_column(db, "payments", "last_attempt_at", "TEXT")
         await ensure_column(db, "payments", "last_provision_status", "TEXT NOT NULL DEFAULT 'payment_received'")
         await ensure_column(db, "payments", "user_notified_ready_at", "TEXT")
+        # Payment idempotency and TTL for pending payments
+        await ensure_column(db, "payments", "idempotency_key", "TEXT UNIQUE")
+        await ensure_column(db, "payments", "expires_at", "TEXT")  # TTL for pending payments
 
         await db.execute(
             """
@@ -991,7 +994,16 @@ async def save_payment(
     payment_method: str,
     status: str = "received",
     raw_payload_json: str | None = None,
+    idempotency_key: str | None = None,
+    expires_at: str | None = None,
 ) -> None:
+    """
+    Сохраняет платеж в БД.
+    
+    Args:
+        idempotency_key: Уникальный ключ для предотвращения дублирования
+        expires_at: Время истечения для pending платежей (TTL)
+    """
     now_iso = utc_now_naive().isoformat()
     db = await open_db()
     try:
@@ -1009,12 +1021,16 @@ async def save_payment(
                 status,
                 last_provision_status,
                 raw_payload_json,
+                idempotency_key,
+                expires_at,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'payment_received', ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'payment_received', ?, ?, ?, ?, ?)
             ON CONFLICT(telegram_payment_charge_id) DO UPDATE SET
                 provider_payment_charge_id = COALESCE(excluded.provider_payment_charge_id, provider_payment_charge_id),
                 raw_payload_json = COALESCE(excluded.raw_payload_json, raw_payload_json),
+                idempotency_key = COALESCE(excluded.idempotency_key, idempotency_key),
+                expires_at = COALESCE(excluded.expires_at, expires_at),
                 updated_at = excluded.updated_at
             """,
             (
@@ -1027,6 +1043,8 @@ async def save_payment(
                 payment_method,
                 status,
                 raw_payload_json,
+                idempotency_key,
+                expires_at,
                 now_iso,
                 now_iso,
             ),

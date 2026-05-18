@@ -101,6 +101,22 @@ from referrals import build_referral_inviter_banner_text, capture_referral_start
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 from payments import clear_pending_invoice_for_user
 
+# Migration utilities - новые компоненты для постепенной миграции
+from migration_utils import (
+    guarded_callback,
+    payment_idempotent_handler,
+    FlowEntryPoint,
+    recover_from_dangling_state,
+    translate_legacy_callback,
+)
+from fsm_states import (
+    CatalogStates,
+    PaymentStates,
+    SubscriptionStates,
+    ProfileStates,
+    SupportStates,
+)
+
 router = Router()
 
 
@@ -532,11 +548,21 @@ def _help_clients_kb() -> types.InlineKeyboardMarkup:
 
 @router.callback_query(F.data == "noop")
 async def noop_callback(cb: types.CallbackQuery):
+    """No-op callback handler with guard for safety."""
+    await guarded_callback(cb, operation_id=f"noop:{cb.from_user.id}")()
     await cb.answer(show_alert=False)
 
 
+@guarded_callback(operation_id_prefix="start")
 @router.message(Command("start"))
 async def start(message: types.Message, command: CommandObject):
+    """
+    Entry point for /start command.
+    Uses FlowEntryPoint for consistent navigation state management.
+    """
+    # Reset any dangling states on /start
+    await recover_from_dangling_state(message.from_user.id, message.bot)
+    
     await _clear_promo_input_pending(message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
     referral_banner_text: str | None = None
@@ -605,6 +631,7 @@ async def promo_cmd(message: types.Message, command: CommandObject):
 
 @router.message(F.text == BTN_PROFILE)
 async def profile(message: types.Message):
+    """Profile view with state reset and navigation guard."""
     await _clear_promo_input_pending(message.from_user.id)
     await _cleanup_pending_invoice_for_navigation(message.bot, message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
@@ -616,6 +643,7 @@ async def profile(message: types.Message):
 
 @router.message(F.text == BTN_CONFIGS)
 async def my_keys(message: types.Message):
+    """Configs menu with state reset."""
     await _clear_promo_input_pending(message.from_user.id)
     await _cleanup_pending_invoice_for_navigation(message.bot, message.from_user.id)
     await ensure_user_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
@@ -625,7 +653,9 @@ async def my_keys(message: types.Message):
 
 
 @router.callback_query(F.data.startswith(CB_CONFIG_DEVICE_PREFIX))
+@guarded_callback(operation_id_prefix="config_device")
 async def show_selected_device_config(cb: types.CallbackQuery):
+    """Show selected device config with click guard."""
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer(show_alert=False)
     try:
@@ -659,7 +689,9 @@ async def show_selected_device_config(cb: types.CallbackQuery):
 
 
 @router.callback_query(F.data.startswith(CB_CONFIG_CONF_PREFIX))
+@guarded_callback(operation_id_prefix="config_conf")
 async def send_selected_device_conf(cb: types.CallbackQuery):
+    """Send device config file with click guard."""
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
     await cb.answer(show_alert=False)
     try:
@@ -701,7 +733,9 @@ async def send_selected_device_conf(cb: types.CallbackQuery):
 
 
 @router.callback_query(F.data == CB_OPEN_CONFIGS)
+@guarded_callback(operation_id_prefix="open_configs")
 async def open_configs_from_profile(cb: types.CallbackQuery):
+    """Open configs menu from profile with click guard."""
     await _clear_promo_input_pending(cb.from_user.id)
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
@@ -726,7 +760,9 @@ async def open_configs_from_profile(cb: types.CallbackQuery):
 
 
 @router.callback_query(F.data == CB_OPEN_PROFILE)
+@guarded_callback(operation_id_prefix="open_profile")
 async def open_profile_callback(cb: types.CallbackQuery):
+    """Open profile from callback with click guard."""
     await _clear_promo_input_pending(cb.from_user.id)
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
@@ -748,7 +784,9 @@ async def open_profile_callback(cb: types.CallbackQuery):
 
 
 @router.callback_query(F.data == CB_OPEN_TRAFFIC_DEVICES)
+@guarded_callback(operation_id_prefix="open_traffic")
 async def open_traffic_devices_callback(cb: types.CallbackQuery):
+    """Open traffic devices screen with click guard."""
     await _clear_promo_input_pending(cb.from_user.id)
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
@@ -1000,7 +1038,9 @@ async def buy(message: types.Message):
 
 
 @router.callback_query(F.data == CB_OPEN_REFERRALS)
+@guarded_callback(operation_id_prefix="open_referrals")
 async def referrals_from_profile(cb: types.CallbackQuery):
+    """Open referrals screen with click guard."""
     await _clear_promo_input_pending(cb.from_user.id)
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
@@ -1037,7 +1077,9 @@ async def referrals_from_profile(cb: types.CallbackQuery):
 
 
 @router.callback_query(F.data == CB_SHOW_BUY_MENU)
+@guarded_callback(operation_id_prefix="show_buy_menu")
 async def show_buy_menu_callback(cb: types.CallbackQuery):
+    """Show buy menu with click guard."""
     await _clear_promo_input_pending(cb.from_user.id)
     await _cleanup_pending_invoice_for_navigation(cb.bot, cb.from_user.id)
     await ensure_user_exists(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
@@ -1062,7 +1104,9 @@ async def show_buy_menu_callback(cb: types.CallbackQuery):
 
 
 @router.callback_query(F.data == CB_SHOW_INSTRUCTION)
+@guarded_callback(operation_id_prefix="show_instruction")
 async def show_instruction_callback(cb: types.CallbackQuery):
+    """Show instruction with click guard."""
     await _clear_promo_input_pending(cb.from_user.id)
     await cb.answer(show_alert=False)
     if cb.message:
@@ -1075,14 +1119,18 @@ async def show_instruction_callback(cb: types.CallbackQuery):
 
 
 @router.callback_query(F.data == CB_PROMO_INPUT_START)
+@guarded_callback(operation_id_prefix="promo_start")
 async def promo_input_start_callback(cb: types.CallbackQuery):
+    """Start promo input flow with click guard."""
     await cb.answer(show_alert=False)
     if cb.message:
         await _start_promo_input_flow(cb.message, cb.from_user)
 
 
 @router.callback_query(F.data == CB_PROMO_INPUT_CANCEL)
+@guarded_callback(operation_id_prefix="promo_cancel")
 async def promo_input_cancel_callback(cb: types.CallbackQuery):
+    """Cancel promo input flow with click guard."""
     await cb.answer(show_alert=False)
     await _clear_promo_input_pending(cb.from_user.id)
     if cb.message:
@@ -1091,11 +1139,13 @@ async def promo_input_cancel_callback(cb: types.CallbackQuery):
 
 @router.message(UserHasPendingPromoInput())
 async def promo_input_pending_message(message: types.Message):
+    """Handle pending promo input messages."""
     await _handle_promo_input_message(message)
 
 
 @router.message()
 async def fallback_message(message: types.Message):
+    """Fallback handler for unknown messages."""
     if message.text and message.text.startswith("/"):
         await message.answer(await get_text("unknown_slash"))
         return

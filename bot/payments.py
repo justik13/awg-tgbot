@@ -51,6 +51,24 @@ from database import (
     get_user_keys,
     get_payment_by_order,
 )
+from migration_utils import (
+    guarded_callback,
+    payment_idempotent_handler,
+    FlowEntryPoint,
+    recover_from_dangling_state,
+    enter_payment_state_stars,
+    enter_payment_state_sbp,
+    exit_payment_state_success,
+    exit_payment_state_failed,
+)
+from fsm_states import (
+    CatalogStates,
+    PaymentStates,
+    SubscriptionStates,
+    ProfileStates,
+    SupportStates,
+)
+from idempotency import payment_idempotency
 from helpers import utc_now_naive
 from keyboards import get_buy_confirm_kb, get_post_payment_kb, get_payment_method_selection_kb, get_platega_payment_kb
 from content_settings import get_text
@@ -268,8 +286,10 @@ async def checkout_readiness() -> tuple[bool, str]:
 
 
 @router.callback_query(F.data.startswith(CB_PAY_STARS_PREFIX))
-async def pay_stars_handler(cb: types.CallbackQuery, bot: Bot):
-    """Handle Stars payment method selection."""
+@guarded_callback(ttl_seconds=3.0)
+@payment_idempotent_handler('stars:payment')
+async def pay_stars_handler(cb: types.CallbackQuery, bot: Bot, state: FSMContext):
+    """Handle Stars payment method selection with idempotency and click guard."""
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
@@ -280,12 +300,21 @@ async def pay_stars_handler(cb: types.CallbackQuery, bot: Bot):
         await _send_or_edit_payment_screen(cb, "❌ Ошибка\n\nНеизвестный тариф. Попробуйте выбрать другой.")
         return
     
+    # Enter FSM state for tracking
+    await enter_payment_state_stars(
+        state=state,
+        user_id=cb.from_user.id,
+        tariff=payload,
+        invoice_message_id=None  # Will be set after invoice creation
+    )
+    
     await cb.answer(show_alert=False)
     await clear_pending_invoice_for_user(bot, cb.from_user.id)
     
     # Проверка на доступность сообщения
     if cb.message is None:
         logger.debug("Stars payment: message is None for user=%s", cb.from_user.id)
+        await reset_fsm_state_safe(state, force=True)
         await cb.bot.send_message(
             cb.from_user.id,
             "⚠️ Не удалось создать счёт: сообщение недоступно. Попробуйте снова.",
@@ -293,20 +322,33 @@ async def pay_stars_handler(cb: types.CallbackQuery, bot: Bot):
         )
         return
     
-    invoice_message = await _send_stars_invoice(
-        bot, 
-        cb.message.chat.id, 
-        payload, 
-        f"Свободный Интернет на {tariff['days']} дней",
-        f"{tariff['days']} дней доступа",
-        int(tariff["amount"]),
-    )
-    remember_pending_invoice(cb.from_user.id, cb.message.chat.id, invoice_message.message_id, payload)
+    try:
+        invoice_message = await _send_stars_invoice(
+            bot, 
+            cb.message.chat.id, 
+            payload, 
+            f"Свободный Интернет на {tariff['days']} дней",
+            f"{tariff['days']} дней доступа",
+            int(tariff["amount"]),
+        )
+        
+        # Update FSM with invoice message ID
+        await update_payment_fsm_state(state, 'waiting_invoice', {
+            'invoice_message_id': invoice_message.message_id
+        })
+        
+        remember_pending_invoice(cb.from_user.id, cb.message.chat.id, invoice_message.message_id, payload)
+    except Exception as e:
+        logger.exception(f"Error creating Stars invoice for user {cb.from_user.id}: {e}")
+        await reset_fsm_state_safe(state, force=True)
+        await _send_or_edit_payment_screen(cb, "❌ Ошибка создания счёта. Попробуйте позже.")
 
 
 @router.callback_query(F.data.startswith(CB_PAY_PLATEGA_PREFIX))
-async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
-    """Handle Platega payment method selection - create payment transaction."""
+@guarded_callback(ttl_seconds=3.0)
+@payment_idempotent_handler('sbp:init')
+async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot, state: FSMContext):
+    """Handle Platega payment method selection - create payment transaction with idempotency and click guard."""
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
@@ -327,6 +369,14 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
     if not info:
         await _send_or_edit_payment_screen(cb, "❌ Ошибка\n\nНеизвестный тариф. Попробуйте выбрать другой.")
         return
+    
+    # Enter FSM state BEFORE creating payment
+    await enter_payment_state_sbp(
+        state=state,
+        user_id=cb.from_user.id,
+        tariff=payload,
+        amount=info["rub"]
+    )
     
     await cb.answer(show_alert=False)
     
@@ -359,6 +409,14 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
         
         transaction_id = payment_result["transaction_id"]
         payment_url = payment_result.get("payment_url", "")
+        
+        # Update FSM state with transaction details
+        await update_payment_fsm_state(state, 'waiting_payment', {
+            'transaction_id': transaction_id,
+            'order_id': order_id,
+            'amount': info["rub"],
+            'currency': 'RUB'
+        })
         
         # Save payment to database with order_id for later lookup in webhook
         await save_payment(
@@ -398,12 +456,14 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
         
     except Exception as e:
         logger.exception("Failed to create Platega payment: %s", e)
+        await reset_fsm_state_safe(state, force=True)
         await _send_or_edit_payment_screen(cb, "Не удалось создать платёж. Попробуйте позже или выберите другой способ оплаты.")
 
 
 @router.callback_query(F.data.startswith(CB_PLATEGA_PAY_PREFIX))
-async def platega_pay_button_handler(cb: types.CallbackQuery):
-    """Handle click on Platega payment button - send redirect URL."""
+@guarded_callback(ttl_seconds=3.0)
+async def platega_pay_button_handler(cb: types.CallbackQuery, state: FSMContext):
+    """Handle click on Platega payment button - send redirect URL with click guard."""
     data = cb.data.split(":", 1)[1]
     parts = data.split(":", 1)
     transaction_id = parts[0]
@@ -453,18 +513,19 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
 
 
 @router.callback_query(F.data.startswith(CB_PLATEGA_CHECK_PREFIX))
-async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot):
-    """Handle Platega payment status check."""
+@guarded_callback(ttl_seconds=3.0)
+async def platega_check_status_handler(cb: types.CallbackQuery, bot: Bot, state: FSMContext):
+    """Handle Platega payment status check with click guard."""
     transaction_id = cb.data.split(":", 1)[1]
-    await _platega_check_status_logic(cb, transaction_id)
+    await _platega_check_status_logic(cb, transaction_id, state)
 
 
-async def platega_check_status_by_id(cb: types.CallbackQuery, transaction_id: str):
+async def platega_check_status_by_id(cb: types.CallbackQuery, transaction_id: str, state: FSMContext = None):
     """Check Platega payment status by transaction ID (for external calls)."""
-    await _platega_check_status_logic(cb, transaction_id)
+    await _platega_check_status_logic(cb, transaction_id, state)
 
 
-async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: str):
+async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: str, state: FSMContext = None):
     """Internal logic for checking Platega payment status."""
     platega_service = get_platega_service()
     if not platega_service:
@@ -494,6 +555,13 @@ async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: s
         if platega_service.is_success_status(status):
             # Payment successful - update status but don't issue key yet
             await update_payment_status(transaction_id, "received")
+            
+            # Update FSM state if available
+            if state:
+                await update_payment_fsm_state(state, 'payment_received', {
+                    'transaction_id': transaction_id,
+                    'status': 'received'
+                })
             
             # Show success message with connect button
             tariff = get_tariffs().get(payload)
