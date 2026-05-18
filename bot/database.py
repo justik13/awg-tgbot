@@ -45,10 +45,14 @@ def _problematic_payment_predicate(payment_alias: str = "p") -> str:
 
 async def _apply_pragmas(db: aiosqlite.Connection) -> None:
     # Устанавливаем busy_timeout ДО включения WAL режима для избежания блокировок
-    await db.execute("PRAGMA busy_timeout=5000;")
+    # Увеличиваем таймаут до 30 секунд для обработки длительных операций
+    await db.execute("PRAGMA busy_timeout=30000;")
     await db.execute("PRAGMA journal_mode=WAL;")
+    # Устанавливаем режим синхронизации NORMAL для баланса между производительностью и надёжностью
     await db.execute("PRAGMA synchronous=NORMAL;")
     await db.execute("PRAGMA foreign_keys=ON;")
+    # Устанавливаем размер страницы WAL для более эффективной работы
+    await db.execute("PRAGMA wal_autocheckpoint=1000;")
 
 
 async def get_shared_db() -> aiosqlite.Connection:
@@ -62,6 +66,11 @@ async def get_shared_db() -> aiosqlite.Connection:
 async def close_shared_db() -> None:
     global _shared_db
     if _shared_db is not None:
+        # Выполняем checkpoint перед закрытием, чтобы WAL файлы были обработаны
+        try:
+            await _shared_db.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        except Exception as e:
+            logger.debug(f"Checkpoint error during close_shared_db: {e}")
         await _shared_db.close()
         _shared_db = None
 
@@ -153,6 +162,13 @@ async def check_db_integrity(db_path: Path) -> tuple[bool, str]:
 async def init_db() -> None:
     db = await open_db()
     try:
+        # Выполняем checkpoint для очистки WAL файлов от предыдущих сессий
+        # Это помогает избежать блокировок при инициализации
+        try:
+            await db.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        except Exception as e:
+            logger.debug(f"Initial checkpoint in init_db (non-critical): {e}")
+        
         # Проверка целостности БД перед инициализацией
         integrity_ok, integrity_msg = await check_db_integrity(Path(DB_PATH))
         if not integrity_ok:
@@ -516,6 +532,11 @@ async def init_db() -> None:
 
         await db.commit()
     finally:
+        # Выполняем checkpoint перед закрытием соединения, чтобы WAL файлы были обработаны
+        try:
+            await db.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        except Exception as e:
+            logger.debug(f"Checkpoint error in init_db finally block (non-critical): {e}")
         await db.close()
 
 
