@@ -107,7 +107,6 @@ from migration_utils import (
     payment_idempotent_handler,
     FlowEntryPoint,
     recover_from_dangling_state,
-    translate_legacy_callback,
 )
 from fsm_states import (
     CatalogStates,
