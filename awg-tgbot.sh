@@ -4055,6 +4055,7 @@ restore_from_backup() {
     echo "  1) Сгенерировать новый ENCRYPTION_SECRET (рекомендуется для нового сервера)"
     echo "     Старый ключ будет сохранён в ENCRYPTION_OLD_SECRETS для расшифровки существующих данных"
     echo "  2) Оставить старый ENCRYPTION_SECRET (если переносите бота на другой сервер с теми же данными)"
+    echo "     Старый ключ ВСЕГДА добавляется в ENCRYPTION_OLD_SECRETS для совместимости"
     echo ""
     local enc_choice=""
     prompt_raw "Ваш выбор (1 или 2): " enc_choice
@@ -4095,7 +4096,33 @@ restore_from_backup() {
         warn "Не удалось сгенерировать новый ENCRYPTION_SECRET. Оставляем старый."
       fi
     else
+      # Опция 2: Оставляем старый ENCRYPTION_SECRET, но ВСЕГДА добавляем его в ENCRYPTION_OLD_SECRETS
       echo "  Оставляем старый ENCRYPTION_SECRET без изменений"
+      echo "  Добавляем старый ключ в ENCRYPTION_OLD_SECRETS для совместимости..."
+      
+      local existing_old_secrets
+      existing_old_secrets="$(get_env_value_from_file "$archive_env_file" "ENCRYPTION_OLD_SECRETS")"
+      
+      if [[ -n "$existing_old_secrets" ]]; then
+        # Добавляем к существующим, если ещё не добавлен
+        if [[ "$existing_old_secrets" != *"$old_encryption_secret"* ]]; then
+          local combined_old_secrets="${existing_old_secrets},${old_encryption_secret}"
+          local escaped_combined
+          escaped_combined="$(printf '%s\n' "$combined_old_secrets" | sed 's/[&/\]/\\&/g')"
+          sed -i "s/^ENCRYPTION_OLD_SECRETS=.*/ENCRYPTION_OLD_SECRETS=${escaped_combined}/" "$archive_env_file"
+          ok "Старый ENCRYPTION_SECRET добавлен в ENCRYPTION_OLD_SECRETS"
+          env_override=1
+        else
+          echo "  Старый ключ уже присутствует в ENCRYPTION_OLD_SECRETS"
+        fi
+      else
+        # Создаём новую запись ENCRYPTION_OLD_SECRETS
+        local escaped_old
+        escaped_old="$(printf '%s\n' "$old_encryption_secret" | sed 's/[&/\]/\\&/g')"
+        echo "ENCRYPTION_OLD_SECRETS=${escaped_old}" >> "$archive_env_file"
+        ok "ENCRYPTION_OLD_SECRETS создан со старым ключом"
+        env_override=1
+      fi
     fi
   else
     echo "  ENCRYPTION_SECRET не найден в бэкапе. Будет сгенерирован новый."
