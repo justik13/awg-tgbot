@@ -3995,11 +3995,16 @@ restore_from_backup() {
   # Показываем текущие значения и предлагаем переопределить критические параметры
   echo ""
   echo "=== Переопределение параметров для нового сервера ==="
-  echo "Текущие значения из бэкапа:"
+  echo ""
+  
+  # ============================================
+  # ШАГ 1: Параметры Telegram бота и платежей (обязательно новые)
+  # ============================================
+  echo "--- Параметры Telegram бота и платежной системы ---"
+  echo "Эти параметры нужно указать заново для текущего сервера:"
+  echo ""
   
   local env_override="" new_value=""
-  
-  # Параметры которые нужно ввести вручную (TG бот, платежи)
   local -a manual_vars=("BOT_TOKEN" "PLATEGA_MERCHANT_ID" "PLATEGA_SECRET_KEY")
   
   for var in "${manual_vars[@]}"; do
@@ -4007,28 +4012,39 @@ restore_from_backup() {
     current_value="$(get_env_value_from_file "$archive_env_file" "$var")"
     if [[ -n "$current_value" ]]; then
       if [[ "$var" == "BOT_TOKEN" ]]; then
-        echo "  $var = ${current_value:0:10}...***REDACTED***"
+        echo "  Старое значение $var = ${current_value:0:10}...***REDACTED***"
       else
-        echo "  $var = ***REDACTED***"
+        echo "  Старое значение $var = ***REDACTED***"
       fi
     else
       echo "  $var = (не задано)"
     fi
-    prompt_raw "Переопределить $var (оставить пустым для сохранения текущего): " new_value
-    if [[ -n "$new_value" ]]; then
-      local escaped_new
-      escaped_new="$(printf '%s\n' "$new_value" | sed 's/[&/\]/\\&/g')"
-      if [[ -n "$current_value" ]]; then
-        sed -i "s/^${var}=.*/${var}=${escaped_new}/" "$archive_env_file"
-      else
-        echo "${var}=${escaped_new}" >> "$archive_env_file"
-      fi
-      env_override=1
+    prompt_raw "Введите новое значение $var: " new_value
+    while [[ -z "$new_value" ]]; do
+      warn "$var не может быть пустым. Введите значение или нажмите Ctrl+C для отмены."
+      prompt_raw "Введите новое значение $var: " new_value
+    done
+    
+    local escaped_new
+    escaped_new="$(printf '%s\n' "$new_value" | sed 's/[&/\]/\\&/g')"
+    if [[ -n "$current_value" ]]; then
+      sed -i "s/^${var}=.*/${var}=${escaped_new}/" "$archive_env_file"
+    else
+      echo "${var}=${escaped_new}" >> "$archive_env_file"
     fi
+    env_override=1
+    ok "$var обновлён"
   done
-
-  # Параметры которые можно подставить автоматически с текущего сервера
-  local -a auto_vars=("SERVER_IP" "PUBLIC_HOST" "SERVER_PUBLIC_KEY" "WG_INTERFACE" "DOCKER_CONTAINER")
+  
+  echo ""
+  echo "--- Параметры AmneziaWG (авто-подстановка с текущего сервера) ---"
+  echo "Следующие параметры будут автоматически взяты с текущего сервера:"
+  echo ""
+  
+  # ============================================
+  # ШАГ 2: Параметры AWG (авто-подстановка)
+  # ============================================
+  local -a auto_vars=("SERVER_IP" "SERVER_PUBLIC_KEY" "WG_INTERFACE" "DOCKER_CONTAINER")
   
   for var in "${auto_vars[@]}"; do
     local current_value auto_value
@@ -4040,33 +4056,27 @@ restore_from_backup() {
       SERVER_PUBLIC_KEY) auto_value="$detected_public_key" ;;
       WG_INTERFACE) auto_value="$detected_interface" ;;
       DOCKER_CONTAINER) auto_value="$detected_container" ;;
-      PUBLIC_HOST) auto_value="" ;; # Нет авто-значения
     esac
     
-    if [[ -n "$current_value" ]]; then
-      echo "  $var = $current_value"
-      if [[ -n "$auto_value" ]]; then
-        prompt_raw "Переопределить $var (Enter для авто: $auto_value): " new_value
-        if [[ -z "$new_value" ]]; then
-          new_value="$auto_value"
-        fi
+    if [[ -n "$auto_value" ]]; then
+      # Есть авто-значение - используем его
+      echo "  $var = $auto_value (с текущего сервера)"
+      # Заменяем значение из бэкапа на авто-значение
+      if [[ -n "$current_value" ]]; then
+        local escaped_auto
+        escaped_auto="$(printf '%s\n' "$auto_value" | sed 's/[&/\]/\\&/g')"
+        sed -i "s|^${var}=.*|${var}=${escaped_auto}|" "$archive_env_file"
       else
-        prompt_raw "Переопределить $var (оставить пустым для сохранения текущего): " new_value
+        echo "${var}=${auto_value}" >> "$archive_env_file"
       fi
-      if [[ -n "$new_value" ]]; then
-        local escaped_current escaped_new
-        escaped_current="$(printf '%s\n' "$current_value" | sed 's/[&/\]/\\&/g')"
-        escaped_new="$(printf '%s\n' "$new_value" | sed 's/[&/\]/\\&/g')"
-        sed -i "s/^${var}=.*/${var}=${escaped_new}/" "$archive_env_file"
-        env_override=1
-      fi
-    elif [[ -n "$auto_value" ]]; then
-      # Значения нет в бэкапе, но есть авто-значение
-      echo "  $var = (не задано в бэкапе)"
-      prompt_raw "Установить $var (Enter для авто: $auto_value): " new_value
-      if [[ -z "$new_value" ]]; then
-        new_value="$auto_value"
-      fi
+      env_override=1
+    elif [[ -n "$current_value" ]]; then
+      # Нет авто-значения, но есть в бэкапе - оставляем старое
+      echo "  $var = $current_value (из бэкапа, авто-подстановка недоступна)"
+    else
+      # Нет ни авто-значения, ни в бэкапе - просим ввести вручную
+      echo "  $var = (требуется ручное указание)"
+      prompt_raw "Введите значение $var: " new_value
       if [[ -n "$new_value" ]]; then
         local escaped_new
         escaped_new="$(printf '%s\n' "$new_value" | sed 's/[&/\]/\\&/g')"
@@ -4075,6 +4085,14 @@ restore_from_backup() {
       fi
     fi
   done
+  
+  # Проверяем, удалось ли определить критические AWG параметры
+  if [[ -z "$detected_container" || -z "$detected_interface" || -z "$detected_public_key" ]]; then
+    echo ""
+    warn "Не удалось автоматически определить некоторые параметры AmneziaWG!"
+    echo "Убедитесь, что AmneziaWG установлен и запущен перед восстановлением бота."
+    echo "После восстановления может потребоваться ручная настройка .env"
+  fi
 
   # Переопределение цен на подписки
   echo ""
