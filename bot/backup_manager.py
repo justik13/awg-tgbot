@@ -95,10 +95,19 @@ def create_users_backup(description: Optional[str] = None) -> dict:
     Создать бэкап только таблиц пользователей и подписок.
     
     Экспортирует данные из таблиц:
-    - users
+    - users (пользователи)
     - keys (ключи доступа)
     - payments (платежи)
-    - subscriptions (подписки)
+    - subscription_notifications (уведомления о подписках)
+    - subscription_operations (операции с подписками)
+    - referral_codes (реферальные коды)
+    - referral_attributions (реферальные атрибуции)
+    - referral_rewards (реферальные вознаграждения)
+    - referral_recurring_rewards (повторяющиеся реферальные вознаграждения)
+    - promo_codes (промокоды)
+    - promo_activations (активации промокодов)
+    - app_settings (настройки приложения)
+    - text_overrides (переопределения текстов)
     
     Returns:
         dict с информацией о бэкапе
@@ -127,14 +136,23 @@ def create_users_backup(description: Optional[str] = None) -> dict:
         backup_conn = sqlite3.connect(str(backup_path))
         backup_cursor = backup_conn.cursor()
         
-        # Таблицы для экспорта
+        # Таблицы для экспорта - все пользовательские данные
         tables_to_backup = [
             "users",
             "keys", 
             "payments",
-            "subscriptions",
+            "subscription_notifications",
+            "subscription_operations",
+            "referral_codes",
+            "referral_attributions",
+            "referral_rewards",
+            "referral_recurring_rewards",
             "promo_codes",
-            "referrals",
+            "promo_activations",
+            "app_settings",
+            "text_overrides",
+            "runtime_metrics",
+            "callback_guards",
         ]
         
         exported_tables = []
@@ -315,6 +333,7 @@ def restore_from_backup(backup_filename: str, create_backup_before: bool = True)
         - restored_from: str (путь к файлу бэкапа)
         - current_backup: str (путь к бэкапу текущего состояния, если создавался)
         - error: str (если произошла ошибка)
+        - restore_type: str (full/merge - полный или частичный)
     """
     ensure_backup_dir()
     
@@ -326,7 +345,22 @@ def restore_from_backup(backup_filename: str, create_backup_before: bool = True)
             "error": f"Файл бэкапа не найден: {backup_filename}",
             "restored_from": None,
             "current_backup": None,
+            "restore_type": None,
         }
+    
+    # Читаем метаданные бэкапа для определения типа
+    metadata_path = backup_path.with_suffix(".json")
+    backup_type = "unknown"
+    tables_in_backup = []
+    
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+                backup_type = metadata.get("type", "unknown")
+                tables_in_backup = metadata.get("tables", [])
+        except Exception as e:
+            logger.warning("Не удалось прочитать метаданные для %s: %s", backup_filename, e)
     
     db_path = Path(config.DB_PATH)
     
@@ -341,7 +375,11 @@ def restore_from_backup(backup_filename: str, create_backup_before: bool = True)
             logger.warning("Не удалось создать бэкап текущего состояния: %s", backup_result.get("error"))
     
     try:
-        # Копируем бэкап на место текущей базы
+        # Если это users_backup (частичный бэкап), выполняем слияние данных
+        if backup_type == "users_only" and tables_in_backup:
+            return _restore_users_merge(backup_path, tables_in_backup, db_path, current_backup_path)
+        
+        # Для полного бэкапа или бэкапа без метаданных - простая замена
         # Сначала удаляем текущую базу (если существует)
         if db_path.exists():
             db_path.unlink()
@@ -349,12 +387,13 @@ def restore_from_backup(backup_filename: str, create_backup_before: bool = True)
         # Копируем бэкап
         shutil.copy2(backup_path, db_path)
         
-        logger.info("База данных восстановлена из %s", backup_filename)
+        logger.info("База данных восстановлена из %s (полная замена)", backup_filename)
         
         return {
             "success": True,
             "restored_from": str(backup_path),
             "current_backup": current_backup_path,
+            "restore_type": "full",
         }
     except Exception as e:
         logger.exception("Ошибка восстановления из бэкапа: %s", e)
@@ -363,6 +402,166 @@ def restore_from_backup(backup_filename: str, create_backup_before: bool = True)
             "error": str(e),
             "restored_from": None,
             "current_backup": current_backup_path,
+            "restore_type": None,
+        }
+
+
+def _restore_users_merge(backup_path: Path, tables_to_restore: list[str], db_path: Path, current_backup_path: Optional[str]) -> dict:
+    """
+    Выполнить слияние данных из users_backup с существующей базой данных.
+    
+    Эта функция предназначена для восстановления из частичного бэкапа (users_only)
+    и корректно работает даже если структура БД отличается (старая версия).
+    
+    Args:
+        backup_path: путь к файлу бэкапа
+        tables_to_restore: список таблиц для восстановления
+        db_path: путь к целевой базе данных
+        current_backup_path: путь к бэкапу текущего состояния (если создан)
+    
+    Returns:
+        dict с результатом операции
+    """
+    try:
+        # Подключаемся к бэкапу
+        backup_conn = sqlite3.connect(str(backup_path))
+        backup_conn.row_factory = sqlite3.Row
+        
+        # Подключаемся к целевой базе
+        target_conn = sqlite3.connect(str(db_path))
+        target_cursor = target_conn.cursor()
+        
+        restored_tables = []
+        skipped_tables = []
+        total_rows_restored = 0
+        
+        for table_name in tables_to_restore:
+            # Проверяем существование таблицы в бэкапе
+            backup_cursor = backup_conn.cursor()
+            backup_cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,)
+            )
+            if not backup_cursor.fetchone():
+                logger.debug("Таблица %s не найдена в бэкапе, пропускаем", table_name)
+                skipped_tables.append(table_name)
+                continue
+            
+            # Проверяем существование таблицы в целевой базе
+            target_cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,)
+            )
+            if not target_cursor.fetchone():
+                logger.warning("Таблица %s не найдена в целевой базе, пропускаем", table_name)
+                skipped_tables.append(table_name)
+                continue
+            
+            # Получаем схему таблицы из бэкапа
+            backup_cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+            schema_row = backup_cursor.fetchone()
+            
+            # Получаем информацию о колонках в целевой базе
+            target_cursor.execute(f"PRAGMA table_info({table_name})")
+            target_columns = {row[1]: row[2] for row in target_cursor.fetchall()}
+            
+            # Получаем информацию о колонках в бэкапе
+            backup_cursor.execute(f"PRAGMA table_info({table_name})")
+            backup_columns = {row[1]: row[2] for row in backup_cursor.fetchall()}
+            
+            # Определяем общие колонки
+            common_columns = set(target_columns.keys()) & set(backup_columns.keys())
+            
+            if not common_columns:
+                logger.warning("Нет общих колонок между бэкапом и целевой базой для таблицы %s", table_name)
+                skipped_tables.append(table_name)
+                continue
+            
+            # Получаем первичные ключи таблицы
+            pk_columns = []
+            for col_name, col_type in target_columns.items():
+                target_cursor.execute(f"PRAGMA table_info({table_name})")
+                rows = target_cursor.fetchall()
+                for row in rows:
+                    if row[5] == 1:  # pk column
+                        pk_columns.append(row[1])
+            
+            # Если нет явного первичного ключа, используем первую колонку
+            if not pk_columns and common_columns:
+                pk_columns = [list(common_columns)[0]]
+            
+            # Получаем данные из бэкапа
+            backup_cursor.execute(f"SELECT * FROM {table_name}")
+            rows = backup_cursor.fetchall()
+            
+            if not rows:
+                logger.debug("Таблица %s пуста в бэкапе", table_name)
+                restored_tables.append(table_name)
+                continue
+            
+            # Определяем колонки для вставки (только общие)
+            columns_list = list(common_columns)
+            columns_str = ", ".join(columns_list)
+            placeholders = ", ".join(["?" for _ in columns_list])
+            
+            # Формируем условие для REPLACE INTO или INSERT OR REPLACE
+            # Используем REPLACE INTO для обновления существующих записей
+            inserted_count = 0
+            conflict_count = 0
+            
+            for row in rows:
+                try:
+                    values = tuple(row[col] if col in backup_columns else None for col in columns_list)
+                    
+                    # Пробуем вставить или обновить запись
+                    target_cursor.execute(
+                        f"INSERT OR REPLACE INTO {table_name} ({columns_str}) VALUES ({placeholders})",
+                        values
+                    )
+                    inserted_count += 1
+                    
+                    if target_cursor.rowcount > 1:
+                        conflict_count += 1
+                        
+                except Exception as e:
+                    logger.debug("Ошибка вставки записи в таблицу %s: %s", table_name, e)
+                    continue
+            
+            target_conn.commit()
+            
+            restored_tables.append(table_name)
+            total_rows_restored += inserted_count
+            logger.info(
+                "Восстановлена таблица %s: %d записей вставлено, %d обновлено (конфликтов)",
+                table_name, inserted_count, conflict_count
+            )
+        
+        backup_conn.close()
+        target_conn.close()
+        
+        logger.info(
+            "Слияние данных завершено: %d таблиц восстановлено, %d пропущено, всего %d записей",
+            len(restored_tables), len(skipped_tables), total_rows_restored
+        )
+        
+        return {
+            "success": True,
+            "restored_from": str(backup_path),
+            "current_backup": current_backup_path,
+            "restore_type": "merge",
+            "restored_tables": restored_tables,
+            "skipped_tables": skipped_tables,
+            "total_rows_restored": total_rows_restored,
+        }
+        
+    except Exception as e:
+        logger.exception("Ошибка слияния данных из бэкапа: %s", e)
+        return {
+            "success": False,
+            "error": str(e),
+            "restored_from": None,
+            "current_backup": current_backup_path,
+            "restore_type": "merge",
         }
 
 
