@@ -1273,6 +1273,19 @@ validate_critical_env() {
     ok "DB_PATH: OK ($value)"
   fi
   
+  # Проверка ENCRYPTION_OLD_SECRETS (опциональная, но важная для миграции)
+  value="$(get_env_value ENCRYPTION_OLD_SECRETS)"
+  if [[ -n "$value" ]]; then
+    # Если переменная установлена, проверяем что она не пустая и не содержит только запятые
+    if [[ -z "$value" || "$value" == "," ]]; then
+      warn "ENCRYPTION_OLD_SECRETS установлен, но содержит пустое или некорректное значение!"
+    else
+      ok "ENCRYPTION_OLD_SECRETS: OK (содержит старые ключи для миграции)"
+    fi
+  else
+    info "ENCRYPTION_OLD_SECRETS: не установлен (это нормально для новых установок)"
+  fi
+  
   if [[ $errors -gt 0 ]]; then
     error "Валидация не пройдена! Найдено ошибок: $errors"
     return 1
@@ -4138,6 +4151,38 @@ restore_from_backup() {
     fi
   fi
 
+  # ============================================
+  # ШАГ 1.6: Валидация ENCRYPTION_SECRET после модификации
+  # ============================================
+  local final_encryption_secret
+  final_encryption_secret="$(get_env_value_from_file "$archive_env_file" "ENCRYPTION_SECRET")"
+  
+  if [[ -z "$final_encryption_secret" ]]; then
+    error "Критическая ошибка: ENCRYPTION_SECRET отсутствует или пустой после модификации!"
+    error "Восстановление невозможно без корректного ключа шифрования."
+    rm -rf "$tmp_restore"
+    return 1
+  elif [[ ${#final_encryption_secret} -lt 32 ]]; then
+    error "Критическая ошибка: ENCRYPTION_SECRET слишком короткий (минимум 32 символа, текущая длина: ${#final_encryption_secret})!"
+    error "Восстановление невозможно без корректного ключа шифрования."
+    rm -rf "$tmp_restore"
+    return 1
+  else
+    ok "ENCRYPTION_SECRET прошёл валидацию (длина: ${#final_encryption_secret})"
+  fi
+
+  # Проверка ENCRYPTION_OLD_SECRETS если он был установлен
+  local old_secrets_value
+  old_secrets_value="$(get_env_value_from_file "$archive_env_file" "ENCRYPTION_OLD_SECRETS")"
+  if [[ -n "$old_secrets_value" ]]; then
+    # Проверяем, что не пустой и содержит хотя бы один ключ
+    if [[ -z "$old_secrets_value" || "$old_secrets_value" == "," ]]; then
+      warn "ENCRYPTION_OLD_SECRETS установлен, но содержит пустое или некорректное значение."
+    else
+      ok "ENCRYPTION_OLD_SECRETS: OK (содержит старые ключи для миграции)"
+    fi
+  fi
+
   echo ""
   echo "--- Параметры AmneziaWG (авто-подстановка с текущего сервера) ---"
   echo "Следующие параметры будут автоматически взяты с текущего сервера:"
@@ -4324,6 +4369,43 @@ restore_from_backup() {
   fi
 
   if [[ "$restore_ok" == "1" ]]; then
+    # Дополнительная валидация восстановленного .env файла
+    info "Выполняю финальную валидацию восстановленного .env файла..."
+    
+    # Копируем временный .env для проверки
+    local temp_env_check
+    temp_env_check="$(mktemp)"
+    cp "$ENV_FILE" "$temp_env_check"
+    
+    # Временная подмена ENV_FILE для валидации
+    local original_env_file="$ENV_FILE"
+    ENV_FILE="$temp_env_check"
+    
+    if ! validate_critical_env; then
+      error "Валидация восстановленного .env файла не пройдена!"
+      error "Откат изменений..."
+      ENV_FILE="$original_env_file"
+      rm -f "$temp_env_check"
+      
+      # Откат
+      if [[ -f "$snapshot_dir/db.before" ]]; then restore_sqlite_runtime_bundle "$snapshot_dir/db.before" "$rollback_target_db_file" && rollback_ok=1; fi
+      if [[ -f "$snapshot_dir/.env.before" ]]; then install -m 600 "$snapshot_dir/.env.before" "$ENV_FILE" && rollback_ok=1; fi
+      repair_runtime_file_access "$ENV_FILE" 600
+      if [[ "$restored_bundle_written" == "1" && -n "$rollback_cleanup_db_file" && "$rollback_cleanup_db_file" != "$rollback_target_db_file" ]]; then
+        rm -f "$rollback_cleanup_db_file" "${rollback_cleanup_db_file}-wal" "${rollback_cleanup_db_file}-shm" || true
+      fi
+      warn "Восстановление отменено из-за некорректного .env. Откат: $([[ "$rollback_ok" == "1" ]] && echo 'выполнен' || echo 'частично/не выполнен')."
+      if [[ "$service_active_before" == "active" ]] && require_command systemctl && service_exists; then
+        systemctl start "$SERVICE_NAME" 2>/dev/null || true
+      fi
+      return 1
+    fi
+    
+    # Восстанавливаем оригинальный путь
+    ENV_FILE="$original_env_file"
+    rm -f "$temp_env_check"
+    ok "Валидация восстановленного .env файла пройдена успешно."
+    
     # Синхронизируем helper policy только если сервис существует
     if service_exists; then
       if ! sync_awg_helper_policy_from_env; then
