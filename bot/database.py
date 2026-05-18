@@ -101,7 +101,17 @@ async def ensure_column(db: aiosqlite.Connection, table_name: str, column_name: 
         rows = await cursor.fetchall()
     existing = {row[1] for row in rows}
     if column_name not in existing:
-        await db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+        # SQLite doesn't support adding UNIQUE columns via ALTER TABLE
+        # Extract UNIQUE keyword if present and create index separately
+        if "UNIQUE" in column_def.upper():
+            # Remove UNIQUE from column definition
+            clean_def = column_def.replace("UNIQUE", "").replace("  ", " ").strip()
+            await db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {clean_def}")
+            # Create unique index
+            index_name = f"idx_{table_name}_{column_name}_unique"
+            await db.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON {table_name} ({column_name})")
+        else:
+            await db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
 
 
 async def init_db() -> None:
