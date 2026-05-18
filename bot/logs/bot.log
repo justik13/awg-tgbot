@@ -5,3 +5,20 @@
 2026-05-18 11:38:41 | WARNING  | platega_service:40 | Platega credentials not configured in .env
 2026-05-18 11:39:10 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
 2026-05-18 11:39:10 | WARNING  | platega_service:40 | Platega credentials not configured in .env
+2026-05-18 12:01:54 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 12:02:02 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 12:02:02 | WARNING  | platega_service:40 | Platega credentials not configured in .env
+2026-05-18 12:07:01 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 12:07:01 | WARNING  | platega_service:40 | Platega credentials not configured in .env
+2026-05-18 12:07:08 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 12:07:09 | WARNING  | platega_service:40 | Platega credentials not configured in .env
+2026-05-18 12:07:12 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 12:07:15 | WARNING  | platega_service:40 | Platega credentials not configured in .env
+2026-05-18 12:07:26 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 12:07:30 | WARNING  | platega_service:40 | Platega credentials not configured in .env
+2026-05-18 12:07:36 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 12:07:36 | WARNING  | platega_service:40 | Platega credentials not configured in .env
+2026-05-18 12:07:43 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 12:07:46 | WARNING  | platega_service:40 | Platega credentials not configured in .env
+2026-05-18 12:07:55 | WARNING  | config:65 | AWG helper policy status: helper policy not found: /etc/awg-bot-helper.json
+2026-05-18 12:07:55 | WARNING  | platega_service:40 | Platega credentials not configured in .env
