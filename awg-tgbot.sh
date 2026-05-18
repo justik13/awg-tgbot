@@ -3957,11 +3957,44 @@ restore_from_backup() {
       fi
     fi
   done
+
+  # Переопределение цен на подписки
+  echo ""
+  echo "=== Переопределение цен на подписки ==="
+  local -a price_vars=("STARS_PRICE_7_DAYS" "STARS_PRICE_30_DAYS" "STARS_PRICE_90_DAYS" "PLATEGA_PRICE_7_DAYS" "PLATEGA_PRICE_30_DAYS" "PLATEGA_PRICE_90_DAYS")
+  
+  for var in "${price_vars[@]}"; do
+    local current_value
+    current_value="$(get_env_value_from_file "$archive_env_file" "$var")"
+    if [[ -n "$current_value" ]]; then
+      echo "  $var = $current_value"
+    else
+      echo "  $var = (не задано)"
+    fi
+    prompt_raw "Переопределить $var (оставить пустым для сохранения текущего): " new_value
+    if [[ -n "$new_value" ]]; then
+      # Проверяем, что введено число
+      if [[ "$new_value" =~ ^[0-9]+$ ]]; then
+        local escaped_new
+        escaped_new="$(printf '%s\n' "$new_value" | sed 's/[&/\]/\\&/g')"
+        if [[ -n "$current_value" ]]; then
+          sed -i "s/^${var}=.*/${var}=${escaped_new}/" "$archive_env_file"
+        else
+          # Добавляем переменную, если её не было
+          echo "${var}=${escaped_new}" >> "$archive_env_file"
+        fi
+        env_override=1
+      else
+        warn "Некорректное значение для $var (должно быть число). Пропущено."
+      fi
+    fi
+  done
+
   
   if [[ -n "$env_override" ]]; then
     echo ""
     echo "Обновлённые значения в .env:"
-    for var in "${override_vars[@]}"; do
+    for var in "${override_vars[@]}" "${price_vars[@]}"; do
       local updated_value
       updated_value="$(get_env_value_from_file "$archive_env_file" "$var")"
       if [[ -n "$updated_value" ]]; then
