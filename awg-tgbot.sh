@@ -3884,30 +3884,35 @@ restore_from_backup() {
   selected_archive="${archives[$((selected_index - 1))]}"
   original_db_file="$(get_bot_db_file)"
   rollback_target_db_file="$original_db_file"
-  payload_db_basename="$(basename "$original_db_file")"
+  
+  # Сначала извлекаем metadata и .env чтобы определить правильный db_file из бэкапа
+  tmp_restore="$(mktemp -d)"
+  if ! tar -xzf "$selected_archive" -C "$tmp_restore" ".env" "metadata.txt" 2>/dev/null; then
+    warn "Не удалось извлечь .env и metadata.txt из архива."
+    return 1
+  fi
+  archive_env_file="$tmp_restore/.env"
+  
+  # Определяем payload_db_basename из metadata.txt бэкапа
+  meta_content="$(cat "$tmp_restore/metadata.txt" 2>/dev/null || true)"
+  if [[ -n "$meta_content" ]]; then
+    payload_db_basename="$(printf '%s\n' "$meta_content" | awk -F= '/^db_file=/{print $2}' | tail -n1)"
+  fi
+  [[ -n "$payload_db_basename" ]] || payload_db_basename="$(basename "$original_db_file")"
+  
   mapfile -t archive_entries < <(tar -tzf "$selected_archive" 2>/dev/null || true)
   if [[ ${#archive_entries[@]} -eq 0 ]]; then
     warn "Архив повреждён или пуст: $(basename "$selected_archive")"
+    rm -rf "$tmp_restore"
     return 1
   fi
+  
   restore_members=("$payload_db_basename")
   if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-wal"; then
     restore_members+=("${payload_db_basename}-wal")
   fi
   if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-shm"; then
     restore_members+=("${payload_db_basename}-shm")
-  fi
-  meta_content="$(tar -xOf "$selected_archive" metadata.txt 2>/dev/null || true)"
-  if [[ -n "$meta_content" ]]; then
-    payload_db_basename="$(printf '%s\n' "$meta_content" | awk -F= '/^db_file=/{print $2}' | tail -n1)"
-    [[ -n "$payload_db_basename" ]] || payload_db_basename="$(basename "$original_db_file")"
-    restore_members=("$payload_db_basename")
-    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-wal"; then
-      restore_members+=("${payload_db_basename}-wal")
-    fi
-    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-shm"; then
-      restore_members+=("${payload_db_basename}-shm")
-    fi
   fi
   if ! printf '%s\n' "${archive_entries[@]}" | grep -Fxq ".env"; then
     warn "Архив не содержит .env: $(basename "$selected_archive")"
@@ -3922,7 +3927,48 @@ restore_from_backup() {
   echo "Будет восстановлено: ${payload_db_basename} (+sidecars при наличии), .env"
   if ! confirm_explicit "Продолжить восстановление?"; then
     warn "Восстановление отменено."
+    rm -rf "$tmp_restore"
     return 1
+  fi
+
+  # archive_env_file уже извлечён выше, используем его для переопределения параметров
+
+  # Показываем текущие значения и предлагаем переопределить критические параметры
+  echo ""
+  echo "=== Переопределение параметров для нового сервера ==="
+  echo "Текущие значения из бэкапа:"
+  
+  local env_override="" new_value=""
+  local -a override_vars=("SERVER_IP" "PUBLIC_HOST" "SERVER_PUBLIC_KEY" "WG_INTERFACE" "DOCKER_CONTAINER")
+  
+  for var in "${override_vars[@]}"; do
+    local current_value
+    current_value="$(get_env_value_from_file "$archive_env_file" "$var")"
+    if [[ -n "$current_value" ]]; then
+      echo "  $var = $current_value"
+      prompt_raw "Переопределить $var (оставить пустым для сохранения текущего): " new_value
+      if [[ -n "$new_value" ]]; then
+        # Экранируем спецсимволы для sed
+        local escaped_current escaped_new
+        escaped_current="$(printf '%s\n' "$current_value" | sed 's/[&/\]/\\&/g')"
+        escaped_new="$(printf '%s\n' "$new_value" | sed 's/[&/\]/\\&/g')"
+        sed -i "s/^${var}=.*/${var}=${escaped_new}/" "$archive_env_file"
+        env_override=1
+      fi
+    fi
+  done
+  
+  if [[ -n "$env_override" ]]; then
+    echo ""
+    echo "Обновлённые значения в .env:"
+    for var in "${override_vars[@]}"; do
+      local updated_value
+      updated_value="$(get_env_value_from_file "$archive_env_file" "$var")"
+      if [[ -n "$updated_value" ]]; then
+        echo "  $var = $updated_value"
+      fi
+    done
+    echo ""
   fi
 
   if require_command systemctl && service_exists; then
@@ -3949,9 +3995,12 @@ restore_from_backup() {
   if [[ -f "$original_db_file" ]]; then snapshot_sqlite_runtime_bundle "$original_db_file" "$snapshot_dir" "db.before" || true; fi
   if [[ -f "$ENV_FILE" ]]; then cp -a "$ENV_FILE" "$snapshot_dir/.env.before"; fi
 
+  # Извлекаем файлы из архива (используем обновлённый archive_env_file)
   tmp_restore="$(mktemp -d)"
-  if tar -xzf "$selected_archive" -C "$tmp_restore" "${restore_members[@]}" ".env"; then
-    archive_env_file="$tmp_restore/.env"
+  if tar -xzf "$selected_archive" -C "$tmp_restore" "${restore_members[@]}" 2>/dev/null; then
+    # Копируем модифицированный .env вместо извлечения из архива
+    cp "$archive_env_file" "$tmp_restore/.env"
+    
     archive_db_path="$(get_env_value_from_file "$archive_env_file" DB_PATH)"
     archive_db_file="$(resolve_db_file_from_db_path "$archive_db_path")"
     archive_db_basename="$(basename "$archive_db_file")"
