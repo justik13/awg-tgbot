@@ -3884,30 +3884,35 @@ restore_from_backup() {
   selected_archive="${archives[$((selected_index - 1))]}"
   original_db_file="$(get_bot_db_file)"
   rollback_target_db_file="$original_db_file"
-  payload_db_basename="$(basename "$original_db_file")"
+  
+  # Сначала извлекаем metadata и .env чтобы определить правильный db_file из бэкапа
+  tmp_restore="$(mktemp -d)"
+  if ! tar -xzf "$selected_archive" -C "$tmp_restore" ".env" "metadata.txt" 2>/dev/null; then
+    warn "Не удалось извлечь .env и metadata.txt из архива."
+    return 1
+  fi
+  archive_env_file="$tmp_restore/.env"
+  
+  # Определяем payload_db_basename из metadata.txt бэкапа
+  meta_content="$(cat "$tmp_restore/metadata.txt" 2>/dev/null || true)"
+  if [[ -n "$meta_content" ]]; then
+    payload_db_basename="$(printf '%s\n' "$meta_content" | awk -F= '/^db_file=/{print $2}' | tail -n1)"
+  fi
+  [[ -n "$payload_db_basename" ]] || payload_db_basename="$(basename "$original_db_file")"
+  
   mapfile -t archive_entries < <(tar -tzf "$selected_archive" 2>/dev/null || true)
   if [[ ${#archive_entries[@]} -eq 0 ]]; then
     warn "Архив повреждён или пуст: $(basename "$selected_archive")"
+    rm -rf "$tmp_restore"
     return 1
   fi
+  
   restore_members=("$payload_db_basename")
   if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-wal"; then
     restore_members+=("${payload_db_basename}-wal")
   fi
   if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-shm"; then
     restore_members+=("${payload_db_basename}-shm")
-  fi
-  meta_content="$(tar -xOf "$selected_archive" metadata.txt 2>/dev/null || true)"
-  if [[ -n "$meta_content" ]]; then
-    payload_db_basename="$(printf '%s\n' "$meta_content" | awk -F= '/^db_file=/{print $2}' | tail -n1)"
-    [[ -n "$payload_db_basename" ]] || payload_db_basename="$(basename "$original_db_file")"
-    restore_members=("$payload_db_basename")
-    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-wal"; then
-      restore_members+=("${payload_db_basename}-wal")
-    fi
-    if printf '%s\n' "${archive_entries[@]}" | grep -Fxq "${payload_db_basename}-shm"; then
-      restore_members+=("${payload_db_basename}-shm")
-    fi
   fi
   if ! printf '%s\n' "${archive_entries[@]}" | grep -Fxq ".env"; then
     warn "Архив не содержит .env: $(basename "$selected_archive")"
@@ -3922,16 +3927,11 @@ restore_from_backup() {
   echo "Будет восстановлено: ${payload_db_basename} (+sidecars при наличии), .env"
   if ! confirm_explicit "Продолжить восстановление?"; then
     warn "Восстановление отменено."
+    rm -rf "$tmp_restore"
     return 1
   fi
 
-  # Извлекаем .env для просмотра и возможного переопределения
-  tmp_restore="$(mktemp -d)"
-  if ! tar -xzf "$selected_archive" -C "$tmp_restore" ".env" 2>/dev/null; then
-    warn "Не удалось извлечь .env из архива."
-    return 1
-  fi
-  archive_env_file="$tmp_restore/.env"
+  # archive_env_file уже извлечён выше, используем его для переопределения параметров
 
   # Показываем текущие значения и предлагаем переопределить критические параметры
   echo ""
