@@ -3866,6 +3866,10 @@ restore_from_backup() {
   local restore_ok=0 rollback_ok=0 smokecheck_ok=0 helper_sync_ok=0 rollback_helper_sync_ok=0 rollback_smoke_ok=0 restore_blocked=0
   local restored_bundle_written=0
   
+  # Создаём директорию для бэкапов, если она не существует
+  mkdir -p "$backup_root"
+  chmod 755 "$backup_root" || true
+  
   # Проверяем наличие бэкапов, даже если бот не установлен
   mapfile -t archives < <(find "$backup_root" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' | sort -r 2>/dev/null || true)
   
