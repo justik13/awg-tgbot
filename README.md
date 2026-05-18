@@ -14,14 +14,18 @@ Telegram-бот для управления доступом к AmneziaWG на �
 
 ## 🚀 Установка
 
+### Быстрая установка (рекомендуется)
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/awg-tgbot/main/awg-tgbot.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/justik13/awg-tgbot/main/awg-tgbot.sh | sudo REPO_BRANCH=main bash -s --
 ```
 
-Или клонируйте репозиторий и запустите:
+Этот способ позволяет передавать параметры установки и является предпочтительным для production.
+
+### Альтернативная установка
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/awg-tgbot.git
+git clone https://github.com/justik13/awg-tgbot.git
 cd awg-tgbot
 sudo bash awg-tgbot.sh
 ```
