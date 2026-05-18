@@ -19,7 +19,7 @@ class Platega:
         result = client.create_payment(1000, 'RUB', Platega.METHOD_SBP_QR)
     """
     
-    API_URL = 'https://app.platega.io'
+    API_URL = 'https://api.platega.io'
     VERSION = '1.0.0'
     
     # Payment methods
