@@ -1,1 +1,1 @@
-Nothing needs to be added to the .gitignore file based on the provided changes. The only modified file is 'awg-tgbot.sh', which appears to be a shell script and does not require any special ignore rules.
+Nothing needs to be added to the .gitignore file based on the provided changes. The only modified file is `awg-tgbot.sh`, which appears to be a shell script source file and should not be ignored.
