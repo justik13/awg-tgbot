@@ -3696,11 +3696,14 @@ create_local_backup() {
   local db_file db_basename timestamp archive_file meta_dir meta_file local_sha
   local snapshot_dir service_active_before service_was_active=0 service_state_after_start=""
   local -a db_bundle_names=()
-  if ! has_residual_files || [[ ! -f "$ENV_FILE" || ! -d "$BOT_DIR" ]]; then
-    warn "Бот не установлен полностью. Нечего архивировать."
+  
+  # Проверяем наличие БД и .env, даже если бот не полностью установлен
+  # Это позволяет сделать бэкап перед переустановкой или на новом сервере
+  if [[ ! -f "$ENV_FILE" ]]; then
+    warn "Файл .env не найден: ${ENV_FILE}"
     return 1
   fi
-
+  
   db_file="$(get_bot_db_file)"
   if [[ ! -f "$db_file" ]]; then
     warn "Файл БД не найден: ${db_file}"
@@ -3862,9 +3865,20 @@ restore_from_backup() {
   local -a archive_entries=() restore_members=()
   local restore_ok=0 rollback_ok=0 smokecheck_ok=0 helper_sync_ok=0 rollback_helper_sync_ok=0 rollback_smoke_ok=0 restore_blocked=0
   local restored_bundle_written=0
-  mapfile -t archives < <(find "$backup_root" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' | sort -r)
+  
+  # Проверяем наличие бэкапов, даже если бот не установлен
+  mapfile -t archives < <(find "$backup_root" -maxdepth 1 -type f -name 'awg-tgbot-backup-*.tar.gz' | sort -r 2>/dev/null || true)
+  
+  # Если бэкапы не найдены, предлагаем загрузить их вручную
   if [[ ${#archives[@]} -eq 0 ]]; then
     warn "Локальные бэкапы не найдены: ${backup_root}"
+    echo ""
+    echo "Если у вас есть бэкап с другого сервера:"
+    echo "1) Скопируйте файл бэкапа в директорию: ${backup_root}"
+    echo "   Пример: scp user@old-server:/opt/amnezia/bot/backups/awg-tgbot-backup-*.tar.gz ${backup_root}/"
+    echo "2) Запустите восстановление снова"
+    echo ""
+    echo "Ожидаемый формат имени файла: awg-tgbot-backup-YYYYMMDD_HHMMSS.tar.gz"
     return 1
   fi
 
@@ -3882,6 +3896,7 @@ restore_from_backup() {
     return 1
   fi
   selected_archive="${archives[$((selected_index - 1))]}"
+  # Определяем original_db_file, даже если бот не установлен
   original_db_file="$(get_bot_db_file)"
   rollback_target_db_file="$original_db_file"
   
@@ -4004,6 +4019,7 @@ restore_from_backup() {
     echo ""
   fi
 
+  # Если сервис существует, останавливаем его для безопасного восстановления
   if require_command systemctl && service_exists; then
     service_active_before="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
     service_enabled_before="$(systemctl is-enabled "$SERVICE_NAME" 2>/dev/null || true)"
@@ -4023,6 +4039,7 @@ restore_from_backup() {
     fi
   fi
 
+  # Создаём snapshot текущих данных для rollback (если они есть)
   snapshot_dir="$(mktemp -d "${backup_root}/pre-restore-$(date -u +%Y%m%d_%H%M%S)-XXXXXX")"
   chmod 700 "$snapshot_dir" || true
   if [[ -f "$original_db_file" ]]; then snapshot_sqlite_runtime_bundle "$original_db_file" "$snapshot_dir" "db.before" || true; fi
@@ -4079,18 +4096,34 @@ restore_from_backup() {
     return 1
   fi
 
-  if ! sync_awg_helper_policy_from_env; then
-    warn "Восстановление: не удалось синхронизировать helper policy из восстановленного .env."
-    restore_ok=0
-  else
-    helper_sync_ok=1
+  if [[ "$restore_ok" == "1" ]]; then
+    # Синхронизируем helper policy только если сервис существует
+    if service_exists; then
+      if ! sync_awg_helper_policy_from_env; then
+        warn "Восстановление: не удалось синхронизировать helper policy из восстановленного .env."
+        restore_ok=0
+      else
+        helper_sync_ok=1
+      fi
+    else
+      # Бот ещё не установлен, helper policy будет настроен при установке
+      ok "Helper policy будет настроен при установке бота."
+      helper_sync_ok=1
+    fi
   fi
 
+  # Запускаем сервис только если он существует
   if require_command systemctl && service_exists; then
     systemctl start "$SERVICE_NAME" 2>/dev/null || true
   fi
 
-  if [[ "$restore_ok" == "1" ]] && run_post_restart_smokecheck; then
+  # Запускаем smokecheck только если сервис существует
+  if [[ "$restore_ok" == "1" ]] && service_exists; then
+    if run_post_restart_smokecheck; then
+      smokecheck_ok=1
+    fi
+  elif [[ "$restore_ok" == "1" ]]; then
+    # Если сервис ещё не установлен, считаем smokecheck пройденным
     smokecheck_ok=1
   fi
 
@@ -4102,15 +4135,22 @@ restore_from_backup() {
     if [[ "$restored_bundle_written" == "1" && -n "$rollback_cleanup_db_file" && "$rollback_cleanup_db_file" != "$rollback_target_db_file" ]]; then
       rm -f "$rollback_cleanup_db_file" "${rollback_cleanup_db_file}-wal" "${rollback_cleanup_db_file}-shm" || true
     fi
-    if sync_awg_helper_policy_from_env; then
-      rollback_helper_sync_ok=1
+    # Синхронизируем helper policy только если сервис существует
+    if service_exists; then
+      if sync_awg_helper_policy_from_env; then
+        rollback_helper_sync_ok=1
+      else
+        warn "Rollback restore: не удалось синхронизировать helper policy."
+      fi
     else
-      warn "Rollback restore: не удалось синхронизировать helper policy."
+      rollback_helper_sync_ok=1
     fi
     if require_command systemctl && service_exists; then
       systemctl restart "$SERVICE_NAME" 2>/dev/null || true
     fi
-    if run_post_restart_smokecheck; then
+    if service_exists && run_post_restart_smokecheck; then
+      rollback_smoke_ok=1
+    elif ! service_exists; then
       rollback_smoke_ok=1
     fi
     if [[ "$rollback_ok" == "1" && "$rollback_helper_sync_ok" == "1" && "$rollback_smoke_ok" == "1" ]]; then
@@ -4128,6 +4168,8 @@ restore_from_backup() {
   fi
   if require_command systemctl && service_exists; then
     echo "Сервис: $(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true) (enabled: ${service_enabled_before:-unknown})"
+  else
+    echo "Сервис ещё не установлен. Выполните установку бота для завершения восстановления."
   fi
   return 0
 }
@@ -4848,6 +4890,7 @@ print_menu_awg_no_bot_no() {
   echo "Доступные действия:"
   echo "1) Диагностика"
   echo "2) Повторить проверку"
+  echo "3) Восстановить из бэкапа"
   echo "0) Выход"
   print_line
 }
@@ -4932,6 +4975,7 @@ main_menu() {
         case "$choice" in
           1) print_detailed_startup_summary ;;
           2) should_pause=0 ;;
+          3) restore_from_backup ;;
           0) cleanup_transient_install_state; clear_if_tty; print_exit_hint; exit 0 ;;
           *) warn "Неизвестный пункт меню." ;;
         esac
