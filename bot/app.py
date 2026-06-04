@@ -36,7 +36,6 @@ from config import (
     logger,
     maybe_set_support_username,
 )
-from content_settings import get_text
 from database import (
     claim_next_broadcast_job,
     cleanup_stale_pending_keys,
@@ -59,7 +58,6 @@ from middlewares import DuplicateCallbackGuardMiddleware, DuplicateMessageGuardM
 from network_policy import denylist_should_refresh, denylist_sync
 from payments import payment_recovery_worker
 from payments import router as payments_router
-from ui_constants import is_admin_callback_data
 from ui_constants import CB_SHOW_BUY_MENU
 from workers import WorkerPool, WorkerSpec
 from helpers import format_iso_to_moscow

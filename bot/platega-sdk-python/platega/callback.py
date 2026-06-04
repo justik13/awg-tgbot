@@ -5,7 +5,6 @@ Platega Callback Handler
 import json
 from typing import Dict, Any, Optional
 
-from .exceptions import PlategaValidationError
 
 
 class PlategaCallback:

@@ -1,5 +1,4 @@
 """Менеджер резервного копирования и восстановления базы данных."""
-import os
 import shutil
 import sqlite3
 import json
@@ -169,7 +168,7 @@ def create_users_backup(description: Optional[str] = None) -> dict:
                 continue
             
             # Получаем схему таблицы
-            source_cursor.execute(f"SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+            source_cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             schema_row = source_cursor.fetchone()
             if schema_row and schema_row[0]:
                 # Создаем таблицу в бэкапе
@@ -456,10 +455,6 @@ def _restore_users_merge(backup_path: Path, tables_to_restore: list[str], db_pat
                 logger.warning("Таблица %s не найдена в целевой базе, пропускаем", table_name)
                 skipped_tables.append(table_name)
                 continue
-            
-            # Получаем схему таблицы из бэкапа
-            backup_cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
-            schema_row = backup_cursor.fetchone()
             
             # Получаем информацию о колонках в целевой базе
             target_cursor.execute(f"PRAGMA table_info({table_name})")

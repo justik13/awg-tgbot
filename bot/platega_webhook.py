@@ -2,11 +2,8 @@
 Webhook сервер для приема callback от Platega.
 Запускается как отдельный процесс на порту 8081.
 """
-import asyncio
-import json
 import logging
 from aiohttp import web
-from typing import Dict, Any
 
 from database import get_payment_by_order, update_payment_status_by_order
 from platega_service import platega_service

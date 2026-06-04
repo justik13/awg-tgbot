@@ -860,7 +860,7 @@ async def delete_user_device(user_id: int, device_num: int) -> dict[str, Any]:
             await db.commit()
             await write_audit_log(user_id, "delete_user_device_noop", f"device_num={device_num}; reason=not_found")
             return {"status": "not_found", "removed_runtime": False}
-        key_id, public_key, ip = int(row[0]), str(row[1]), str(row[2] or "")
+        key_id, public_key = int(row[0]), str(row[1])
         await db.execute(
             "UPDATE keys SET state='delete_pending', state_updated_at=?, delete_reason='admin_device_delete' WHERE id = ?",
             (utc_now_naive().isoformat(), key_id),

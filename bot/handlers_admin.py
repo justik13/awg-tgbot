@@ -1820,7 +1820,7 @@ async def admin_add_days_btn(cb: types.CallbackQuery):
             return
         if admin_command_limited(f"admin_add_{days}", cb.from_user.id):
             logger.debug("Admin add days rate limited: user=%s days=%s", uid, days)
-            await _send_or_edit_admin_message(cb, "⏳ Подождите немного перед повторным действием.", get_admin_users_back_kb(page))
+            await _send_or_edit_admin_message(cb, "⏳ Подождите немного перед повторным действием.", _user_manage_result_markup(uid, page, source))
             return
         new_until = await issue_subscription(uid, days)
         notified = await notify_user_subscription_granted(cb.bot, uid, days, new_until)
@@ -1863,7 +1863,7 @@ async def admin_add_days_confirm(cb: types.CallbackQuery):
         return
     if admin_command_limited(f"admin_add_{days}", cb.from_user.id):
         logger.debug("Admin add days confirm rate limited: user=%s days=%s", uid, days)
-        await _send_or_edit_admin_message(cb, "⏳ Подождите немного перед повторным действием.", get_admin_users_back_kb(page))
+        await _send_or_edit_admin_message(cb, "⏳ Подождите немного перед повторным действием.", _user_manage_result_markup(uid, page, source))
         return
     new_until = await issue_subscription(uid, days)
     notified = await notify_user_subscription_granted(cb.bot, uid, days, new_until)
