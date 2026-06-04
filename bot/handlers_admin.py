@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime, timedelta
+import asyncio
 import ipaddress
 import re
 import secrets
@@ -898,6 +899,16 @@ def _normalize_cidrs_multiline(raw_text: str) -> str:
             seen.add(normalized)
             values.append(normalized)
     return ",".join(values)
+
+
+def _schedule_denylist_sync() -> None:
+    async def _run() -> None:
+        try:
+            await denylist_sync(run_docker)
+        except Exception as error:
+            logger.exception("Background denylist sync failed: %s", error)
+
+    asyncio.create_task(_run(), name="admin-denylist-sync")
 
 
 def _users_page_kb(rows: list[tuple[int, str]], page: int, total_pages: int) -> types.InlineKeyboardMarkup:
@@ -3042,9 +3053,9 @@ async def admin_network_policy_capture_input(message: types.Message):
         normalized = _normalize_domains_multiline(raw)
         await clear_pending_admin_action(ADMIN_ID, DENYLIST_DOMAINS_INPUT_ACTION_KEY)
         await set_app_setting("EGRESS_DENYLIST_DOMAINS", normalized, updated_by=ADMIN_ID)
-        await denylist_sync(run_docker)
+        _schedule_denylist_sync()
         await write_audit_log(ADMIN_ID, "admin_denylist_domains_set", f"count={len([x for x in normalized.split(',') if x])}")
-        await message.answer("✅ Список доменов denylist обновлён.")
+        await message.answer("✅ Список доменов denylist обновлён. Синхронизация запущена в фоне.")
         return
 
     if deny_cidrs_pending:
@@ -3056,9 +3067,9 @@ async def admin_network_policy_capture_input(message: types.Message):
             return
         await clear_pending_admin_action(ADMIN_ID, DENYLIST_CIDRS_INPUT_ACTION_KEY)
         await set_app_setting("EGRESS_DENYLIST_CIDRS", normalized, updated_by=ADMIN_ID)
-        await denylist_sync(run_docker)
+        _schedule_denylist_sync()
         await write_audit_log(ADMIN_ID, "admin_denylist_cidrs_set", f"count={len([x for x in normalized.split(',') if x])}")
-        await message.answer("✅ Список CIDR denylist обновлён.")
+        await message.answer("✅ Список CIDR denylist обновлён. Синхронизация запущена в фоне.")
         return
 
 @router.message(Command("give"), IsAdmin())
