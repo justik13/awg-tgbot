@@ -1,30 +1,13 @@
 """
 Platega payment integration for VPN bot.
-Uses plategaio (async SDK) for non-blocking operations.
+Uses direct async HTTP requests for non-blocking Platega operations.
 """
-import sys
+from typing import Any, Optional
+
 import httpx
-import os
-from typing import Optional, Dict, Any
-from datetime import timedelta
-
-# Добавляем путь к async SDK если он еще не в path
-_sdk_async_path = os.path.join(os.path.dirname(__file__), '..', 'plategaio-main')
-if _sdk_async_path not in sys.path:
-    sys.path.insert(0, _sdk_async_path)
-
-try:
-    from plategaio import PlategaAsyncClient, CreateTransactionRequest, PaymentDetails
-    PLATEGAIO_AVAILABLE = True
-except ImportError as e:
-    PLATEGAIO_AVAILABLE = False
-    logger.error(f"Failed to import plategaio: {e}")
-
-from aiogram import Bot, types
+from aiogram import types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import logger
-from database import save_payment, upsert_payment_precheck, update_payment_status, get_payment_status
 
 # Payment method constants from Platega
 PLATEGA_METHOD_SBP_QR = 2
@@ -44,9 +27,6 @@ class PlategaPaymentService:
         self.merchant_id = merchant_id
         self.secret = secret
         self.base_url = base_url
-        
-        if not PLATEGAIO_AVAILABLE:
-            logger.error("plategaio library not available - payments will not work")
     
     async def create_payment(
         self,
@@ -57,7 +37,7 @@ class PlategaPaymentService:
         return_url: Optional[str] = None,
         failed_url: Optional[str] = None,
         payment_method: int = PLATEGA_METHOD_SBP_QR,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a new Platega payment transaction."""
         headers = {
             "X-MerchantId": self.merchant_id,
@@ -71,9 +51,12 @@ class PlategaPaymentService:
             "paymentDetails": {"amount": amount, "currency": currency},
             "description": description,
         }
-        if return_url: payload_json["returnUrl"] = return_url
-        if failed_url: payload_json["failedUrl"] = failed_url
-        if payload: payload_json["payload"] = payload
+        if return_url:
+            payload_json["returnUrl"] = return_url
+        if failed_url:
+            payload_json["failedUrl"] = failed_url
+        if payload:
+            payload_json["payload"] = payload
             
         async with httpx.AsyncClient(headers=headers, timeout=30.0) as client:
             response = await client.post(f"{self.base_url}/transaction/process", json=payload_json)
@@ -87,7 +70,7 @@ class PlategaPaymentService:
                 "expires_in": data.get("expiresIn"),
             }
 
-    async def check_payment_status(self, transaction_id: str) -> Dict[str, Any]:
+    async def check_payment_status(self, transaction_id: str) -> dict[str, Any]:
         """Check the status of a Platega payment.
         
         Args:
@@ -97,11 +80,9 @@ class PlategaPaymentService:
             dict with id, status, amount, currency, payment_method, redirect
             
         Raises:
-            RuntimeError: If plategaio is not available or API call fails
+            httpx.HTTPStatusError: If Platega returns a non-successful HTTP status.
+            httpx.RequestError: If the network request fails.
         """
-        if not PLATEGAIO_AVAILABLE:
-            raise RuntimeError("plategaio library not available")
-        
         headers = {
             "X-MerchantId": self.merchant_id,
             "X-Secret": self.secret,

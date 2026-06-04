@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import json
 import uuid
 from datetime import timedelta
@@ -47,12 +46,19 @@ from database import (
     upsert_payment_precheck,
     mark_payment_precheck_status,
     update_payment_status,
+    update_payment_status_by_order,
     write_audit_log,
     get_user_keys,
     get_payment_by_order,
 )
 from helpers import utc_now_naive
-from keyboards import get_buy_confirm_kb, get_post_payment_kb, get_payment_method_selection_kb, get_platega_payment_kb
+from keyboards import (
+    get_buy_confirm_kb,
+    get_buy_inline_kb,
+    get_payment_method_selection_kb,
+    get_platega_payment_kb,
+    get_post_payment_kb,
+)
 from content_settings import get_text
 from referrals import (
     apply_referral_recurring_inviter_reward,
@@ -67,7 +73,7 @@ from ui_constants import (
     CB_SHOW_BUY_MENU, CB_PAY_STARS_PREFIX, CB_PAY_PLATEGA_PREFIX,
     CB_PLATEGA_PAY_PREFIX, CB_PLATEGA_CHECK_PREFIX,
     CB_TARIFF_7, CB_TARIFF_30, CB_TARIFF_90,
-    CB_CHECK_PAYMENT_STATUS, CB_OPEN_SUPPORT, CB_OPEN_CONFIGS, CB_CHECK_ACTIVATION_STATUS,
+    CB_OPEN_SUPPORT, CB_OPEN_CONFIGS, CB_CHECK_ACTIVATION_STATUS,
 )
 from maintenance import get_purchase_maintenance_text, is_purchase_maintenance_enabled
 from platega_service import platega_service
@@ -222,12 +228,11 @@ async def _show_buy_confirmation(cb: types.CallbackQuery, payload: str, method: 
         tariffs = get_tariffs_platega()
     else:
         tariffs = get_tariffs_stars()
-    tariff = tariffs[payload]
-    title_map = {
-        "sub_7": "7 дней",
-        "sub_30": "30 дней",
-        "sub_90": "90 дней",
-    }
+    if payload not in tariffs:
+        logger.warning("Unknown tariff payload in buy confirmation: payload=%s method=%s", payload, method)
+        await cb.answer("Неизвестный тариф", show_alert=False)
+        await _send_or_edit_payment_screen(cb, "Неизвестный тариф. Выберите тариф заново.", reply_markup=get_buy_inline_kb())
+        return
     tariff_info = {
         "sub_7": {"days": 7, "stars": get_tariffs_stars()["sub_7"]["amount"], "rub": config.PLATEGA_PRICE_7_DAYS},
         "sub_30": {"days": 30, "stars": get_tariffs_stars()["sub_30"]["amount"], "rub": config.PLATEGA_PRICE_30_DAYS},
@@ -384,7 +389,6 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
         )
         
         # Show payment button with redirect URL
-        tariff_label = f"{info['days']} дней"
         text = await get_text(
             "platega_payment_pending",
             amount=info["rub"],
@@ -431,7 +435,7 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
     
     try:
         # Get payment status to retrieve redirect URL
-        status_result = await platega_service.check_payment_status(transaction_id)
+        await platega_service.check_payment_status(transaction_id)
         
         # Send redirect URL to user
         tariff_info = {
@@ -496,7 +500,7 @@ async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: s
         # Get payment from database
         from database import fetchone
         row = await fetchone(
-            "SELECT user_id, payload FROM payments WHERE telegram_payment_charge_id = ?",
+            "SELECT payload FROM payments WHERE telegram_payment_charge_id = ?",
             (transaction_id,)
         )
         
@@ -504,8 +508,7 @@ async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: s
             await _send_or_edit_payment_screen(cb, "Платёж не найден в базе данных.")
             return
         
-        user_id = int(row[0])
-        payload = str(row[1])
+        payload = str(row[0])
         
         if platega_service.is_success_status(status):
             # Payment successful - update status but don't issue key yet
@@ -900,7 +903,7 @@ async def buy_pay_7_days(cb: types.CallbackQuery, bot: Bot):
         cb, bot,
         callback_action="buy_pay_7",
         payload="sub_7",
-        title=f"Свободный Интернет на 7 дней",
+        title="Свободный Интернет на 7 дней",
         label="7 дней доступа",
         amount=int(get_tariffs_stars()["sub_7"]["amount"]),
     )
@@ -917,7 +920,7 @@ async def buy_pay_30_days(cb: types.CallbackQuery, bot: Bot):
         cb, bot,
         callback_action="buy_pay_30",
         payload="sub_30",
-        title=f"Свободный Интернет на 30 дней",
+        title="Свободный Интернет на 30 дней",
         label="30 дней доступа",
         amount=int(get_tariffs_stars()["sub_30"]["amount"]),
     )
@@ -934,7 +937,7 @@ async def buy_pay_90_days(cb: types.CallbackQuery, bot: Bot):
         cb, bot,
         callback_action="buy_pay_90",
         payload="sub_90",
-        title=f"Свободный Интернет на 90 дней",
+        title="Свободный Интернет на 90 дней",
         label="90 дней доступа",
         amount=int(get_tariffs_stars()["sub_90"]["amount"]),
     )

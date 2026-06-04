@@ -257,7 +257,7 @@ class Platega:
             try:
                 error_data = json.loads(e.read().decode('utf-8'))
                 message = error_data.get('message', str(e))
-            except:
+            except Exception:
                 error_data = {}
                 message = str(e)
             

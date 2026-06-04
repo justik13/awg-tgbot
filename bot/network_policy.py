@@ -7,7 +7,7 @@ import socket
 
 from config import logger
 from content_settings import get_setting
-from database import get_metric, increment_metric, set_metric, write_audit_log
+from database import get_metric, increment_metric, set_metric
 
 DENYLIST_DNS_TIMEOUT_SECONDS = 2.0
 DENYLIST_DNS_CONCURRENCY = 32
