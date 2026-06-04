@@ -10,6 +10,7 @@ from content_settings import get_setting
 from database import get_metric, increment_metric, set_metric, write_audit_log
 
 DENYLIST_DNS_TIMEOUT_SECONDS = 2.0
+DENYLIST_DNS_CONCURRENCY = 32
 DENYLIST_MAX_RESOLVED_CIDRS = 4096
 
 
@@ -35,30 +36,42 @@ def parse_cidrs(raw: str) -> list[str]:
     return cidrs
 
 
+async def _resolve_one_domain(loop: asyncio.AbstractEventLoop, domain: str) -> list[str]:
+    query_domain = _domain_to_ascii(domain)
+    if not query_domain:
+        return []
+    try:
+        addrinfo = await asyncio.wait_for(
+            loop.getaddrinfo(query_domain, 443, type=socket.SOCK_STREAM),
+            timeout=DENYLIST_DNS_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("denylist resolve timeout for domain=%s", domain)
+        return []
+    except OSError as error:
+        if getattr(error, "errno", None) == -2:
+            logger.info("denylist domain has no DNS records now: %s", domain)
+        else:
+            logger.warning("denylist resolve failed for domain=%s: %s", domain, error)
+        return []
+
+    resolved: list[str] = []
+    for family, _, _, _, sockaddr in addrinfo:
+        if family == socket.AF_INET:
+            resolved.append(f"{sockaddr[0]}/32")
+    return resolved
+
+
 async def resolve_domains(domains_raw: str) -> list[str]:
     resolved: set[str] = set()
     loop = asyncio.get_running_loop()
-    for domain in _parse_csv(domains_raw):
-        query_domain = _domain_to_ascii(domain)
-        if not query_domain:
-            continue
-        try:
-            addrinfo = await asyncio.wait_for(
-                loop.getaddrinfo(query_domain, 443, type=socket.SOCK_STREAM),
-                timeout=DENYLIST_DNS_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            logger.warning("denylist resolve timeout for domain=%s", domain)
-            continue
-        except OSError as error:
-            if getattr(error, "errno", None) == -2:
-                logger.info("denylist domain has no DNS records now: %s", domain)
-            else:
-                logger.warning("denylist resolve failed for domain=%s: %s", domain, error)
-            continue
-        for family, _, _, _, sockaddr in addrinfo:
-            if family == socket.AF_INET:
-                resolved.add(f"{sockaddr[0]}/32")
+    domains = _parse_csv(domains_raw)
+    for start in range(0, len(domains), DENYLIST_DNS_CONCURRENCY):
+        chunk = domains[start:start + DENYLIST_DNS_CONCURRENCY]
+        results = await asyncio.gather(*(_resolve_one_domain(loop, domain) for domain in chunk))
+        for domain_results in results:
+            for cidr in domain_results:
+                resolved.add(cidr)
                 if len(resolved) >= DENYLIST_MAX_RESOLVED_CIDRS:
                     return sorted(resolved)
     return sorted(resolved)
