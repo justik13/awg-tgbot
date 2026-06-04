@@ -188,15 +188,21 @@ async def _send_stars_invoice(bot: Bot, chat_id: int, payload: str, title: str, 
 
 async def _send_or_edit_payment_screen(cb: types.CallbackQuery, text: str, *, reply_markup=None) -> None:
     message = cb.message
+    # Безопасно отвечаем на callback, чтобы бот не падал при таймаутах
+    try:
+        await cb.answer(show_alert=False)
+    except TelegramBadRequest:
+        pass
+    except Exception as e:
+        logger.debug("Unexpected error answering callback: %s", e)
+
     if message is not None and hasattr(message, "edit_text"):
         try:
             await message.edit_text(text=text, parse_mode="HTML", reply_markup=reply_markup)
-            await cb.answer(show_alert=False)
             return
         except TelegramBadRequest as error:
             error_str = str(error).lower()
             if "message is not modified" in error_str:
-                await cb.answer(show_alert=False)
                 return
             if "message to edit not found" in error_str or "have no rights" in error_str:
                 pass  # Сообщение удалено - отправим новое
@@ -307,6 +313,12 @@ async def pay_stars_handler(cb: types.CallbackQuery, bot: Bot):
 @router.callback_query(F.data.startswith(CB_PAY_PLATEGA_PREFIX))
 async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
     """Handle Platega payment method selection - create payment transaction."""
+    # Сразу отвечаем на callback, чтобы Telegram не считал его устаревшим
+    try:
+        await cb.answer(show_alert=False)
+    except TelegramBadRequest:
+        pass
+
     if await is_purchase_maintenance_enabled():
         await _send_or_edit_payment_screen(cb, "⏳ Технические работы\n\nПокупка временно недоступна. Попробуйте позже.")
         return
@@ -327,8 +339,6 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
     if not info:
         await _send_or_edit_payment_screen(cb, "❌ Ошибка\n\nНеизвестный тариф. Попробуйте выбрать другой.")
         return
-    
-    await cb.answer(show_alert=False)
     
     try:
         # Формируем order_id для передачи в Platega (будет возвращен в callback)
@@ -404,6 +414,11 @@ async def pay_platega_handler(cb: types.CallbackQuery, bot: Bot):
 @router.callback_query(F.data.startswith(CB_PLATEGA_PAY_PREFIX))
 async def platega_pay_button_handler(cb: types.CallbackQuery):
     """Handle click on Platega payment button - send redirect URL."""
+    try:
+        await cb.answer(show_alert=False)
+    except TelegramBadRequest:
+        pass
+        
     data = cb.data.split(":", 1)[1]
     parts = data.split(":", 1)
     transaction_id = parts[0]
@@ -413,8 +428,6 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
     if not platega_service:
         await _send_or_edit_payment_screen(cb, "❌ Оплата через СБП временно недоступна\n\nПопробуйте позже или выберите другой способ оплаты.")
         return
-    
-    await cb.answer(show_alert=False)
     
     try:
         # Get payment status to retrieve redirect URL
@@ -431,11 +444,11 @@ async def platega_pay_button_handler(cb: types.CallbackQuery):
         text = (
             f"💳 <b>Оплата {info['days']} дней — {info['rub']}₽</b>\n\n"
             f"Перейдите по ссылке для оплаты:\n"
-            f"<code>{status_result.get('redirect', 'URL недоступен')}</code>\n\n"
+            f"<code>{"https://pay.platega.io/?id=" + transaction_id + "&mh=" + config.PLATEGA_MERCHANT_ID}</code>\n\n"
             f"Или нажмите кнопку ниже:"
         )
         
-        redirect_url = status_result.get("redirect", "") or ""
+        redirect_url = f"https://pay.platega.io/?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         kb_rows = []
         if redirect_url and redirect_url.strip():
             kb_rows.append([
@@ -466,12 +479,15 @@ async def platega_check_status_by_id(cb: types.CallbackQuery, transaction_id: st
 
 async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: str):
     """Internal logic for checking Platega payment status."""
+    try:
+        await cb.answer("⏳ Проверяю статус...", show_alert=False)
+    except TelegramBadRequest:
+        pass
+        
     platega_service = get_platega_service()
     if not platega_service:
         await _send_or_edit_payment_screen(cb, "❌ Сервис оплаты временно недоступен\n\nПопробуйте позже.")
         return
-    
-    await cb.answer("⏳ Проверяю статус...", show_alert=False)
     
     try:
         status_result = await platega_service.check_payment_status(transaction_id)
@@ -532,7 +548,7 @@ async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: s
                 )
         
         elif platega_service.is_pending_status(status):
-            sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+            sbp_url = f"https://pay.platega.io/?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
             await _send_or_edit_payment_screen(
                 cb, 
                 f"⏳ Платёж ещё в обработке. Ожидайте подтверждения от банка.\nСсылка на оплату: <a href='{sbp_url}'>оплатить через СБП</a>",
@@ -547,7 +563,7 @@ async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: s
         
         elif platega_service.is_failed_status(status):
             await update_payment_status(transaction_id, "failed")
-            sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+            sbp_url = f"https://pay.platega.io/?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
             await _send_or_edit_payment_screen(
                 cb, 
                 f"❌ Платёж отменён или не удался. Попробуйте снова.\nСсылка на оплату: <a href='{sbp_url}'>оплатить через СБП</a>",
@@ -561,7 +577,7 @@ async def _platega_check_status_logic(cb: types.CallbackQuery, transaction_id: s
             )
         
         else:
-            sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+            sbp_url = f"https://pay.platega.io/?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
             await _send_or_edit_payment_screen(
                 cb, 
                 f"Статус платежа: {status}\nСсылка на оплату: <a href='{sbp_url}'>оплатить через СБП</a>",
@@ -1104,7 +1120,7 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             ])
     
     elif status == "PENDING":
-        sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+        sbp_url = f"https://pay.platega.io/?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         text = (
             "<b>⏳ Платеж еще не подтвержден</b>\n\n"
             "Пожалуйста, дождитесь подтверждения или попробуйте снова позже.\n"
@@ -1126,7 +1142,7 @@ async def platega_check_payment_handler(cb: types.CallbackQuery):
             [types.InlineKeyboardButton(text="🔙 В меню покупки", callback_data=CB_SHOW_BUY_MENU)]
         ])
     else:
-        sbp_url = f"{config.PLATEGA_BASE_URL}/sbp-qr?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
+        sbp_url = f"https://pay.platega.io/?id={transaction_id}&mh={config.PLATEGA_MERCHANT_ID}"
         text = (
             f"<b>⚠️ Статус платежа: {status or 'Неизвестен'}</b>\n\n"
             "Попробуйте проверить позже.\n"
