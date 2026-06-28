@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# systemd/sudo environments may provide a very small PATH. Keep command lookup stable.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 # Handle case when script is run via curl | bash (stdin has no path)
 # BASH_SOURCE[0] may be unset when running from stdin, so we check it safely
 if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ -f "${BASH_SOURCE[0]:-}" ]]; then
@@ -48,6 +51,7 @@ AWG_HELPER_TARGET="/usr/local/libexec/awg-bot-helper"
 AWG_HELPER_SUDOERS="/etc/sudoers.d/awg-bot-helper"
 AWG_HELPER_POLICY="/etc/awg-bot-helper.json"
 TTY_DEVICE="/dev/tty"
+INTERACTIVE_INTERRUPTED=0
 # FD 3 и FD 4 будут открыты позже в setup_tty_fd после require_root
 SELF_SYMLINK="/usr/local/bin/awg-tgbot"
 SELFHOST_EGRESS_DENYLIST_ENABLED_DEFAULT="1"
@@ -168,7 +172,18 @@ on_error_trap() {
   printf "[!] Ошибка на строке %s (rc=%s). Подробности: %s\n" "$line_no" "$exit_code" "$INSTALL_LOG" >&2
 }
 trap 'on_error_trap "$LINENO" "$?"' ERR
-trap 'exec 3>&- 2>/dev/null || true; exec 4>&- 2>/dev/null || true' EXIT
+cleanup_fds() { exec 3>&- 2>/dev/null || true; exec 4>&- 2>/dev/null || true; }
+
+on_interrupt() {
+  INTERACTIVE_INTERRUPTED=1
+  printf '\n[!] Прервано пользователем (Ctrl+C).\n' >&2
+  cleanup_transient_install_state 2>/dev/null || true
+  cleanup_fds
+  exit 130
+}
+
+trap cleanup_fds EXIT
+trap on_interrupt INT TERM
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -184,25 +199,31 @@ setup_logging() {
   chmod 640 "$INSTALL_LOG" "$APP_LOG_FILE" || true
   # Sanitize logs to prevent leaking sensitive data
   # Use process substitution with explicit error handling
-  if ! exec > >(tee -a "$INSTALL_LOG" | sed -e 's/BOT_TOKEN=[^ ]*/BOT_TOKEN=***REDACTED***/g' -e 's/PLATEGA_MERCHANT_ID=[^ ]*/PLATEGA_MERCHANT_ID=***REDACTED***/g' -e 's/PLATEGA_SECRET_KEY=[^ ]*/PLATEGA_SECRET_KEY=***REDACTED***/g') 2>&1; then
+  if ! exec > >(tee -a "$INSTALL_LOG" | sed -E -e 's/(API_TOKEN|BOT_TOKEN|TELEGRAM_TOKEN)=[^[:space:]]+/\1=***REDACTED***/g' -e 's/(PLATEGA_MERCHANT_ID|PLATEGA_SECRET_KEY)=[^[:space:]]+/\1=***REDACTED***/g' -e 's/[0-9]{6,}:[A-Za-z0-9_-]{20,}/***TELEGRAM_TOKEN_REDACTED***/g') 2>&1; then
     warn "Не удалось настроить перенаправление логов, продолжаем без логирования в файл."
   fi
 }
 
 setup_tty_fd() {
-  # Закрываем любые существующие FD 3 и FD 4 перед открытием новых
+  # Закрываем любые существующие FD 3 и FD 4 перед открытием новых.
+  # В systemd/non-interactive окружении /dev/tty часто отсутствует; при set -e
+  # голый exec 3<>/dev/tty аварийно завершал скрипт до проверки action-команд.
   exec 3>&- 2>/dev/null || true
   exec 4>&- 2>/dev/null || true
-  
-  if [[ -c "$TTY_DEVICE" ]]; then
-    exec 3<>"$TTY_DEVICE"
+
+  if [[ -c "$TTY_DEVICE" ]] && exec 3<>"$TTY_DEVICE" 2>/dev/null; then
+    exec 4>&3
     return 0
   fi
-  # Fallback: используем stdin/stdout
-  exec 3<&0 4>&1
+  if [[ -t 0 && -t 1 ]] && exec 3<&0 4>&1 2>/dev/null; then
+    return 0
+  fi
+  # Non-interactive safe fallback: keep descriptors valid, but has_tty is false.
+  exec 3</dev/null
+  exec 4>&1
 }
 
-has_tty() { [[ -t 3 ]]; }
+has_tty() { [[ -t 3 && -t 4 ]]; }
 
 supports_color() {
   has_tty && [[ "${TERM:-}" != "dumb" ]]
@@ -219,8 +240,9 @@ color_red() {
 
 pause_if_tty() {
   if has_tty; then
-    echo
-    read -r -u 3 -p "Нажми Enter, чтобы продолжить..." _dummy || true
+    printf '\nНажми Enter, чтобы продолжить...' >&4
+    IFS= read -r -u 3 _dummy || true
+    printf '\n' >&4
   fi
 }
 
@@ -232,7 +254,7 @@ clear_if_tty() {
 
 screen_line() {
   if has_tty; then
-    printf '%s\n' "------------------------------------------------------------" >&3
+    printf '%s\n' "------------------------------------------------------------" >&4
   else
     print_line
   fi
@@ -240,7 +262,7 @@ screen_line() {
 
 screen_echo() {
   if has_tty; then
-    printf '%s\n' "$*" >&3
+    printf '%s\n' "$*" >&4
   else
     printf '%s\n' "$*"
   fi
@@ -248,7 +270,7 @@ screen_echo() {
 
 screen_run() {
   if has_tty; then
-    "$@" >&3 2>&1 || true
+    "$@" >&4 2>&1 || true
   else
     "$@" || true
   fi
@@ -258,41 +280,21 @@ prompt_raw() {
   local prompt="$1"
   local __resultvar="$2"
   local __input=""
-  
-  # Явно выводим подсказку перед чтением ввода
-  printf '%s' "$prompt" >&3 2>/dev/null || printf '%s' "$prompt"
-  
-  # При запуске через curl | bash stdin перенаправлен, поэтому всегда читаем из /dev/tty
-  # Это единственный способ получить интерактивный ввод пользователя
-  if [[ -e "/dev/tty" ]]; then
-    if ! read -r __input < /dev/tty; then
-      warn "Не удалось прочитать ввод с /dev/tty."
-      __input=""
-    fi
-  elif [[ -t 0 ]]; then
-    # Fallback: stdin является терминалом (редкий случай)
-    if ! read -r __input; then
-      warn "Не удалось прочитать ввод со stdin."
-      __input=""
-    fi
-  elif [[ -t 3 ]]; then
-    # Fallback: fd 3 является терминалом
-    if ! read -r __input <&3; then
-      warn "Не удалось прочитать ввод из fd 3."
-      __input=""
-    fi
-  else
-    # Последний шанс: читаем из stdin (не интерактивно)
-    if ! read -r __input; then
-      warn "Не удалось прочитать ввод (fallback)."
-      __input=""
-    fi
+
+  if ! has_tty; then
+    die "Невозможно запросить ввод без TTY (${prompt}). Запусти интерактивно или используй action-команду."
   fi
-  
+
+  printf '%s' "$prompt" >&4
+  if ! IFS= read -r -u 3 __input; then
+    warn "Ввод прерван или терминал закрыт."
+    return 1
+  fi
+
   # Trim whitespace
   __input="${__input#"${__input%%[![:space:]]*}"}"
   __input="${__input%"${__input##*[![:space:]]}"}"
-  
+
   printf -v "$__resultvar" '%s' "$__input"
 }
 
@@ -303,10 +305,16 @@ prompt_menu_key() {
   if ! has_tty; then
     die "Невозможно запросить ввод без TTY (menu: ${prompt}). Запусти скрипт в интерактивном терминале."
   fi
-  if ! read -r -u 3 -n 1 -p "$prompt" __input; then
-    __input=""
+  printf '%s' "$prompt" >&4
+  if ! IFS= read -r -s -u 3 -n 1 __input; then
+    warn "Ввод прерван или терминал закрыт."
+    return 1
   fi
-  echo >&3
+  printf '\n' >&4
+  case "$__input" in
+    $'\003') on_interrupt ;;
+    $'\004'|$'\033') __input="0" ;;
+  esac
   printf -v "$__resultvar" '%s' "$__input"
 }
 
@@ -690,12 +698,17 @@ PY
 
 docker_exec_capture() {
   local container="$1"; shift
-  docker exec -i "$container" "$@" 2>/dev/null || true
+  docker exec -i "$container" "$@" 2>&1 || return $?
 }
 
 docker_exec_sh() {
   local container="$1" command="$2"
-  docker exec -i "$container" sh -lc "$command" 2>/dev/null || true
+  docker exec -i "$container" sh -lc "$command" 2>&1 || return $?
+}
+
+docker_cat_file() {
+  local container="$1" path="$2"
+  docker exec -i "$container" cat "$path" 2>&1 || return $?
 }
 
 find_awg_container() {
@@ -835,8 +848,8 @@ detect_awg_environment() {
   DETECTED_PUBLIC_HOST="$(get_public_host)"
 
   if [[ -n "$DETECTED_CONTAINER" ]] && docker_is_accessible && docker inspect "$DETECTED_CONTAINER" >/dev/null 2>&1; then
-    show_output="$(docker_exec_capture "$DETECTED_CONTAINER" awg show "$DETECTED_INTERFACE")"
-    [[ -n "$show_output" ]] || show_output="$(docker_exec_capture "$DETECTED_CONTAINER" awg show)"
+    show_output="$(docker_exec_capture "$DETECTED_CONTAINER" awg show "$DETECTED_INTERFACE" || true)"
+    [[ -n "$show_output" ]] || show_output="$(docker_exec_capture "$DETECTED_CONTAINER" awg show || true)"
 
     interface_name="$(extract_awg_show_value 'interface' "$show_output")"
     [[ -n "$interface_name" ]] && DETECTED_INTERFACE="$interface_name"
@@ -845,7 +858,7 @@ detect_awg_environment() {
     DETECTED_LISTEN_PORT="$(extract_awg_show_value 'listening port' "$show_output")"
     DETECTED_CONFIG_PATH="$(find_awg_config_path "$DETECTED_CONTAINER" "$DETECTED_INTERFACE")"
     if [[ -n "$DETECTED_CONFIG_PATH" ]]; then
-      conf_output="$(docker_exec_sh "$DETECTED_CONTAINER" "cat '$DETECTED_CONFIG_PATH'")"
+      conf_output="$(docker_cat_file "$DETECTED_CONTAINER" "$DETECTED_CONFIG_PATH" || true)"
       [[ -n "$DETECTED_LISTEN_PORT" ]] || DETECTED_LISTEN_PORT="$(parse_conf_value 'ListenPort' "$conf_output")"
       if [[ -z "$DETECTED_PUBLIC_KEY" ]]; then
         private_key="$(parse_conf_value 'PrivateKey' "$conf_output")"
@@ -980,8 +993,8 @@ check_awg_installed() {
     return 0
   fi
 
-  show_output="$(docker_exec_capture "$DETECTED_CONTAINER" awg show "$DETECTED_INTERFACE")"
-  [[ -n "$show_output" ]] || show_output="$(docker_exec_capture "$DETECTED_CONTAINER" awg show)"
+  show_output="$(docker_exec_capture "$DETECTED_CONTAINER" awg show "$DETECTED_INTERFACE" || true)"
+  [[ -n "$show_output" ]] || show_output="$(docker_exec_capture "$DETECTED_CONTAINER" awg show || true)"
   interface_name="$(extract_awg_show_value 'interface' "$show_output")"
   if [[ -n "$interface_name" ]]; then
     DETECTED_INTERFACE="$interface_name"
@@ -4866,7 +4879,7 @@ remove_bot() {
 screen_warn() {
   local msg="$*"
   if has_tty; then
-    printf '[!] %s\n' "$msg" >&3
+    printf '[!] %s\n' "$msg" >&4
   else
     warn "$msg"
   fi
@@ -4876,7 +4889,7 @@ print_file_tail_tty_safe() {
   local file="$1" lines="${2:-50}"
   if [[ -f "$file" ]]; then
     if has_tty; then
-      tail -n "$lines" "$file" >&3 2>&1 || true
+      tail -n "$lines" "$file" >&4 2>&1 || true
     else
       tail -n "$lines" "$file" || true
     fi
@@ -4924,7 +4937,7 @@ print_journal_tail_tty_safe() {
     )"
     if [[ -n "$filtered_logs" ]]; then
       if has_tty; then
-        printf '%s\n' "$filtered_logs" | tail -n "$lines" >&3 2>/dev/null || true
+        printf '%s\n' "$filtered_logs" | tail -n "$lines" >&4 2>/dev/null || true
       else
         printf '%s\n' "$filtered_logs" | tail -n "$lines" 2>/dev/null || true
       fi
@@ -4943,7 +4956,7 @@ print_journal_matches_tty_safe() {
   if service_exists; then
     raw_logs="$(read_service_journal 400)"
     if has_tty; then
-      printf '%s\n' "$raw_logs" | grep -Ei "$pattern" | tail -n "$lines" >&3 2>/dev/null || true
+      printf '%s\n' "$raw_logs" | grep -Ei "$pattern" | tail -n "$lines" >&4 2>/dev/null || true
     else
       printf '%s\n' "$raw_logs" | grep -Ei "$pattern" | tail -n "$lines" 2>/dev/null || true
     fi
@@ -4972,7 +4985,7 @@ print_service_error_context_tty_safe() {
       screen_line
       screen_echo "Последние строки сервиса:"
       if has_tty; then
-        printf '%s\n' "$fallback_logs" >&3 2>/dev/null || true
+        printf '%s\n' "$fallback_logs" >&4 2>/dev/null || true
       else
         printf '%s\n' "$fallback_logs" 2>/dev/null || true
       fi
@@ -4982,7 +4995,7 @@ print_service_error_context_tty_safe() {
 
   if [[ -n "$meaningful_logs" ]]; then
     if has_tty; then
-      printf '%s\n' "$meaningful_logs" | tail -n "$lines" >&3 2>/dev/null || true
+      printf '%s\n' "$meaningful_logs" | tail -n "$lines" >&4 2>/dev/null || true
     else
       printf '%s\n' "$meaningful_logs" | tail -n "$lines" 2>/dev/null || true
     fi
@@ -4995,7 +5008,7 @@ print_service_error_context_tty_safe() {
     screen_line
     screen_echo "systemctl status (последние строки):"
     if has_tty; then
-      printf '%s\n' "$status_tail" >&3 2>/dev/null || true
+      printf '%s\n' "$status_tail" >&4 2>/dev/null || true
     else
       printf '%s\n' "$status_tail" 2>/dev/null || true
     fi
@@ -5006,7 +5019,7 @@ print_service_error_context_tty_safe() {
     screen_line
     screen_echo "Расширенный контекст journalctl:"
     if has_tty; then
-      printf '%s\n' "$fallback_logs" >&3 2>/dev/null || true
+      printf '%s\n' "$fallback_logs" >&4 2>/dev/null || true
     else
       printf '%s\n' "$fallback_logs" 2>/dev/null || true
     fi
@@ -5018,7 +5031,7 @@ print_service_error_context_tty_safe() {
       screen_line
       screen_echo "Последние строки bot.log (для причины падения):"
       if has_tty; then
-        printf '%s\n' "$app_tail" >&3 2>/dev/null || true
+        printf '%s\n' "$app_tail" >&4 2>/dev/null || true
       else
         printf '%s\n' "$app_tail" 2>/dev/null || true
       fi
@@ -5035,7 +5048,7 @@ run_log_snapshot() {
     bot:warn)
       if [[ -f "$APP_LOG_FILE" ]]; then
         if has_tty; then
-          grep -E '\| (WARNING|ERROR) \|' "$APP_LOG_FILE" | grep -Ev 'Received SIGTERM signal' | tail -n 20 >&3 2>/dev/null || true
+          grep -E '\| (WARNING|ERROR) \|' "$APP_LOG_FILE" | grep -Ev 'Received SIGTERM signal' | tail -n 20 >&4 2>/dev/null || true
         else
           grep -E '\| (WARNING|ERROR) \|' "$APP_LOG_FILE" | grep -Ev 'Received SIGTERM signal' | tail -n 20 2>/dev/null || true
         fi
@@ -5089,7 +5102,7 @@ watch_logs_live() {
     screen_line
     if has_tty; then
       if read -r -u 3 -t 2 -n 1 key 2>/dev/null; then
-        echo >&3
+        echo >&4
         case "$key" in
           q|Q|й|Й|0) clear_if_tty; return 0 ;;
           *) ;;
@@ -5152,7 +5165,7 @@ show_logs_doctor() {
   screen_line
   if [[ -f "$APP_LOG_FILE" ]]; then
     if has_tty; then
-      grep -E '\| (WARNING|ERROR) \|' "$APP_LOG_FILE" | grep -Ev 'Received SIGTERM signal' | tail -n 10 >&3 2>/dev/null || true
+      grep -E '\| (WARNING|ERROR) \|' "$APP_LOG_FILE" | grep -Ev 'Received SIGTERM signal' | tail -n 10 >&4 2>/dev/null || true
     else
       grep -E '\| (WARNING|ERROR) \|' "$APP_LOG_FILE" | grep -Ev 'Received SIGTERM signal' | tail -n 10 2>/dev/null || true
     fi
