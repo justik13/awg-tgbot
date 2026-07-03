@@ -115,11 +115,12 @@ async def ensure_column(db: aiosqlite.Connection, table_name: str, column_name: 
 
 
 async def get_db_version(db: aiosqlite.Connection) -> int:
-    """Получить текущую версию схемы БД."""
+    """Получить текущую версию схемы БД через уже открытое соединение."""
     try:
-        result = await fetchval("SELECT value FROM app_settings WHERE key = 'db_schema_version'", default=None)
-        if result is not None:
-            return int(result)
+        async with db.execute("SELECT value FROM app_settings WHERE key = 'db_schema_version'") as cursor:
+            row = await cursor.fetchone()
+        if row is not None:
+            return int(row[0])
     except Exception:
         pass
     return 0
@@ -135,28 +136,32 @@ async def set_db_version(db: aiosqlite.Connection, version: int) -> None:
     """, (str(version), utc_now_naive().isoformat()))
 
 
-async def check_db_integrity(db_path: Path) -> tuple[bool, str]:
+async def check_db_integrity(db: aiosqlite.Connection | Path) -> tuple[bool, str]:
     """Проверить целостность SQLite базы данных.
-    
+
+    При передаче открытого соединения не создаётся второе SQLite-подключение.
+    Это важно для init_db(), где параллельное подключение в том же процессе
+    может конкурировать за schema/WAL lock с основным DDL-соединением.
+
     Returns:
         Tuple[bool, str]: (is_integrity_ok, message)
     """
+    owns_connection = isinstance(db, Path)
+    conn = await aiosqlite.connect(db) if owns_connection else db
     try:
-        temp_db = await aiosqlite.connect(db_path)
-        try:
-            await temp_db.execute("PRAGMA integrity_check;")
-            result = await temp_db.execute("PRAGMA integrity_check;")
+        async with conn.execute("PRAGMA integrity_check;") as result:
             rows = await result.fetchall()
-            
-            if len(rows) == 1 and rows[0][0] == "ok":
-                return True, "Database integrity check passed"
-            else:
-                issues = "; ".join(str(row[0]) for row in rows[:5])
-                return False, f"Database integrity issues found: {issues}"
-        finally:
-            await temp_db.close()
+
+        if len(rows) == 1 and rows[0][0] == "ok":
+            return True, "Database integrity check passed"
+
+        issues = "; ".join(str(row[0]) for row in rows[:5])
+        return False, f"Database integrity issues found: {issues}"
     except Exception as e:
         return False, f"Database integrity check failed: {str(e)}"
+    finally:
+        if owns_connection:
+            await conn.close()
 
 
 async def init_db() -> None:
@@ -165,12 +170,12 @@ async def init_db() -> None:
         # Выполняем checkpoint для очистки WAL файлов от предыдущих сессий
         # Это помогает избежать блокировок при инициализации
         try:
-            await db.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            await db.execute("PRAGMA wal_checkpoint(PASSIVE);")
         except Exception as e:
             logger.debug(f"Initial checkpoint in init_db (non-critical): {e}")
         
         # Проверка целостности БД перед инициализацией
-        integrity_ok, integrity_msg = await check_db_integrity(Path(DB_PATH))
+        integrity_ok, integrity_msg = await check_db_integrity(db)
         if not integrity_ok:
             logger.warning(f"DB integrity check warning: {integrity_msg}")
 
@@ -534,7 +539,7 @@ async def init_db() -> None:
     finally:
         # Выполняем checkpoint перед закрытием соединения, чтобы WAL файлы были обработаны
         try:
-            await db.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            await db.execute("PRAGMA wal_checkpoint(PASSIVE);")
         except Exception as e:
             logger.debug(f"Checkpoint error in init_db finally block (non-critical): {e}")
         await db.close()
