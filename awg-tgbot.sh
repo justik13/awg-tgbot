@@ -238,8 +238,20 @@ color_red() {
   fi
 }
 
+flush_tty_input() {
+  # Drain pending bytes from the interactive input FD.  Single-key menu
+  # reads intentionally consume only the selected key, so the trailing Enter
+  # can otherwise be picked up by the next pause/prompt and skip it.
+  has_tty || return 0
+  local _discard
+  while IFS= read -r -s -u 3 -t 0.01 -n 1 _discard 2>/dev/null; do
+    :
+  done
+}
+
 pause_if_tty() {
   if has_tty; then
+    flush_tty_input
     printf '\nНажми Enter, чтобы продолжить...' >&4
     IFS= read -r -u 3 _dummy || true
     printf '\n' >&4
@@ -285,6 +297,7 @@ prompt_raw() {
     die "Невозможно запросить ввод без TTY (${prompt}). Запусти интерактивно или используй action-команду."
   fi
 
+  flush_tty_input
   printf '%s' "$prompt" >&4
   if ! IFS= read -r -u 3 __input; then
     warn "Ввод прерван или терминал закрыт."
@@ -305,6 +318,7 @@ prompt_menu_key() {
   if ! has_tty; then
     die "Невозможно запросить ввод без TTY (menu: ${prompt}). Запусти скрипт в интерактивном терминале."
   fi
+  flush_tty_input
   printf '%s' "$prompt" >&4
   if ! IFS= read -r -s -u 3 -n 1 __input; then
     warn "Ввод прерван или терминал закрыт."
@@ -2805,14 +2819,14 @@ start_service() {
   # Это необходимо, чтобы БД создалась с правильными правами от имени пользователя awg-bot
   info "Инициализирую базу данных..."
   if [[ -d "$BOT_DIR" && -f "$BOT_DIR/app.py" && -f "$BOT_DIR/database.py" ]]; then
-    # Вызываем асинхронную функцию init_db напрямую через asyncio.run
-    # Это гарантирует создание БД до запуска основного сервиса
+    # Вызываем init_db напрямую отдельным короткоживущим процессом от имени awg-bot.
+    # Внутри init_db больше нет вспомогательных SQLite-подключений, поэтому инициализация
+    # не конкурирует сама с собой за WAL/schema-lock и не зависает на reinstall.
     local init_output
     local init_rc=0
     
-    # Обёртываем весь вызов su в timeout для предотвращения зависания
-    # Используем увеличенный таймаут (120 сек) и добавляем диагностику через strace при зависании
-    local init_cmd="cd '$BOT_DIR' && '$VENV_DIR'/bin/python -c 'import asyncio; from database import init_db; asyncio.run(init_db())'"
+    # Обёртываем весь вызов su в timeout как страховку от внешних блокировок SQLite.
+    local init_cmd="cd '$BOT_DIR' && exec '$VENV_DIR'/bin/python -c 'import asyncio; from database import init_db; asyncio.run(init_db())'"
     
     # Перед инициализацией проверяем наличие заблокированных WAL файлов от предыдущих запусков
     local db_file_pre
@@ -2828,10 +2842,10 @@ start_service() {
       info "WAL/SHM файлы удалены перед инициализацией."
     fi
     
-    init_output=$(timeout 120 bash -c "su -s /bin/bash \"$BOT_USER\" -c \"$init_cmd\"" 2>&1) || init_rc=$?
+    init_output=$(timeout 30 su -s /bin/bash "$BOT_USER" -c "$init_cmd" 2>&1) || init_rc=$?
 
     if [[ $init_rc -eq 124 ]]; then
-      warn "Инициализация БД превысила таймаут (120 сек). Это может быть связано с блокировкой SQLite."
+      warn "Инициализация БД превысила таймаут (30 сек). Это может быть связано с внешней блокировкой SQLite."
       warn "Вывод: $init_output"
       warn "Попытка диагностики: проверяем наличие WAL/SHM файлов и процессов..."
       local db_file_diag
@@ -5101,6 +5115,7 @@ watch_logs_live() {
     esac
     screen_line
     if has_tty; then
+      flush_tty_input
       if read -r -u 3 -t 2 -n 1 key 2>/dev/null; then
         echo >&4
         case "$key" in
